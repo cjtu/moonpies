@@ -1,11 +1,15 @@
 """Modified from Cannon et al. (2020) Supplemental ds01.m and ds02.m"""
 import numpy as np
+import pandas as pd
+
+# Constants
+R_MOON = 1737  # [km]
 
 diam_range = {
     # Regime: (rad_min, rad_max, step)
     'A': (0, 0.01, None),    # Micrometeorites (<1 mm)
     'B': (0.01, 3, 1e-4),    # Small impactors (1 mm - 1 m)
-    'C': (100, 1.5e3, 1),     # Simple craters, steep branch (100 m - 1.5 km)
+    'C': (100, 1.5e3, 1),    # Simple craters, steep branch (100 m - 1.5 km)
     'D': (1.5e3, 15e3, 1e2), # Simple craters, shallow branch (1.5 km - 15 km)
     'E': (15e3, 300e3, 1e3)  # Complex craters, shallow branch (15 km - 300 km)
 }
@@ -16,6 +20,7 @@ sfd_slope = {
     'E': -1.8
 }
 
+# Functions
 def diam2len(diams, speeds, regime):
     """
     Return size of impactor based on diam of crater.
@@ -35,6 +40,101 @@ def diam2len(diams, speeds, regime):
     else:
         raise ValueError(f'Invalid regime {regime} in diam2len')
     return impactor_length
+
+
+def mapAge(*args):
+    return np.ones((nxy, nxy))
+
+def ejS(n):
+    return np.zeros((nxy, nxy))
+
+def impact_ice(age, f24):
+    return age
+
+def ice_strat_model_cannon_2020(ejS, row, col, nxy=801, run_num=0):
+    """
+    Model the total ejecta and ice deposited in the South pole.
+
+
+    """
+    pct_area = 1.30e4
+    hop_efficiency = 0.054  # From modified Kloos model with Hayne area - Cannon 2020
+    timesteps = np.arange(425)[::-1] * 0.01  # Gyr, each step is 10 Myr
+    
+    # Read in Cannon 2020 crater list
+    fcraters = '~/projects/ESSI_2021/data/cannon2020_crater_ages.csv'
+    cols = ('name', 'lat', 'lon', 'diam', 'age', 'age_low', 'age_upp')
+    df = pd.read_csv(fcraters, names=cols, header=0)
+
+
+    x_scale = np.linspace(-400, 400, nxy)
+    erosion_base = 0
+    nt = len(timesteps)
+
+    strat_ice_vul_x = np.zeros(nt)
+    strat_ice_impact = np.zeros(nt)
+    total_ice = np.zeros(nt)
+    strat_ejecta_matrix = np.zeros((nxy, nxy, nt))
+    total_ejecta_map = np.zeros((nxy, nxy))
+    age_map = np.ones((nxy, nxy)) * 10  # age of youngest crater [Gyr]
+
+    for t, timestep in enumerate(timesteps):
+        age = round(timestep, 2)  # redundant?
+        craters = df[df.age == age]
+
+        # Ejecta step
+        for i, crater in craters.iterrows():
+            # Ejecta map (need to define ejS)
+            crater_ejecta_map = ejS(crater)
+            total_ejecta_map += crater_ejecta_map
+            strat_ejecta_matrix[:, :, t] += crater_ejecta_map
+
+            # Age map
+            rad = 1000 * crater.age / 2  # [m]
+            crater_age_map = mapAge(rad, crater.lat, crater.lon, nxy, x_scale, 'S', age)
+            age_map[crater_age_map < age_map] = crater_age_map[crater_age_map < age_map]
+
+        # Mass of Ice from volcanism [kg]
+        ice_mass_vul_x = 0
+        if 4 >= age >= 3.01:
+            ice_mass_vul_x = 1e7*.75*3000*(1000**3)*(10/1e6)*(1e7/1e9)*hop_efficiency
+        elif 3.01 > age > 2.01:
+            ice_mass_vul_x = 1e7*.25*3000*(1000**3)*(10/1e6)*(1e7/1e9)*hop_efficiency
+
+        strat_ice_vul_x[t] = ice_mass_vul_x
+        
+        # Mass of Ice from impacts (define impact_ice) [kg]
+        ice_mass_impact = total_impact_ice(age) * hop_efficiency
+        strat_ice_impact[t] = ice_mass_impact
+
+        # Get ice thickness [m]
+        total_ice_mass = ice_mass_vul_x + ice_mass_impact
+        total_ice_vol = total_ice_mass / 934  # [m^3]
+        total_ice[t] = total_ice_vol / (pct_area * 1e3 * 1e3)  # [m]
+
+        if strat_ejecta_matrix[row, col, t] > 0.4:
+            erosion_base = t
+
+        layer = t
+        ice_eroded = 0.1
+        while ice_eroded > 0 and layer > erosion_base:
+            if total_ice[layer] >= ice_eroded:
+                total_ice[layer] = total_ice[t] - ice_eroded
+                ice_eroded = 0
+            else:
+                ice_eroded = ice_eroded - total_ice[layer]
+                total_ice[layer] = 0
+                layer -= 1
+
+    return total_ice, df.age.values, age_map, strat_ejecta_matrix
+
+
+def latlon2xy(lat, lon, rp=R_MOON):
+    """Return (x, y) from pole in units of rp from (lat, lon) [degrees]."""
+    lat, lon = np.deg2rad(lat), np.deg2rad(lon)
+    y = rp * np.cos(lat) * np.cos(lon)
+    x = rp * np.cos(lat) * np.sin(lon)
+    return x, y
 
 
 def probabalistic_round(x):
