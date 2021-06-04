@@ -11,6 +11,7 @@ pandas = "^1.2.4"
 rasterio = "^1.2.4"
 jupyter = "^1.0.0"
 matplotlib = "^3.4.2"
+imageio = "^2.9.0"
 
 [tool.poetry.dev-dependencies]
 
