@@ -24,7 +24,9 @@ import numpy as np
 import pandas as pd
 
 # Constants
-R_MOON = 1737e3  # [m]
+R_MOON = 1737e3  # [m], radius
+G_MOON = 1.62  # [m s^-2], gravitational acceleration
+
 SIMPLE2COMPLEX = 15e3  # [m]
 
 # Parameters
@@ -32,7 +34,11 @@ ICE_DENSITY = 934  # [kg / m^3] - make sure this is a good number
 COLDTRAP_AREA = 13e3  # [m^2]
 COLDTRAP_MAX_TEMP = 120  # [K]
 ICE_HOP_EFFICIENCY = 0.054  # Cannon 2020
-IMPACTOR_DENSITY = 1300  # [kg / m^3]
+IMPACTOR_DENSITY = 1300  # [kg / m^3], Cannon 2020
+# IMPACTOR_DENSITY = 3000  # [kg / m^3] ordinary chondrite density
+IMPACT_SPEED = 20000  # [m/s] average impact speed
+IMPACT_ANGLE = 45  # [deg]  average impact velocity
+TARGET_DENSITY = 1500  # [kg / m^3]
 
 # Paths
 FPATH = os.path.abspath(os.path.dirname(__file__)) + os.sep
@@ -513,6 +519,13 @@ def neukum(diam, fit='1983'):
     return 10 ** np.sum(a[fit] * np.log10(diam)**j)
 
 
+def get_diam_array(regime):
+    """Return array of diameters based on diameters in diam_range."""
+    dmin, dmax, step = diam_range[regime]
+    n = int((dmax - dmin) / step)
+    return np.linspace(dmin, dmax, n + 1)
+
+
 def diam2len(diams, speeds, regime):
     """
     Return size of impactor based on diam of crater.
@@ -529,17 +542,22 @@ def diam2len(diams, speeds, regime):
     elif regime == 'D':
         impactor_length = 0
     elif regime == 'E':
-        impactor_length = 0
+        impactor_length = diam2len_johnson(diams)
     else:
         raise ValueError(f'Invalid regime {regime} in diam2len')
     return impactor_length
 
 
-def get_diam_array(regime):
-    """Return array of diameters based on diameters in diam_range."""
-    dmin, dmax, step = diam_range[regime]
-    n = int((dmax - dmin) / step)
-    return np.linspace(dmin, dmax, n + 1)
+def diam2len_johnson(diam, rho_i=IMPACTOR_DENSITY, rho_t=TARGET_DENSITY, 
+                     g=G_MOON, v=IMPACT_SPEED, theta=IMPACT_ANGLE):
+    """
+    Return impactor length from input diam using Johnson et al. (2016) method.
+    """
+    Dstar=(1.62 * 2700 * 1.8e4) / (g * rho_t)
+    denom = (1.52 * (rho_i / rho_t)**0.38 * v**0.5 * g**-0.25 * 
+             Dstar**-0.13 * np.sin(theta)**0.38)
+    impactor_length = (diam / denom)**(1 / 0.88)
+    return impactor_length
 
 
 # Helper functions

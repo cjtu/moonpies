@@ -23,7 +23,7 @@ d = 1/3
 g = 1.61e15
 
 # Parameters specific to lunar primary craters
-a = 6.3e-11
+a = 6.3e-11  #
 b = -2.7
 vf = 5.7e11
 rhom = 2500
@@ -42,7 +42,7 @@ gamma = (K1*np.pi*rhom)/(6*rhot)
 di = 2 * Kr
 eps = (g/(2*vf**2))*(rhom/rhot)**(1/3)
 
-def overturn_str(lam, t):
+def overturn_strength(lam, t):
     """Return reworking depth given lambda and time (strength regime)"""
     t1 = d * Kd/(2*Kr)
     t2_num = 4 * lam * (di*(gamma*alpha**beta)**(1/3))**b
@@ -50,10 +50,10 @@ def overturn_str(lam, t):
     exp = 1 / (b + 1)
     return t1 * (t2_num/t2_den)**exp
 
-times = (1e2, 1e6, 1e9)
+times = (1e2, 1e6, 1e9)  # [yrs]
 for t, og in enumerate(('os100', 'os1M', 'os1G')):
     for lam in ('L10', 'L50', 'L99'):
-        df[og+lam] = 10*overturn_str(df[lam], times[t])
+        df[og+lam] = 10*overturn_strength(df[lam], times[t])
 
 # Plot Figure 5 from Costello et al. (2018)
 f, axs = plt.subplots(1, 2, figsize=(10, 5))
