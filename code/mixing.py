@@ -1,33 +1,46 @@
 """
 Main mixing module adapted from Cannon et al. (2020)
-Date: 06/08/21
+Date: 06/10/21
 Authors: CJ Tai Udovicic, K Frizzell, K Luchsinger, A Madera, T Paladino
 
-# From same directory:
-import mixing
-mixing.main()
+Set params and run this file. 
+All model results are saved to OUTPATH.
 
-# Careful in Jupyter, you likely have to change directories first:
+
+# From Jupyter, in first cell type:
 import os
-os.getcwd()  # see current directory
-os.chdir('/home/user/path/to/code/')  # change directory to this file's location
-import mixing  # now this should work
-
-# Run a function
-df = mixing.read_crater_list()
-
-# Import all constants and functions
-from mixing import *
+os.chdir('/home/user/path/to/code/') 
+import mixing
+ice_cols_df, age_grid, ejecta_matrix = mixing.main()
 """
 import os
 import numpy as np
 import pandas as pd
 
-# Constants
-R_MOON = 1737e3  # [m], radius
-G_MOON = 1.62  # [m s^-2], gravitational acceleration
+# Metadata
+RUN_DATETIME = pd.Timestamp.now().strftime('%Y/%m/%d-%H:%M:%S')
+RUN = 'week2'
+RANDOM_SEED = 0  # Set seed to make reproducible random results
 
-SIMPLE2COMPLEX = 15e3  # [m]
+# Paths
+if 'JPY_PARENT_PID' in os.environ:
+    FPATH = os.getcwd() + os.sep
+else:
+    FPATH = os.path.abspath(os.path.dirname(__file__)) + os.sep
+DATAPATH = os.path.abspath(FPATH + '../data/') + os.sep
+OUTPATH = DATAPATH + RUN + os.sep
+if not os.path.exists(OUTPATH):
+    os.makedirs(OUTPATH)
+
+# Files to import (# of COLS must equal # columns in CSV)
+CRATER_CSV = DATAPATH + 'crater_list.csv'
+VOLCANIC_CSV = DATAPATH + 'needham_kring_2017.csv'
+CRATER_COLS = ('cname', 'lat', 'lon', 'diam', 'age', 'age_low', 'age_upp', 
+               'psr_area', 'age_ref', 'priority', 'notes')
+VOLCANIC_COLS = ('age', 'tot_vol', 'sphere_mass', 'min_CO', 'max_CO', 
+                'min_H2O', 'max_H2O', 'min_H', 'max_H', 'min_S', 'max_S', 
+                'min_sum', 'max_sum', 'min_psurf', 'max_psurf', 'min_atm_loss', 
+                'max_atm_loss')
 
 # Parameters
 ICE_DENSITY = 934  # [kg / m^3] - make sure this is a good number
@@ -39,19 +52,25 @@ IMPACTOR_DENSITY = 1300  # [kg / m^3], Cannon 2020
 IMPACT_SPEED = 20000  # [m/s] average impact speed
 IMPACT_ANGLE = 45  # [deg]  average impact velocity
 TARGET_DENSITY = 1500  # [kg / m^3]
+# EJECTA_THICKNESS_EXPONENT = # [-3.5, -3, -2.5] min, avg, max Kring 1995
+VOLCANIC_SPEC = 'min_H20'  # volcanic species, must be in VOLCANIC_COLS
 
-# Paths
-FPATH = os.path.abspath(os.path.dirname(__file__)) + os.sep
-FIGPATH = os.path.abspath(FPATH + '../figs/') + os.sep
-CRATER_CSV = os.path.abspath(FPATH + '../data/cannon2020_crater_ages.csv')
-CRATER_COLS = ('cname', 'lat', 'lon', 'diam', 'age', 'age_low', 'age_upp')
-VOLCANIC_CSV = os.path.abspath(FPATH + '../data/volcanic_ice.csv')
-VOLCANIC_COLS = ()
+# Constants
+R_MOON = 1737e3  # [m], radius
+G_MOON = 1.62  # [m s^-2], gravitational acceleration
+SIMPLE2COMPLEX = 15e3  # [m]
+
+# Files to export
+AGE_GRID_NPY = OUTPATH + f'age_grid_{RUN}.csv'
+EJECTA_MATRIX_NPY = OUTPATH + f'ejecta_matrix_{RUN}.csv'
+ICE_COLS_CSV = OUTPATH + f'ice_columns_{RUN}.csv'
+ICE_META_CSV = OUTPATH + f'ice_metadata_{RUN}.csv'
+RUN_META_CSV = OUTPATH + f'run_metadata_{RUN}.csv'
 
 # Set options
-COLD_TRAP_CRATERS = ['Haworth', 'Shoemaker', 'Faustini', 'Amundsen', 'Cabeus', 
-                     'Shackleton']
-PLOT = False  # Show plots in main
+COLD_TRAP_CRATERS = ['Haworth', 'Shoemaker', 'Faustini', 'Shackleton',
+                     'Amundsen', 'Sverdrup', 'Cabeus B', 'de Gerlache', 
+                     "Idel'son L", 'Wiechert J']
 
 GRDXSIZE = 400e3  # [m]
 GRDYSIZE = 400e3  # [m]
@@ -60,21 +79,34 @@ GRDSTEP = 1e3  # [m / pixel]
 TIMESTEP = 10e6  # [yr]
 TIMESTART = 4.3e9  # [yr]
 
+# Make random number generator
+_RNG = np.random.default_rng(seed=RANDOM_SEED)
+
 # Make arrays
-GRD_Y, GRD_X = np.ogrid[GRDYSIZE:-GRDYSIZE:-GRDSTEP, -GRDXSIZE:GRDXSIZE:GRDSTEP]
-NY, NX = GRD_Y.shape[0], GRD_X.shape[1]
-TIME_ARR = np.linspace(TIMESTART, TIMESTEP, int(TIMESTART / TIMESTEP))
-NT = len(TIME_ARR)
+_GRD_Y, _GRD_X = np.ogrid[GRDYSIZE:-GRDYSIZE:-GRDSTEP, 
+                          -GRDXSIZE:GRDXSIZE:GRDSTEP]
+_TIME_ARR = np.linspace(TIMESTART, TIMESTEP, int(TIMESTART / TIMESTEP))
+
+# Length of arrays
+_NY, _NX = _GRD_Y.shape[0], _GRD_X.shape[1]
+NT = len(_TIME_ARR)
 
 # Functions
-def main():
+def main(write=True):
     """
     Before loop:
-      1) Get ejecta thickness matrix
-      2) Get volcanic ice matrix
-    Main loop for mixing model. Steps so far:
       1) read_crater_list(): Reads in crater list from CRATER_CSV above.
-      2) get_ejecta_distance(): Get 3D array of dist from each crater on grid.
+      2) Get ejecta thickness matrix
+      3) Get volcanic ice matrix
+      4) Get ballistic sed matrix
+      5) Get sublimation rate
+    Main loop for mixing model.
+      1) Every timestep:
+        a. get impact ice mass
+        b. get volcanic ice mass
+      2) If a crater is formed this timestep:
+        a. deposit ejecta
+        b. update age grid
     """
     # Before loop (setup)
     df = read_crater_list()
@@ -87,11 +119,11 @@ def main():
 
     # Init arrays
     ice_cols = init_ice_columns(df)  # 1D ice thickness column
-    age_grid = np.ones((NY, NX)) * TIMESTART  # age of youngest crater on grid [yr]
-    ejecta_matrix = np.zeros((NY, NX, NT))  # ejecta thickness, grid over time [m]
+    age_grid = np.ones((_NY, _NX)) * TIMESTART  # age of youngest crater on grid [yr]
+    ejecta_matrix = np.zeros((_NY, _NX, NT))  # ejecta thickness, grid over time [m]
 
     # Main time loop
-    for t, time in enumerate(TIME_ARR):
+    for t, time in enumerate(_TIME_ARR):
         crater = c = None
         # If crater formed at this timestep, update ejecta_matrix and age_grid
         make_crater = df[df.age.between(time - TIMESTEP/2, time + TIMESTEP/2)]
@@ -135,8 +167,23 @@ def main():
             # Other icy things
             # thermal pumping?
 
-
-    return ice_cols, age_grid, ejecta_matrix
+    # Format outputs
+    ice_cols_df = pd.DataFrame({k:v[3] for k, v in ice_cols.items()})
+    ice_cols_df.insert(0, 'time', _TIME_ARR)
+    ice_meta = [[k, *v[:3]] for k, v in ice_cols.items()]
+    ice_meta_df = pd.DataFrame(ice_meta, columns=['name', 'row', 'col', 'psr_area'])
+    run_meta_df = pd.DataFrame.from_dict({
+        k:globals()[k] for k in list(globals()) if k.isupper()}, 
+        orient='index').reset_index()
+    # Save outputs
+    if write:
+        ice_cols_df.to_csv(ICE_COLS_CSV, index=False)
+        ice_meta_df.to_csv(ICE_META_CSV, index=False)
+        run_meta_df.to_csv(RUN_META_CSV, index=False)
+        np.save(AGE_GRID_NPY, age_grid)
+        np.save(EJECTA_MATRIX_NPY, ejecta_matrix)
+        print(f'Saved results to {OUTPATH}')
+    return ice_cols_df, age_grid, ejecta_matrix
 
 
 def randomize_crater_ages(df, timestep=TIMESTEP):
@@ -148,7 +195,7 @@ def randomize_crater_ages(df, timestep=TIMESTEP):
     return df
 
 
-def update_age(age_grid, x, y, radius, age, grd_x=GRD_X, grd_y=GRD_Y):
+def update_age(age_grid, x, y, radius, age, grd_x=_GRD_X, grd_y=_GRD_Y):
     """
     Return new age grid updating the points interior to crater with its age.
     """
@@ -201,7 +248,8 @@ def read_crater_list(crater_csv=CRATER_CSV, columns=CRATER_COLS):
     if 'psr_area' in df.columns:
         df['psr_area'] = df['psr_area'] * 1e6  # [km^2 -> m^2]
     else:
-        # TODO: specify actual psr areas
+        # Estimate psr area as 90% of crater area
+        print('ugh')
         df['psr_area'] = 0.9 * np.pi * df.rad ** 2
 
     # Define new columns
@@ -210,15 +258,20 @@ def read_crater_list(crater_csv=CRATER_CSV, columns=CRATER_COLS):
     return df
 
 
+def read_volcanic_csv(volcanic_csv=VOLCANIC_CSV, columns=VOLCANIC_COLS):
+    df = pd.read_csv(volcanic_csv, names=columns, header=3)
+    return df
+
+
 # Pre-compute grid functions
-def get_ejecta_distances(df, grd_x=GRD_X, grd_y=GRD_Y):
+def get_ejecta_distances(df, grd_x=_GRD_X, grd_y=_GRD_Y):
     """
     Return 3D array shape (len(grd_x), len(grd_y), len(df)) of ejecta distances 
     from each crater in df.
 
     Distances computed with simple dist. Distances within crater radius are NaN.
     """
-    ej_dist_all = np.zeros([NY, NX, len(df)])
+    ej_dist_all = np.zeros([_NY, _NX, len(df)])
     for i, crater in df.iterrows():
         ej_dist = dist(crater.x, crater.y, grd_x, grd_y)
         ej_dist[ej_dist < crater.rad] = np.nan
@@ -242,8 +295,97 @@ def get_volcanic_ice(fvolcanic=VOLCANIC_CSV, dt=TIMESTEP, timestart=TIMESTART):
     """
     Return a matrix of the mass of volcanic ice produced at each timestep.
     """
-    # TODO: Tyler
-    return np.zeros((GRD_X.shape[0], GRD_Y.shape[1], len(TIME_ARR)))
+    # TODO: add Tyler code
+    return np.zeros((_NX, _NY, NT))
+
+def get_volcanic_ice(fvolcanic=VOLCANIC_CSV, volcanic_spec=VOLCANIC_SPEC, 
+                     pole_pct=POLE_PCT, coldtrap_area=COLDTRAP_AREA, 
+                     time_arr=_TIME_ARR):
+    """
+    Return ice mass deposited in cold traps by volcanic outgassing over time.
+    
+    Values from supplemental spreadsheet S3 (Needham and Kring, 2017) 
+    transient atmosphere data. Scale by coldtrap_area and pole_pct % of 
+    material that is delievered to to S. pole.
+
+    fvolcanic - string dictating path of N*K data file
+    dt - timestep in main model
+    timestart - initial start time given in main model
+    scheme - Either 'NK' or 'Head'. 'Head' will output an array of zeros
+    pole_perc - the percentage of material that makes it to the pole (given as a decimal)
+    col - The atmospheric species that is being deposited. Choices include 'min_CO', 'max_CO', 'min_H2O', 'max_H2O',
+            'min_H', 'max_H', 'min_S', 'max_S'
+
+    @author: tylerpaladino
+    """
+    TIME_ARR = np.linspace(timestart, dt, int(timestart / dt))
+    timestart = 
+    out = np.zeros(len(TIME_ARR))
+    if scheme.upper() == 'NK':
+
+        tstart_ga = timestart/1e9
+
+        r = 1737  # km
+        theta = 6 * (np.pi/180)  # radians
+        AOI = (2 * np.pi * r**2) * (1-np.cos(theta))  # surface area of south pole region
+        # km^2 Poli︠a︡nin, A. D., & Manzhirov, A. V. (2007). Handbook of mathematics for engineers and scientists. Boca Raton, FL: Chapman & Hall/CRC.
+
+        # surface area of entire moon
+        surf_area_moon = 4 * np.pi * r**2  # km^2
+
+        AOI_frac = AOI/surf_area_moon
+
+        # Read in transient atmosphere data
+        # fvolcanic = '/Users/tylerpaladino/Documents/ISU/LPI_NASA/Needham_tab.xlsx'
+        cols = ('age', 'tot_vol', 'sphere_mass', 'min_CO', 'max_CO',
+                'min_H2O', 'max_H2O', 'min_H', 'max_H', 'min_S', 'max_S', 'min_sum',
+                'max_sum', 'min_psurf', 'max_psurf', 'min_atm_loss', 'max_atm_loss')
+
+        df = pd.read_excel(fvolcanic, names=cols, skiprows=3)
+
+        # Sort in descending order
+        sdf = df.sort_values('age', ascending=False).reset_index().drop(columns=['index'])
+
+        # Either remove old ages outside of range specified in input args or add on
+        # ages to beginning of df to match input args
+        if tstart_ga <= max(df.age):
+            new_df = sdf.loc[list(sdf.age).index(tstart_ga):]
+            new_df.reset_index(drop=True)
+        else:
+            year_diff = tstart_ga - max(df.age)
+            num_rows = int(year_diff/0.1)  # 0.1 is interval between years in atmosphere data
+
+            ages_needed = np.linspace(max(TIME_ARR)/1e9,
+                                      max(df.age),
+                                      num_rows,
+                                      endpoint=False)
+
+            new_array = np.zeros((len(ages_needed), df.shape[1]))
+            # Place new ages into zeros array in correct position (0th)
+            new_array[:, 0] = ages_needed
+
+            new_df_row = pd.DataFrame(new_array, columns=cols)
+            # Concatenate
+            new_df = pd.concat([new_df_row, sdf]).reset_index(drop=True)
+
+        # Add on min of TIME_ARR to end of df
+        temp = pd.DataFrame([np.zeros(new_df.shape[1])], columns=cols)
+
+        new_df = new_df.append(temp, ignore_index=True)
+
+        # Insert age in years to df
+        new_df.insert(1, 'age_yrs', new_df.age*1e9, True)  # Add in column of ages in years
+
+        # Figure out how many data entries we need to create in new array to match TIME_ARR
+        div_num = int(round(new_df.age_yrs[0]-new_df.age_yrs[1])/dt)
+        # Loop through new_df and split up values based on div num into equal parts into out var.
+        for i, row in new_df.iterrows():
+            out[i*div_num:(i+1) * div_num] = row[col]/div_num
+
+        return out * AOI_frac * pole_perc
+
+    elif scheme.upper() == 'HEAD':
+        return out
 
 
 def get_ice_thickness(ice_mass, density=ICE_DENSITY, cold_trap_area=COLDTRAP_AREA):
@@ -261,7 +403,7 @@ def get_ballistic_sed(df):
     Return ballistic sedimentation mixing depths for each crater.
     """
     # TODO: add Kristen code
-    return np.zeros((GRD_Y.shape[1], GRD_X.shape[0], len(df)))
+    return np.zeros((_NY, _NX, len(df)))
 
 
 def get_sublimation_rate(timestep=TIMESTEP, temp=COLDTRAP_MAX_TEMP):
@@ -280,7 +422,7 @@ def get_sublimation_rate(timestep=TIMESTEP, temp=COLDTRAP_MAX_TEMP):
     return 0
 
 # Ice column functions
-def init_ice_columns(df, craters=COLD_TRAP_CRATERS, time_arr=TIME_ARR):
+def init_ice_columns(df, craters=COLD_TRAP_CRATERS, time_arr=_TIME_ARR):
     """
     Return dict of ice columns for cold trap craters in df.
 
@@ -294,12 +436,12 @@ def init_ice_columns(df, craters=COLD_TRAP_CRATERS, time_arr=TIME_ARR):
         if not df.cname.str.contains(cname).any():
             print(f'Cold trap crater {cname} not found. Skipping...')
             continue
-        crater = df[df.cname == cname]
+        crater = df[df.cname == cname].iloc[0]
         row = int(round(crater.x / GRDSTEP))
         col = int(round(crater.y / GRDSTEP))
         area = crater.psr_area
         ice_col = np.zeros(len(time_arr))
-        ice_col[crater.age.values < TIME_ARR] = np.nan  # no ice before crater formed
+        ice_col[crater.age < _TIME_ARR] = np.nan  # no ice before crater formed
         ice_columns[cname] = [row, col, area, ice_col]
     return ice_columns
 
@@ -415,12 +557,12 @@ def ice_large_craters(crater_diams, regime, impactor_density=IMPACTOR_DENSITY):
     """
     # Randomly include only craters formed by hydrated, Ctype asteroids
     # Uses same assumptions of impactor_mass2water()
-    # TODO: make these assupmtions global parameters
-    rand_arr = np.random.rand(len(crater_diams))
+    # TODO: make these assumptions global parameters
+    rand_arr = _RNG.random(size=len(crater_diams))
     crater_diams = crater_diams[rand_arr < 0.36 * (2/3)]
 
     # Randomize impactor speeds with Gaussian around 20
-    impactor_speeds = np.random.normal(20, 6, len(crater_diams))
+    impactor_speeds = _RNG.normal(20, 6, len(crater_diams))
     impactor_speeds[impactor_speeds < 2.38] = 2.38 # minimum is Vesc
     impactor_diams = diam2len(crater_diams*1000, impactor_speeds, regime)
     impactor_masses =  diam2vol(impactor_diams) * impactor_density  # [kg]
@@ -498,7 +640,7 @@ def get_crater_pop(age, regime):
     n_craters = probabalistic_round(n_craters)
 
     # Resample crater diameters with replacement, weighted by sfd
-    crater_diams = np.random.choice(crater_diams, n_craters, p=sfd/sum(sfd))   
+    crater_diams = _RNG.choice(crater_diams, n_craters, p=sfd/sum(sfd))   
     return crater_diams
 
 
@@ -598,9 +740,12 @@ def probabalistic_round(x):
     E.g. 6.1 will round down ~90% of the time and round up ~10% of the time
     such that over many trials, the expected value is 6.1.
     """
-    return int(x + np.random.random())
+    return int(x + _RNG.random())
 
 
 def diam2vol(diameter):
     """Return volume of sphere given diameter."""
     return (4/3) * np.pi *(diameter / 2)**3
+
+if __name__ == '__main__':
+    _ = main()
