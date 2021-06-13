@@ -53,11 +53,13 @@ IMPACT_SPEED = 20000  # [m/s] average impact speed
 IMPACT_ANGLE = 45  # [deg]  average impact velocity
 TARGET_DENSITY = 1500  # [kg / m^3]
 # EJECTA_THICKNESS_EXPONENT = # [-3.5, -3, -2.5] min, avg, max Kring 1995
-VOLCANIC_SPEC = 'min_H20'  # volcanic species, must be in VOLCANIC_COLS
+VOLCANIC_SPECIES = 'min_H20'  # volcanic species, must be in VOLCANIC_COLS
+VOLCANIC_POLE_PCT = 0.1  # Needham & Kring: 0.1, Head & Wilson: 0
 
 # Constants
 R_MOON = 1737e3  # [m], radius
 G_MOON = 1.62  # [m s^-2], gravitational acceleration
+SA_MOON = 4 * np.pi * R_MOON**2  # [m^2]
 SIMPLE2COMPLEX = 15e3  # [m]
 
 # Files to export
@@ -258,9 +260,11 @@ def read_crater_list(crater_csv=CRATER_CSV, columns=CRATER_COLS):
     return df
 
 
-def read_volcanic_csv(volcanic_csv=VOLCANIC_CSV, columns=VOLCANIC_COLS):
-    df = pd.read_csv(volcanic_csv, names=columns, header=3)
+def read_volcanic_csv(volcanic_csv=VOLCANIC_CSV, col=VOLCANIC_COLS):
+    df = pd.read_csv(volcanic_csv, names=col, header=3)
+    df['age'] = df['age'] * 1e9  # [Gyr -> yr]
     return df
+
 
 
 # Pre-compute grid functions
@@ -298,9 +302,10 @@ def get_volcanic_ice(fvolcanic=VOLCANIC_CSV, dt=TIMESTEP, timestart=TIMESTART):
     # TODO: add Tyler code
     return np.zeros((_NX, _NY, NT))
 
-def get_volcanic_ice(fvolcanic=VOLCANIC_CSV, volcanic_spec=VOLCANIC_SPEC, 
-                     pole_pct=POLE_PCT, coldtrap_area=COLDTRAP_AREA, 
-                     time_arr=_TIME_ARR):
+def get_volcanic_ice(f=VOLCANIC_CSV, cols=VOLCANIC_COLS,
+                     species=VOLCANIC_SPECIES, pole_pct=VOLCANIC_POLE_PCT, 
+                     coldtrap_area=COLDTRAP_AREA, 
+                     moon_area=SA_MOON, time_arr=_TIME_ARR):
     """
     Return ice mass deposited in cold traps by volcanic outgassing over time.
     
@@ -318,74 +323,57 @@ def get_volcanic_ice(fvolcanic=VOLCANIC_CSV, volcanic_spec=VOLCANIC_SPEC,
 
     @author: tylerpaladino
     """
-    TIME_ARR = np.linspace(timestart, dt, int(timestart / dt))
-    timestart = 
-    out = np.zeros(len(TIME_ARR))
-    if scheme.upper() == 'NK':
+    out = np.zeros(len(time_arr))
+    if not pole_pct:
+        return out
+    
+    area_frac = coldtrap_area / moon_area
+    df = read_volcanic_csv(f, cols)
+    df = df.sort_values('age', ascending=False).reset_index(drop=True)
+    
+    timestart = time_arr[0]
+    dt = time_arr[1] - timestart
+    # Either remove old ages outside of range specified in input args or add on
+    # ages to beginning of df to match input args
+    if timestart <= df.age.max():
+        new_df = df[df.age.between(timestart+dt/2, 0)]
+        new_df.reset_index(drop=True)
+    else:
+        new_ages = 
+        year_diff = tstart_ga - max(df.age)
+        num_rows = int(year_diff/0.1)  # 0.1 is interval between years in atmosphere data
 
-        tstart_ga = timestart/1e9
+        ages_needed = np.linspace(max(TIME_ARR)/1e9,
+                                    max(df.age),
+                                    num_rows,
+                                    endpoint=False)
 
-        r = 1737  # km
-        theta = 6 * (np.pi/180)  # radians
-        AOI = (2 * np.pi * r**2) * (1-np.cos(theta))  # surface area of south pole region
-        # km^2 Poli︠a︡nin, A. D., & Manzhirov, A. V. (2007). Handbook of mathematics for engineers and scientists. Boca Raton, FL: Chapman & Hall/CRC.
+        new_array = np.zeros((len(ages_needed), df.shape[1]))
+        # Place new ages into zeros array in correct position (0th)
+        new_array[:, 0] = ages_needed
 
-        # surface area of entire moon
-        surf_area_moon = 4 * np.pi * r**2  # km^2
+        new_df_row = pd.DataFrame(new_array, columns=cols)
+        # Concatenate
+        new_df = pd.concat([new_df_row, sdf]).reset_index(drop=True)
 
-        AOI_frac = AOI/surf_area_moon
+    # Add on min of TIME_ARR to end of df
+    temp = pd.DataFrame([np.zeros(new_df.shape[1])], columns=cols)
 
-        # Read in transient atmosphere data
-        # fvolcanic = '/Users/tylerpaladino/Documents/ISU/LPI_NASA/Needham_tab.xlsx'
-        cols = ('age', 'tot_vol', 'sphere_mass', 'min_CO', 'max_CO',
-                'min_H2O', 'max_H2O', 'min_H', 'max_H', 'min_S', 'max_S', 'min_sum',
-                'max_sum', 'min_psurf', 'max_psurf', 'min_atm_loss', 'max_atm_loss')
+    new_df = new_df.append(temp, ignore_index=True)
 
-        df = pd.read_excel(fvolcanic, names=cols, skiprows=3)
+    # Insert age in years to df
+    new_df.insert(1, 'age_yrs', new_df.age*1e9, True)  # Add in column of ages in years
 
-        # Sort in descending order
-        sdf = df.sort_values('age', ascending=False).reset_index().drop(columns=['index'])
+    # Figure out how many data entries we need to create in new array to match TIME_ARR
+    div_num = int(round(new_df.age_yrs[0]-new_df.age_yrs[1])/dt)
+    return df
 
-        # Either remove old ages outside of range specified in input args or add on
-        # ages to beginning of df to match input args
-        if tstart_ga <= max(df.age):
-            new_df = sdf.loc[list(sdf.age).index(tstart_ga):]
-            new_df.reset_index(drop=True)
-        else:
-            year_diff = tstart_ga - max(df.age)
-            num_rows = int(year_diff/0.1)  # 0.1 is interval between years in atmosphere data
-
-            ages_needed = np.linspace(max(TIME_ARR)/1e9,
-                                      max(df.age),
-                                      num_rows,
-                                      endpoint=False)
-
-            new_array = np.zeros((len(ages_needed), df.shape[1]))
-            # Place new ages into zeros array in correct position (0th)
-            new_array[:, 0] = ages_needed
-
-            new_df_row = pd.DataFrame(new_array, columns=cols)
-            # Concatenate
-            new_df = pd.concat([new_df_row, sdf]).reset_index(drop=True)
-
-        # Add on min of TIME_ARR to end of df
-        temp = pd.DataFrame([np.zeros(new_df.shape[1])], columns=cols)
-
-        new_df = new_df.append(temp, ignore_index=True)
-
-        # Insert age in years to df
-        new_df.insert(1, 'age_yrs', new_df.age*1e9, True)  # Add in column of ages in years
-
-        # Figure out how many data entries we need to create in new array to match TIME_ARR
-        div_num = int(round(new_df.age_yrs[0]-new_df.age_yrs[1])/dt)
+        
         # Loop through new_df and split up values based on div num into equal parts into out var.
         for i, row in new_df.iterrows():
             out[i*div_num:(i+1) * div_num] = row[col]/div_num
 
         return out * AOI_frac * pole_perc
-
-    elif scheme.upper() == 'HEAD':
-        return out
 
 
 def get_ice_thickness(ice_mass, density=ICE_DENSITY, cold_trap_area=COLDTRAP_AREA):
@@ -703,24 +691,24 @@ def diam2len_johnson(diam, rho_i=IMPACTOR_DENSITY, rho_t=TARGET_DENSITY,
 
 
 # Helper functions
-def latlon2xy(lon, lat, rp=R_MOON):
-    """
-    Return (x, y) distance from pole of coords (lon, lat) [degrees]. 
-
-    Returns in units of rp.
-    """
+def latlon2xy(lat, lon, rp=R_MOON):
+    """Return (x, y) [rp units] S. Pole stereo coords from (lon, lat) [deg]."""
     lat, lon = np.deg2rad(lat), np.deg2rad(lon)
-    y = rp * np.cos(lat) * np.cos(lon)
-    x = rp * np.cos(lat) * np.sin(lon)
+    y = - rp * np.cos(lat) * np.sin(lon)
+    x = rp * np.cos(lat) * np.cos(lon) 
     return x, y
 
 
-def gc_dist(lon1, lat1, lon2, lat2, rp=R_MOON):
-    """
-    Calculate the great circle distance between two points using the Haversine formula.
+def xy2latlon(x, y, rp=R_MOON):
+    """Return (lat, lon) [deg] from S. Pole stereo coords (x, y) [rp units]."""
+    z = np.sqrt(rp**2 - x**2 - y**2)
+    lat = -np.arcsin(z / rp)
+    lon = np.arctan2(-y, x)
+    return np.rad2deg(lat), np.rad2deg(lon)
 
-    All args must be of equal length, lon and lat in decimal degrees.
-    """
+
+def gc_dist(lon1, lat1, lon2, lat2, rp=R_MOON):
+    """Return great circ dist (lon1, lat1) - (lon2, lat2) [deg] in rp units."""
     lon1, lat1, lon2, lat2 = map(np.radians, [lon1, lat1, lon2, lat2])
     dlon = lon2 - lon1
     dlat = lat2 - lat1
@@ -746,6 +734,7 @@ def probabalistic_round(x):
 def diam2vol(diameter):
     """Return volume of sphere given diameter."""
     return (4/3) * np.pi *(diameter / 2)**3
+
 
 if __name__ == '__main__':
     _ = main()
