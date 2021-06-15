@@ -34,13 +34,8 @@ if not os.path.exists(OUTPATH):
 
 # Files to import (# of COLS must equal # columns in CSV)
 CRATER_CSV = DATAPATH + 'crater_list.csv'
-VOLCANIC_CSV = DATAPATH + 'needham_kring_2017.csv'
 CRATER_COLS = ('cname', 'lat', 'lon', 'diam', 'age', 'age_low', 'age_upp', 
                'psr_area', 'age_ref', 'priority', 'notes')
-VOLCANIC_COLS = ('age', 'tot_vol', 'sphere_mass', 'min_CO', 'max_CO', 
-                'min_H2O', 'max_H2O', 'min_H', 'max_H', 'min_S', 'max_S', 
-                'min_sum', 'max_sum', 'min_psurf', 'max_psurf', 'min_atm_loss', 
-                'max_atm_loss')
 
 # Parameters
 MODEL_MODE = 'cannon'  # ['cannon', 'updated']
@@ -54,8 +49,25 @@ IMPACT_SPEED = 20000  # [m/s] average impact speed
 IMPACT_ANGLE = 45  # [deg]  average impact velocity
 TARGET_DENSITY = 1500  # [kg / m^3]
 # EJECTA_THICKNESS_EXPONENT = # [-3.5, -3, -2.5] min, avg, max Kring 1995
-VOLCANIC_SPECIES = 'min_H2O'  # volcanic species, must be in VOLCANIC_COLS
-VOLCANIC_POLE_PCT = 0.1  # Needham & Kring: 0.1, Head & Wilson: 0
+VOLC_MODE = 'Head'  # ['Head', 'Needham]
+if VOLC_MODE == 'Head':    
+    # Head et al. (2020)
+    VOLC_EARLY = (4e9, 3e9)  # [yrs]
+    VOLC_LATE = (3e9, 2e9)  # [yrs]
+    VOLC_EARLY_PCT = 0.75  # 75%
+    VOLC_LATE_PCT = 0.25  # 25%
+    VOLC_TOTAL_VOL = 1e7 * 1e9  # [m^3] basalt
+    VOLC_H2O_PPM = 10  # [ppm]
+    VOLC_MAGMA_DENSITY = 3000  # [kg/m^3]
+elif VOLC_MODE == 'Needham':
+    # Needham & Kring (2017)
+    VOLC_POLE_PCT = 0.1  # 10%
+    VOLC_SPECIES = 'min_H2O'  # volcanic species, must be in VOLC_COLS
+    VOLC_CSV = DATAPATH + 'needham_kring_2017.csv'
+    VOLC_COLS = ('age', 'tot_vol', 'sphere_mass', 'min_CO', 'max_CO', 
+                 'min_H2O', 'max_H2O', 'min_H', 'max_H', 'min_S', 'max_S', 
+                 'min_sum', 'max_sum', 'min_psurf', 'max_psurf', 
+                 'min_atm_loss', 'max_atm_loss')
 
 # Constants
 R_MOON = 1737e3  # [m], radius
@@ -116,7 +128,7 @@ def main(write=True):
     df = randomize_crater_ages(df)
     ej_dist = get_ejecta_distances(df)
     ej_thickness = get_ejecta_thickness(ej_dist, df.rad.values)  # shape: (NY,NX,len(df))
-    volcanic_ice_matrix = get_volcanic_ice()  # shape: 1D len(time_arr)
+    volcanic_ice_matrix = get_volcanic_ice(mode=VOLC_MODE)  # shape: 1D len(time_arr)
 
     if MODEL_MODE == 'cannon':
         ballistic_sed_matrix = sublimation_thickness = None
@@ -276,15 +288,15 @@ def read_crater_list(crater_csv=CRATER_CSV, columns=CRATER_COLS):
     df['dist2pole'] = gc_dist(0, -90, df.lon, df.lat)
 
     # Drop basins for now (>250 km diam)
+    # TODO: handle basins somehow?
     df = df[df.diam <= 250e3]
     return df
 
 
-def read_volcanic_csv(volcanic_csv=VOLCANIC_CSV, col=VOLCANIC_COLS):
+def read_volcanic_csv(volcanic_csv=VOLC_CSV, col=VOLC_COLS):
     df = pd.read_csv(volcanic_csv, names=col, header=3)
     df['age'] = df['age'] * 1e9  # [Gyr -> yr]
     return df
-
 
 
 # Pre-compute grid functions
@@ -315,10 +327,7 @@ def get_ejecta_thickness(distance, radius, simple2complex=SIMPLE2COMPLEX):
     return thickness
 
 
-def get_volcanic_ice(f=VOLCANIC_CSV, cols=VOLCANIC_COLS,
-                     species=VOLCANIC_SPECIES, pole_pct=VOLCANIC_POLE_PCT, 
-                     coldtrap_area=COLDTRAP_AREA, 
-                     moon_area=SA_MOON, time_arr=_TIME_ARR):
+def get_volcanic_ice(time_arr=_TIME_ARR, mode='Needham'):
     """
     Return ice mass deposited in cold traps by volcanic outgassing over time.
     
@@ -336,25 +345,62 @@ def get_volcanic_ice(f=VOLCANIC_CSV, cols=VOLCANIC_COLS,
 
     @author: tylerpaladino
     """
-    out = np.zeros(len(time_arr))
-    if not pole_pct:
-        return out
-    
-    area_frac = coldtrap_area / moon_area
+    if mode == 'Needham':
+        out = volcanic_ice_needham(time_arr)
+    elif mode == 'Head':
+        out = volcanic_ice_head(time_arr)
+    else:
+        raise ValueError(f'Invalid mode {mode}.')
+    return out 
+
+
+def volcanic_ice_needham(time_arr, f=VOLC_CSV, cols=VOLC_COLS,
+                         species=VOLC_SPECIES, pole_pct=VOLC_POLE_PCT, 
+                         coldtrap_area=COLDTRAP_AREA, moon_area=SA_MOON):
+    """
+    Return ice [units] deposited in each timestep with Needham & Kring (2017).
+    """
     df_volc = read_volcanic_csv(f, cols)
 
     # Outer merge df_volc with time_arr to get df with all age timesteps
     time_df = pd.DataFrame(time_arr, columns=['age'])
     df = time_df.merge(df_volc, on='age', how='outer')
 
-    # Fill missing timesteps in df with linearly interpolation across age
+    # Fill missing timesteps in df with linear interpolation across age
     df = df.sort_values('age', ascending=False).reset_index(drop=True)
     df_interp = df.set_index('age').interpolate()
 
     # Extract only relevant timesteps in time_arr and species column
     out = df_interp.loc[time_arr, species].values
-    return out * area_frac * pole_pct
 
+    # Weight by fractional area of cold traps and ice transport pct
+    area_frac = coldtrap_area / moon_area
+    out *= area_frac * pole_pct
+    return out
+
+
+def volcanic_ice_head(time_arr, early=VOLC_EARLY, late=VOLC_LATE,
+                      early_pct=VOLC_EARLY_PCT, late_pct=VOLC_LATE_PCT,
+                      magma_vol=VOLC_TOTAL_VOL, outgassed_h2o=VOLC_H2O_PPM, 
+                      magma_rho=VOLC_MAGMA_DENSITY, ice_rho=ICE_DENSITY):
+    """
+    Return ice [units] deposited in each timestep with Head et al. (2020).
+    """
+    # Global estimated H2O deposition
+    tot_H2O_dep = magma_rho * magma_vol * ice_rho * outgassed_h2o / 1e6
+
+    # Define periods of volcanism
+    early_idx = (early[0] < time_arr) & (time_arr < early[1])
+    late_idx = (late[0] < time_arr) & (time_arr < late[1])
+
+    # H2O deposited per timestep
+    H2O_early = tot_H2O_dep * early_pct / len(early_idx)
+    H2O_late = tot_H2O_dep * late_pct / len(late_idx)
+
+    out = np.zeros(len(time_arr))
+    out[early_idx] = H2O_early
+    out[late_idx] = H2O_late
+    return out
 
 def get_ice_thickness(ice_mass, density=ICE_DENSITY, cold_trap_area=COLDTRAP_AREA):
     """
@@ -660,32 +706,77 @@ def get_diam_array(regime):
     return np.linspace(dmin, dmax, n + 1)
 
 
-def diam2len(diams, speeds, regime):
+# Crater scaling laws
+def diam2len(diams, speeds=None, regime='C'):
     """
-    Return size of impactor based on diam of crater.
+    Return size of impactors based on diam and sometimes speeds of craters.
     
-    Regime C (Prieur et al., 2017)
+    Different crater regimes are scaled via the following scaling laws:
+    - regime=='C': (Prieur et al., 2017)
+    - regime=='D': (Collins et al., 2005)
+    - regime=='E': (Johnson et al., 2016)
 
-    Regime D (Collins et al., 2005)
-
-    Regime E (Johnson et al., 2016)
+    Parameters
+    ----------
+    diams (arr): Crater diameters.
+    speeds (arr): Impactor speeds.
+    regime (str): Crater scaling regime ('C', 'D', or 'E').
     """
-    # TODO: Kristen
+    diams_trans = final2transient(diams)
     if regime == 'C':
-        impactor_length = 0
+        impactor_length = diam2len_prieur(diams_trans, speeds)
     elif regime == 'D':
-        impactor_length = 0
+        impactor_length = diam2len_collins(diams_trans, speeds)
     elif regime == 'E':
-        impactor_length = diam2len_johnson(diams)
+        impactor_length = diam2len_johnson(diams_trans)
     else:
         raise ValueError(f'Invalid regime {regime} in diam2len')
     return impactor_length
+
+
+def final2transient(diams):
+    """
+    Return the transient crater diameter from final craters diams.
+
+    Parameters
+    ----------
+    """
+    # TODO
+    transient_diams = diams
+    return transient_diams
+
+
+def diam2len_prieur(diam, speeds, rho_i=IMPACTOR_DENSITY, rho_t=TARGET_DENSITY, 
+                     g=G_MOON, v=IMPACT_SPEED, theta=IMPACT_ANGLE):
+    """
+    Return impactor length from input diam using Prieur et al. (2017) method.
+    """
+    return diam
+
+
+def diam2len_collins(diam, speeds, rho_i=IMPACTOR_DENSITY, rho_t=TARGET_DENSITY, 
+                     g=G_MOON, v=IMPACT_SPEED, theta=IMPACT_ANGLE):
+    """
+    Return impactor length from input diam using Collins et al. (2005) method.
+    """
+    return diam
 
 
 def diam2len_johnson(diam, rho_i=IMPACTOR_DENSITY, rho_t=TARGET_DENSITY, 
                      g=G_MOON, v=IMPACT_SPEED, theta=IMPACT_ANGLE):
     """
     Return impactor length from input diam using Johnson et al. (2016) method.
+
+    Parameters
+    ----------
+    diam (num or arr): Crater diameters [m].
+    rho_i (num): Impactor density [kg m^-3].
+    ...
+    ...
+
+    Return
+    ------
+    impactor_length (num or arr): Impactor lengths [m].
     """
     Dstar=(1.62 * 2700 * 1.8e4) / (g * rho_t)
     denom = (1.52 * (rho_i / rho_t)**0.38 * v**0.5 * g**-0.25 * 
