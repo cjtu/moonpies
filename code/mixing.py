@@ -1,6 +1,6 @@
 """
 Main mixing module adapted from Cannon et al. (2020)
-Date: 06/10/21
+Date: 06/14/21
 Authors: CJ Tai Udovicic, K Frizzell, K Luchsinger, A Madera, T Paladino
 
 Set params and run this file. 
@@ -19,7 +19,7 @@ import pandas as pd
 
 # Metadata
 RUN_DATETIME = pd.Timestamp.now().strftime('%Y/%m/%d-%H:%M:%S')
-RUN = 'week2'
+RUN = 'week3'
 RANDOM_SEED = 0  # Set seed to make reproducible random results
 
 # Paths
@@ -43,6 +43,7 @@ VOLCANIC_COLS = ('age', 'tot_vol', 'sphere_mass', 'min_CO', 'max_CO',
                 'max_atm_loss')
 
 # Parameters
+MODEL_MODE = 'cannon'  # ['cannon', 'updated']
 ICE_DENSITY = 934  # [kg / m^3] - make sure this is a good number
 COLDTRAP_AREA = 13e3  # [m^2]
 COLDTRAP_MAX_TEMP = 120  # [K]
@@ -53,7 +54,7 @@ IMPACT_SPEED = 20000  # [m/s] average impact speed
 IMPACT_ANGLE = 45  # [deg]  average impact velocity
 TARGET_DENSITY = 1500  # [kg / m^3]
 # EJECTA_THICKNESS_EXPONENT = # [-3.5, -3, -2.5] min, avg, max Kring 1995
-VOLCANIC_SPECIES = 'min_H20'  # volcanic species, must be in VOLCANIC_COLS
+VOLCANIC_SPECIES = 'min_H2O'  # volcanic species, must be in VOLCANIC_COLS
 VOLCANIC_POLE_PCT = 0.1  # Needham & Kring: 0.1, Head & Wilson: 0
 
 # Constants
@@ -116,8 +117,12 @@ def main(write=True):
     ej_dist = get_ejecta_distances(df)
     ej_thickness = get_ejecta_thickness(ej_dist, df.rad.values)  # shape: (NY,NX,len(df))
     volcanic_ice_matrix = get_volcanic_ice()  # shape: 1D len(time_arr)
-    ballistic_sed_matrix = get_ballistic_sed(df)  # shape: (NY,NX,len(df))
-    sublimation_thickness = get_sublimation_rate()  # [m]
+
+    if MODEL_MODE == 'cannon':
+        ballistic_sed_matrix = sublimation_thickness = None
+    else:
+        ballistic_sed_matrix = get_ballistic_sed(df)  # shape: (NY,NX,len(df))
+        sublimation_thickness = get_sublimation_rate()  # [m]
 
     # Init arrays
     ice_cols = init_ice_columns(df)  # 1D ice thickness column
@@ -125,50 +130,35 @@ def main(write=True):
     ejecta_matrix = np.zeros((_NY, _NX, NT))  # ejecta thickness, grid over time [m]
 
     # Main time loop
+    c = None
     for t, time in enumerate(_TIME_ARR):
-        crater = c = None
         # If crater formed at this timestep, update ejecta_matrix and age_grid
-        make_crater = df[df.age.between(time - TIMESTEP/2, time + TIMESTEP/2)]
-        if len(make_crater) == 1:
-            c = int(make_crater.index[0])
+        new_craters = df[df.age.between(time - TIMESTEP/2, time + TIMESTEP/2)]
+        for c, row in new_craters.iterrows():
+            if c > 1 and MODEL_MODE != 'cannon':
+                print(f'Simultaneous craters at {time/1e9:.2f} Ga!')
+                # TODO throw error?
+
             crater = df.iloc[c]
             # Ejecta map - add ejecta thickness to this timestep
             # Age map - update age of surface interior to this crater
             ejecta_matrix[:, :, t] += ej_thickness[:, :, c]
             age_grid = update_age(age_grid, crater.x, crater.y, crater.rad, crater.age)
-        elif len(make_crater) > 1:
-            # TODO: throw error here - don't allow simultaneous craters
-            pass
+
         
         # Compute ice gained by all cold traps
         #  - add mass of ice from volcanism [kg]
         #  - add mass of ice from impacts [kg]
         #  - convert to thickness [m] (assumes ice is evenly distributed)
         new_ice_mass = 0
-        new_ice_mass += volcanic_ice_matrix[:, :, t] * ICE_HOP_EFFICIENCY
+        new_ice_mass += volcanic_ice_matrix[t] * ICE_HOP_EFFICIENCY
         new_ice_mass += total_impact_ice(time) * ICE_HOP_EFFICIENCY
         new_ice_thickness = get_ice_thickness(new_ice_mass)
 
-        # Update all tracked ice columns
-        for cname in ice_cols:
-            row, col, area, ice_column = ice_cols[cname]
-            if np.isnan(ice_column[t]):
-                # If crater doesn't exist yet, skip.
-                continue
-            
-            # Ice gained by column
-            ice_column[t] = new_ice_thickness
-
-            # Ice lost in column
-            ejecta_column = ejecta_matrix[row, col]
-            if c is not None:
-                ice_column = ballistic_sed_ice_column(ice_column, ballistic_sed_matrix[:, :, c])
-            ice_column = garden_ice_column(ice_column, ejecta_column, time)
-            ice_column = sublimate_ice_column(ice_column, sublimation_thickness)
-
-            # Other icy things
-            # thermal pumping?
-
+        ice_cols = update_ice_cols(t, c, ice_cols, new_ice_thickness, 
+                                   sublimation_thickness, ejecta_matrix, 
+                                   ballistic_sed_matrix)
+        
     # Format outputs
     ice_cols_df = pd.DataFrame({k:v[3] for k, v in ice_cols.items()})
     ice_cols_df.insert(0, 'time', _TIME_ARR)
@@ -206,6 +196,34 @@ def update_age(age_grid, x, y, radius, age, grd_x=_GRD_X, grd_y=_GRD_Y):
     
     age_grid[crater_mask] = age
     return age_grid
+
+
+def update_ice_cols(t, c, ice_cols, new_ice_thickness, sublimation_thickness,
+                    ejecta_matrix, ballistic_sed_matrix, mode=MODEL_MODE):
+    """Return ice_cols updated with new ice added and ice eroded dep on mode"""
+    # Update all tracked ice columns
+    for cname in ice_cols:
+        row, col, area, ice_column = ice_cols[cname]
+        ejecta_column = ejecta_matrix[row, col]
+        
+        # Ice gained by column
+        ice_column[t] = new_ice_thickness
+        
+        # Ice eroded in column
+        if mode == 'cannon':
+            ice_column = erode_ice_cannon(ice_column, ejecta_column, t)
+        else:    
+            if c is not None and ejecta_column[t] > 0:
+                ice_column = ballistic_sed_ice_column(c, ice_column, ballistic_sed_matrix)
+            ice_column = garden_ice_column(ice_column, ejecta_column, t)
+            ice_column = sublimate_ice_column(ice_column, sublimation_thickness)
+
+        # TODO: Other icy things?
+        # thermal pumping?
+        
+        # Save ice column
+        ice_cols[cname][3] = ice_column
+    return ice_cols
 
 
 def read_crater_list(crater_csv=CRATER_CSV, columns=CRATER_COLS):
@@ -248,15 +266,17 @@ def read_crater_list(crater_csv=CRATER_CSV, columns=CRATER_COLS):
 
     # Define optional columns
     if 'psr_area' in df.columns:
-        df['psr_area'] = df['psr_area'] * 1e6  # [km^2 -> m^2]
+        df['psr_area'] = df.psr_area * 1e6  # [km^2 -> m^2]
     else:
         # Estimate psr area as 90% of crater area
-        print('ugh')
         df['psr_area'] = 0.9 * np.pi * df.rad ** 2
 
     # Define new columns
-    df['x'], df['y'] = latlon2xy(df.lon, df.lat)
+    df['x'], df['y'] = latlon2xy(df.lat, df.lon)
     df['dist2pole'] = gc_dist(0, -90, df.lon, df.lat)
+
+    # Drop basins for now (>250 km diam)
+    df = df[df.diam <= 250e3]
     return df
 
 
@@ -295,13 +315,6 @@ def get_ejecta_thickness(distance, radius, simple2complex=SIMPLE2COMPLEX):
     return thickness
 
 
-def get_volcanic_ice(fvolcanic=VOLCANIC_CSV, dt=TIMESTEP, timestart=TIMESTART):
-    """
-    Return a matrix of the mass of volcanic ice produced at each timestep.
-    """
-    # TODO: add Tyler code
-    return np.zeros((_NX, _NY, NT))
-
 def get_volcanic_ice(f=VOLCANIC_CSV, cols=VOLCANIC_COLS,
                      species=VOLCANIC_SPECIES, pole_pct=VOLCANIC_POLE_PCT, 
                      coldtrap_area=COLDTRAP_AREA, 
@@ -328,52 +341,19 @@ def get_volcanic_ice(f=VOLCANIC_CSV, cols=VOLCANIC_COLS,
         return out
     
     area_frac = coldtrap_area / moon_area
-    df = read_volcanic_csv(f, cols)
+    df_volc = read_volcanic_csv(f, cols)
+
+    # Outer merge df_volc with time_arr to get df with all age timesteps
+    time_df = pd.DataFrame(time_arr, columns=['age'])
+    df = time_df.merge(df_volc, on='age', how='outer')
+
+    # Fill missing timesteps in df with linearly interpolation across age
     df = df.sort_values('age', ascending=False).reset_index(drop=True)
-    
-    timestart = time_arr[0]
-    dt = time_arr[1] - timestart
-    # Either remove old ages outside of range specified in input args or add on
-    # ages to beginning of df to match input args
-    if timestart <= df.age.max():
-        new_df = df[df.age.between(timestart+dt/2, 0)]
-        new_df.reset_index(drop=True)
-    else:
-        new_ages = 
-        year_diff = tstart_ga - max(df.age)
-        num_rows = int(year_diff/0.1)  # 0.1 is interval between years in atmosphere data
+    df_interp = df.set_index('age').interpolate()
 
-        ages_needed = np.linspace(max(TIME_ARR)/1e9,
-                                    max(df.age),
-                                    num_rows,
-                                    endpoint=False)
-
-        new_array = np.zeros((len(ages_needed), df.shape[1]))
-        # Place new ages into zeros array in correct position (0th)
-        new_array[:, 0] = ages_needed
-
-        new_df_row = pd.DataFrame(new_array, columns=cols)
-        # Concatenate
-        new_df = pd.concat([new_df_row, sdf]).reset_index(drop=True)
-
-    # Add on min of TIME_ARR to end of df
-    temp = pd.DataFrame([np.zeros(new_df.shape[1])], columns=cols)
-
-    new_df = new_df.append(temp, ignore_index=True)
-
-    # Insert age in years to df
-    new_df.insert(1, 'age_yrs', new_df.age*1e9, True)  # Add in column of ages in years
-
-    # Figure out how many data entries we need to create in new array to match TIME_ARR
-    div_num = int(round(new_df.age_yrs[0]-new_df.age_yrs[1])/dt)
-    return df
-
-        
-        # Loop through new_df and split up values based on div num into equal parts into out var.
-        for i, row in new_df.iterrows():
-            out[i*div_num:(i+1) * div_num] = row[col]/div_num
-
-        return out * AOI_frac * pole_perc
+    # Extract only relevant timesteps in time_arr and species column
+    out = df_interp.loc[time_arr, species].values
+    return out * area_frac * pole_pct
 
 
 def get_ice_thickness(ice_mass, density=ICE_DENSITY, cold_trap_area=COLDTRAP_AREA):
@@ -428,15 +408,39 @@ def init_ice_columns(df, craters=COLD_TRAP_CRATERS, time_arr=_TIME_ARR):
         row = int(round(crater.x / GRDSTEP))
         col = int(round(crater.y / GRDSTEP))
         area = crater.psr_area
-        ice_col = np.zeros(len(time_arr))
-        ice_col[crater.age < _TIME_ARR] = np.nan  # no ice before crater formed
+        ice_col = pd.Series(np.zeros(len(time_arr)))
+        # ice_col[crater.age < time_arr] = np.nan  # no ice before crater formed
         ice_columns[cname] = [row, col, area, ice_col]
     return ice_columns
 
 
-def ballistic_sed_ice_column(ice_column, ballistic_sed_grid):
+def ballistic_sed_ice_column(c, ice_column, ballistic_sed_matrix):
     """Return ice column with ballistic sed grid applied"""
+    ballistic_sed_grid = ballistic_sed_matrix[:, :, c]
     # TODO: add code from Kristen
+    return ice_column
+
+
+def erode_ice_cannon(ice_column, ejecta_column, t, ice_eroded=0.1, 
+                     ejecta_shield=0.4):
+    """"""
+    # Erosion base is most recent time when ejecta column was > ejecta_shield
+    erosion_base = np.argmax(ejecta_column > ejecta_shield)
+    
+    # No erosion if t <= erosion_base
+    if t <= erosion_base:
+        return ice_column
+    
+    # Else: garden from top of ice column until ice_eroded amount is removed
+    layer = t
+    while ice_eroded > 0:
+        if ice_column[layer] >= ice_eroded:
+            ice_column[layer] -= ice_eroded
+            ice_eroded = 0
+        else:
+            ice_eroded = ice_eroded - ice_column[layer]
+            ice_column[layer] = 0
+            layer -= 1
     return ice_column
 
 
@@ -694,8 +698,8 @@ def diam2len_johnson(diam, rho_i=IMPACTOR_DENSITY, rho_t=TARGET_DENSITY,
 def latlon2xy(lat, lon, rp=R_MOON):
     """Return (x, y) [rp units] S. Pole stereo coords from (lon, lat) [deg]."""
     lat, lon = np.deg2rad(lat), np.deg2rad(lon)
-    y = - rp * np.cos(lat) * np.sin(lon)
-    x = rp * np.cos(lat) * np.cos(lon) 
+    x = rp * np.cos(lat) * np.sin(lon)
+    y = rp * np.cos(lat) * np.cos(lon) 
     return x, y
 
 
@@ -703,7 +707,7 @@ def xy2latlon(x, y, rp=R_MOON):
     """Return (lat, lon) [deg] from S. Pole stereo coords (x, y) [rp units]."""
     z = np.sqrt(rp**2 - x**2 - y**2)
     lat = -np.arcsin(z / rp)
-    lon = np.arctan2(-y, x)
+    lon = np.arctan2(x, y)
     return np.rad2deg(lat), np.rad2deg(lon)
 
 
