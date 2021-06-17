@@ -9,13 +9,9 @@ All model results are saved to OUTPATH.
 
 # From Jupyter, in first cell type:
 import os
-os.chdir('/home/cjtu/projects/essi21/code')
+os.chdir('/home/user/path/to/code/') 
 import mixing
-ej_cols, ice_cols, ice_meta, run_meta, age_grid, ej_matrix = mixing.main()
-
-# Code Profiling (trace efficiency)
-python -m cProfile -o mixing.prof mixing.py
-snakeviz mixing.prof
+ej_cols_df, ice_cols_df, age_grid, ejecta_matrix = mixing.main()
 """
 import os
 import numpy as np
@@ -39,18 +35,10 @@ CRATER_CSV = DATAPATH + 'crater_list.csv'
 CRATER_COLS = ('cname', 'lat', 'lon', 'diam', 'age', 'age_low', 'age_upp', 
                'psr_area', 'age_ref', 'priority', 'notes')
 
-# Model grid
-GRDXSIZE = 400e3  # [m]
-GRDYSIZE = 400e3  # [m]
-GRDSTEP = 1e3  # [m / pixel]
-
-TIMESTEP = 5e6  # [yr]
-TIMESTART = 4.3e9  # [yr]
-
 # Parameters
 MODEL_MODE = 'cannon'  # ['cannon', 'updated']
 ICE_DENSITY = 934  # [kg / m^3] - make sure this is a good number
-COLDTRAP_AREA = 1.3e10  # [m^2]  TODO: check line 149, cannon ds01
+COLDTRAP_AREA = 13e3  # [m^2]
 COLDTRAP_MAX_TEMP = 120  # [K]
 ICE_HOP_EFFICIENCY = 0.054  # Cannon 2020
 IMPACTOR_DENSITY = 1300  # [kg / m^3], Cannon 2020
@@ -61,8 +49,6 @@ IMPACT_ANGLE = 45  # [deg]  average impact velocity
 TARGET_DENSITY = 1500  # [kg / m^3]
 BULK_DENSITY = 2700  # [kg / m^3]
 # EJECTA_THICKNESS_EXPONENT = # [-3.5, -3, -2.5] min, avg, max Kring 1995
-ICE_EROSION_RATE = 0.1 * (TIMESTEP / 10e6)  # [m], 10 cm / 10 Ma (Cannon 2020)
-
 VOLC_MODE = 'Head'  # ['Head', 'Needham]
 
 # Head et al. (2020)
@@ -91,19 +77,24 @@ SIMPLE2COMPLEX = 18e3  # [m], lunar simple to complex transition diameter
 COMPLEX2PEAKRING = 1.4e5  # [m], lunar complex to peak ring transition diameter
 
 # Names of files to export
-SAVE_NPY = False  # npy save is slow - only make age_grid, ejecta_matrix as needed? 
+AGE_GRID_NPY = OUTPATH + f'age_grid_{RUN}.npy'
+EJECTA_MATRIX_NPY = OUTPATH + f'ejecta_matrix_{RUN}.npy'
 EJ_COLS_CSV = OUTPATH + f'ej_columns_{RUN}.csv'
 ICE_COLS_CSV = OUTPATH + f'ice_columns_{RUN}.csv'
 ICE_META_CSV = OUTPATH + f'ice_metadata_{RUN}.csv'
 RUN_META_CSV = OUTPATH + f'run_metadata_{RUN}.csv'
-AGE_GRID_NPY = OUTPATH + f'age_grid_{RUN}.npy'
-EJECTA_MATRIX_NPY = OUTPATH + f'ejecta_matrix_{RUN}.npy'
 
 # Set options
 COLD_TRAP_CRATERS = ['Haworth', 'Shoemaker', 'Faustini', 'Shackleton',
                      'Amundsen', 'Sverdrup', 'Cabeus B', 'de Gerlache', 
                      "Idel'son L", 'Wiechert J']
 
+GRDXSIZE = 400e3  # [m]
+GRDYSIZE = 400e3  # [m]
+GRDSTEP = 1e3  # [m / pixel]
+
+TIMESTEP = 10e6  # [yr]
+TIMESTART = 4.3e9  # [yr]
 
 # Make random number generator
 _RNG = np.random.default_rng(seed=RANDOM_SEED)
@@ -137,8 +128,9 @@ def main(write=True):
     # Before loop (setup)
     df = read_crater_list()
     df = randomize_crater_ages(df)
-    ej_thickness_matrix = get_ejecta_thickness_matrix(df)  # shape: (NY,NX,NT)
-    volcanic_ice_matrix = get_volcanic_ice(mode=VOLC_MODE)  # shape: (NT)
+    ej_dist = get_ejecta_distances(df)
+    ej_thickness = get_ejecta_thickness(ej_dist, df.rad.values)  # shape: (NY,NX,len(df))
+    volcanic_ice_matrix = get_volcanic_ice(mode=VOLC_MODE)  # shape: 1D len(time_arr)
 
     if MODEL_MODE == 'cannon':
         ballistic_sed_matrix = sublimation_thickness = None
@@ -146,12 +138,27 @@ def main(write=True):
         ballistic_sed_matrix = get_ballistic_sed(df)  # shape: (NY,NX,len(df))
         sublimation_thickness = get_sublimation_rate()  # [m]
 
-    # Init ice columns dictionary based on desired COLD_TRAP_CRATERS
-    ice_cols = init_ice_columns(df)
+    # Init arrays
+    ice_cols = init_ice_columns(df)  # 1D ice thickness column
+    age_grid = np.ones((_NY, _NX)) * TIMESTART  # age of youngest crater on grid [yr]
+    ejecta_matrix = np.zeros((_NY, _NX, NT))  # ejecta thickness, grid over time [m]
 
     # Main time loop
     c = None
     for t, time in enumerate(_TIME_ARR):
+        # If crater formed at this timestep, update ejecta_matrix and age_grid
+        new_craters = df[df.age.between(time - TIMESTEP/2, time + TIMESTEP/2)]
+        for c, row in new_craters.iterrows():
+            if c > 1 and MODEL_MODE != 'cannon':
+                print(f'Simultaneous craters at {time/1e9:.2f} Ga!')
+                # TODO throw error?
+
+            crater = df.iloc[c]
+            # Ejecta map - add ejecta thickness to this timestep
+            # Age map - update age of surface interior to this crater
+            ejecta_matrix[:, :, t] += ej_thickness[:, :, c]
+            age_grid = update_age(age_grid, crater)
+
         # Compute ice mass [kg] gained by all processes
         new_ice_mass = 0
         new_ice_mass += volcanic_ice_matrix[t] * ICE_HOP_EFFICIENCY
@@ -160,53 +167,16 @@ def main(write=True):
         # Convert mass [kg] to thickness [m] assuming ice evenly distributed
         new_ice_thickness = get_ice_thickness(new_ice_mass)
         ice_cols = update_ice_cols(t, c, ice_cols, new_ice_thickness, 
-                                   sublimation_thickness, ej_thickness_matrix, 
+                                   sublimation_thickness, ejecta_matrix, 
                                    ballistic_sed_matrix)
-
-    age_grid = get_age_grid(df)  # shape: (NY, NX) age of youngest impact
-    df_outputs = format_outputs(ej_thickness_matrix, ice_cols)
-    outputs = [*df_outputs, age_grid, ej_thickness_matrix]
+    
+    outputs = format_outputs(ejecta_matrix, ice_cols)
     if write:
         fnames = (EJ_COLS_CSV, ICE_COLS_CSV, ICE_META_CSV, RUN_META_CSV,
                   AGE_GRID_NPY, EJECTA_MATRIX_NPY)
-        # Numpy outputs take a long time to write - do we need them?
-        if SAVE_NPY:
-            save_outputs(outputs, fnames)
-        else:
-            save_outputs(outputs[:-2], fnames[:-2])
+        save_outputs([*outputs, age_grid, ejecta_matrix], fnames)
+
     return outputs
-
-
-def get_age_grid(df, grd_x=_GRD_X, grd_y=_GRD_Y, timestart=TIMESTART):
-    """Return final surface age of each grid point after all craters formed."""
-    age_grid = np.ones((grd_y.shape[0], grd_x.shape[1])) * timestart
-    for i, crater in df.iterrows():
-        age_grid = update_age(age_grid, crater, grd_x, grd_y)
-    return age_grid
-
-
-def get_ejecta_thickness_matrix(df, time_arr=_TIME_ARR):
-    """
-    Return ejecta_matrix of thickness [m] at each time in time_arr.
-    """
-    # Compute ejecta thicknesses of each crater
-    ejecta_dist = get_ejecta_distances(df)
-    ejecta_thickness = get_ejecta_thickness(ejecta_dist, df.rad.values)
-
-    # Find indices of crater ages in time_arr
-    # Note: searchsorted must be ascending, so do -time_arr (-4.3, 0) Ga
-    time_idx = np.searchsorted(-time_arr, -df.age.values)
-
-    # Fill ejecta_thickness_time with values from ejecta_thickness
-    nx, ny = ejecta_thickness.shape[:2]
-    nt = len(time_arr)
-    ejecta_thickness_time = np.zeros((ny, nx, nt))
-
-    for c_idx, t_idx in enumerate(time_idx):
-        # Loop is needed to sum ejecta formed at same t_idx
-        ejecta_thickness_time[:, :, t_idx] += ejecta_thickness[:, :, c_idx]
-
-    return ejecta_thickness_time
 
 
 def format_outputs(ej_matrix, ice_cols):
@@ -262,8 +232,8 @@ def update_age(age_grid, crater, grd_x=_GRD_X, grd_y=_GRD_Y):
     """
     Return new age grid updating the points interior to crater with its age.
     """
-    crater_mask = ((np.abs(grd_x - crater.x) < crater.rad) * 
-                   (np.abs(grd_y - crater.y) < crater.rad))
+    crater_mask = ((np.abs(grd_x - crater.x) < crater.radius) * 
+                   (np.abs(grd_y - crater.y) < crater.radius))
     age_grid[crater_mask] = crater.age
     return age_grid
 
@@ -380,7 +350,7 @@ def get_ejecta_thickness(distance, radius, simple2complex=SIMPLE2COMPLEX):
     """
     # TODO: account for simple craters
     thickness = 0.14 * radius**0.74 * (distance / radius)**(-3.0)
-    thickness = np.nan_to_num(thickness)  # fill nan with 0
+    thickness[np.isnan(thickness)] = 0
     return thickness
 
 
@@ -511,7 +481,7 @@ def init_ice_columns(df, craters=COLD_TRAP_CRATERS, time_arr=_TIME_ARR):
         row = int(round(crater.x / GRDSTEP))
         col = int(round(crater.y / GRDSTEP))
         area = crater.psr_area
-        ice_col = np.zeros(len(time_arr))
+        ice_col = pd.Series(np.zeros(len(time_arr)))
         # ice_col[crater.age < time_arr] = np.nan  # no ice before crater formed
         ice_columns[cname] = [row, col, area, ice_col]
     return ice_columns
@@ -524,31 +494,26 @@ def ballistic_sed_ice_column(c, ice_column, ballistic_sed_matrix):
     return ice_column
 
 
-def erode_ice_cannon(ice_column, ejecta_column, t, ice_to_erode=0.1, 
+def erode_ice_cannon(ice_column, ejecta_column, t, ice_eroded=0.1, 
                      ejecta_shield=0.4):
     """"""
-    # BUG in Cannon ds01: erosion base not updated for adjacent ejecta layers
     # Erosion base is most recent time when ejecta column was > ejecta_shield
     erosion_base = np.argmax(ejecta_column > ejecta_shield)
     
-    # Garden from top of ice column until ice_to_erode amount is removed
-    # BUG in Cannon ds01: doesn't account for partial shielding by small ej
+    # No erosion if t <= erosion_base
+    if t <= erosion_base:
+        return ice_column
+    
+    # Else: garden from top of ice column until ice_eroded amount is removed
     layer = t
-    while ice_to_erode > 0 and layer >= 0:
-        if layer < erosion_base:
-            # End loop if we reach erosion base
-            # BUG in Cannon ds01: t should be layer
-            # - loop doesn't end if we reach erosion base while eroding
-            # - loop only ends here if we started at erosion_base
-            break
-        ice_in_layer = ice_column[layer]
-        if ice_in_layer >= ice_to_erode:
-            ice_column[layer] -= ice_to_erode
+    while ice_eroded > 0:
+        if ice_column[layer] >= ice_eroded:
+            ice_column[layer] -= ice_eroded
+            ice_eroded = 0
         else:
+            ice_eroded = ice_eroded - ice_column[layer]
             ice_column[layer] = 0
-        ice_to_erode -= ice_in_layer
-        layer -= 1
-    print(layer)
+            layer -= 1
     return ice_column
 
 
@@ -631,7 +596,7 @@ def ice_small_impactors(diams, num_per_bin, density=IMPACTOR_DENSITY):
     impactor diams, num_per_bin, and density.
     """
     impactor_masses = diam2vol(diams) * density  # [kg]
-    total_impactor_mass = np.sum(impactor_masses * num_per_bin)
+    total_impactor_mass = sum(impactor_masses * num_per_bin)
     total_impactor_water = impactor_mass2water(total_impactor_mass)
 
     # Avg retention from Ong et al., 2011 (16.5% all asteroid mass retained)
@@ -645,7 +610,7 @@ def ice_small_craters(crater_diams, craters, regime, v=IMPACT_SPEED,
     """
     impactor_diams = diam2len(crater_diams, v, regime)  # [m]
     impactor_masses = diam2vol(impactor_diams) * impactor_density  # [kg]
-    total_impactor_mass = np.sum(impactor_masses * craters)
+    total_impactor_mass = sum(impactor_masses * craters)
     total_impactor_water = impactor_mass2water(total_impactor_mass)
 
     # Avg retention from Ong et al., 2011 (16.5% all asteroid mass retained)
@@ -682,7 +647,7 @@ def ice_large_craters(crater_diams, regime, impactor_density=IMPACTOR_DENSITY):
     ice_masses = water_masses
 
     # TODO: Why not avg retention from Ong et al. here?
-    return np.sum(ice_masses)
+    return sum(ice_masses)
 
 def impactor_mass2water(impactor_mass):
     """
@@ -714,8 +679,8 @@ def get_impactor_pop(age, regime):
     
     # Scale by size-frequency distribution
     sfd = impactor_diams**sfd_slope[regime]
-    sfd_prob = sfd / np.sum(sfd)
-    impactors = sfd_prob * n_impactors
+    impactors = sfd * (n_impactors / sum(sfd))
+
     return impactor_diams, impactors
 
 
@@ -732,17 +697,16 @@ def get_crater_pop(age, regime):
     # Scale for timestep, surface area and impact flux
     n_craters *= (1e7/1e9) * 3.79e7 * impact_flux(age) / impact_flux(0)
     sfd = crater_diams ** sfd_slope[regime]
-    sfd_prob = sfd / np.sum(sfd)
     if regime == 'C':
         # Steep branch of sfd (simple)
-        craters = sfd_prob * n_craters
+        craters = sfd * (n_craters / sum(sfd))
         return crater_diams, craters
 
     # Regimes D and E: shallow branch of sfd (simple / complex)
     n_craters = probabalistic_round(n_craters)
 
     # Resample crater diameters with replacement, weighted by sfd
-    crater_diams = _RNG.choice(crater_diams, n_craters, p=sfd_prob)   
+    crater_diams = _RNG.choice(crater_diams, n_craters, p=sfd/sum(sfd))   
     return crater_diams
 
 
