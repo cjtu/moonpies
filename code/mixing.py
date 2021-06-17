@@ -24,7 +24,7 @@ import pandas as pd
 # Metadata
 RUN_DATETIME = pd.Timestamp.now().strftime('%Y/%m/%d-%H:%M:%S')
 RUN = 'week3'
-RANDOM_SEED = 0  # Set seed to make reproducible random results
+RANDOM_SEED = 5  # Set seed to make reproducible random results
 
 # Paths
 if 'JPY_PARENT_PID' in os.environ:
@@ -45,23 +45,32 @@ GRDYSIZE = 400e3  # [m]
 GRDSTEP = 1e3  # [m / pixel]
 
 TIMESTEP = 5e6  # [yr]
-TIMESTART = 4.3e9  # [yr]
+TIMESTART = 4.25e9  # [yr]
 
 # Parameters
 MODEL_MODE = 'cannon'  # ['cannon', 'updated']
-ICE_DENSITY = 934  # [kg / m^3] - make sure this is a good number
-COLDTRAP_AREA = 1.3e10  # [m^2]  TODO: check line 149, cannon ds01
+ICE_DENSITY = 934  # [kg / m^3], Cannon 2020 (TODO: stesting)
 COLDTRAP_MAX_TEMP = 120  # [K]
-ICE_HOP_EFFICIENCY = 0.054  # Cannon 2020
+COLDTRAP_AREA = 1.3e4*1e6  # [m^2], (Williams 2019, via Text S1, Cannon 2020)  
+ICE_HOP_EFFICIENCY = 0.054  # 5.4% gets to the S. Pole (Text S1, Cannon 2020)
 IMPACTOR_DENSITY = 1300  # [kg / m^3], Cannon 2020
-# IMPACTOR_DENSITY = 3000  # [kg / m^3] ordinary chondrite density
-IMPACT_SPEED = 17e3  # [m/s] average impact speed
-# IMPACT_SPEED = 20e3  # [m/s] used in impactor scaling, regime C, Cannon 2020
+# IMPACTOR_DENSITY = 3000  # [kg / m^3] ordinary chondrite (for testing Melosh scaling laws)
+# IMPACT_SPEED = 17e3  # [m/s] average impact speed (for testing crater scaling laws - is probably a better value?)
+IMPACT_SPEED = 20e3  # [m/s] Cannon 2020 (both avg speed and mean of random speeds)
+IMPACT_SD = 6e3  # [m/s] Cannon 2020 (standard dev for random speeds)
+ESCAPE_VEL = 2.38e3  # [m/s] lunar escape velocity
 IMPACT_ANGLE = 45  # [deg]  average impact velocity
-TARGET_DENSITY = 1500  # [kg / m^3]
-BULK_DENSITY = 2700  # [kg / m^3]
+TARGET_DENSITY = 1500  # [kg / m^3], Cannon 2020
+BULK_DENSITY = 2700  # [kg / m^3], simple to complex (Melosh)
 # EJECTA_THICKNESS_EXPONENT = # [-3.5, -3, -2.5] min, avg, max Kring 1995
 ICE_EROSION_RATE = 0.1 * (TIMESTEP / 10e6)  # [m], 10 cm / 10 Ma (Cannon 2020)
+
+MM_MASS_RATE = 1e6  # [kg/yr], total micrometeorite mass per yr (Grun et al. 2011)
+CTYPE_FRAC = 0.36  # 36% of impactors are C-type (Jedicke et al., 2018)
+CTYPE_HYDRATED = 2/3  # 2/3 of C-types are hydrated (Rivkin, 2012)
+HYDRATED_WT_PCT = 0.1  # impactors are 10 wt% water (Cannon 2020)
+IMPACTOR_MASS_RETAINED = 0.165  # Asteroid mass retention (Ong et al., 2011)
+
 
 VOLC_MODE = 'Head'  # ['Head', 'Needham]
 
@@ -87,8 +96,8 @@ VOLC_COLS = ('age', 'tot_vol', 'sphere_mass', 'min_CO', 'max_CO',
 RAD_MOON = 1737e3  # [m], lunar radius
 GRAV_MOON = 1.62  # [m s^-2], gravitational acceleration
 SA_MOON = 4 * np.pi * RAD_MOON**2  # [m^2]
-SIMPLE2COMPLEX = 18e3  # [m], lunar simple to complex transition diameter
-COMPLEX2PEAKRING = 1.4e5  # [m], lunar complex to peak ring transition diameter
+SIMPLE2COMPLEX = 18e3  # [m], lunar simple to complex transition diameter (Melosh)
+COMPLEX2PEAKRING = 1.4e5  # [m], lunar complex to peak ring transition diameter (Melosh)
 
 # Names of files to export
 SAVE_NPY = False  # npy save is slow - only make age_grid, ejecta_matrix as needed? 
@@ -280,7 +289,8 @@ def update_ice_cols(t, c, ice_cols, new_ice_thickness, sublimation_thickness,
         
         # Ice eroded in column
         if mode == 'cannon':
-            ice_column = erode_ice_cannon(ice_column, ejecta_column, t)
+            pass
+            # ice_column = erode_ice_cannon(ice_column, ejecta_column, t)
         else:    
             if c is not None and ejecta_column[t] > 0:
                 ice_column = ballistic_sed_ice_column(c, ice_column, ballistic_sed_matrix)
@@ -529,12 +539,13 @@ def erode_ice_cannon(ice_column, ejecta_column, t, ice_to_erode=0.1,
     """"""
     # BUG in Cannon ds01: erosion base not updated for adjacent ejecta layers
     # Erosion base is most recent time when ejecta column was > ejecta_shield
-    erosion_base = np.argmax(ejecta_column > ejecta_shield)
+    erosion_base = np.argmax(ejecta_column[:t+1] > ejecta_shield)
     
     # Garden from top of ice column until ice_to_erode amount is removed
     # BUG in Cannon ds01: doesn't account for partial shielding by small ej
     layer = t
     while ice_to_erode > 0 and layer >= 0:
+        # if t < erosion_base:
         if layer < erosion_base:
             # End loop if we reach erosion base
             # BUG in Cannon ds01: t should be layer
@@ -548,7 +559,6 @@ def erode_ice_cannon(ice_column, ejecta_column, t, ice_to_erode=0.1,
             ice_column[layer] = 0
         ice_to_erode -= ice_in_layer
         layer -= 1
-    print(layer)
     return ice_column
 
 
@@ -595,6 +605,7 @@ def total_impact_ice(age, regimes=('A', 'B', 'C', 'D', 'E')):
     total_ice = 0  # [kg]
     for regime in regimes:
         if regime == 'A':
+            continue
             # Micrometeorites
             total_ice += ice_micrometeorites(age)
         elif regime == 'B':
@@ -611,18 +622,27 @@ def total_impact_ice(age, regimes=('A', 'B', 'C', 'D', 'E')):
             total_ice += ice_large_craters(crater_diams, regime)
     return total_ice
 
-def ice_micrometeorites(age, timestep=TIMESTEP):
+def ice_micrometeorites(age=0, timestep=TIMESTEP, mm_mass_rate=MM_MASS_RATE,
+                        hyd_wt_pct=HYDRATED_WT_PCT):
     """
     Return ice from micrometeorites (Regime A, Cannon 2020).
 
-    Grun et al. (2011) give 10**6 kg per year of < 1mm asteroid & comet grains.
+    Multiply total_mm_mass / yr by timestep and scale by assumed hydration %
+    and scale by ancient flux relative to today.
+    
+    Unlike larger impactors, we:
+    - Do NOT assume ctype composition and fraction of hydrated ctypes
+        - maybe bigger fraction of comet grain causese MMs to be more ice rich?
+    - Do NOT scale by asteroid retention rate (Ong et al., 2011)
+        - All micrometeorite material likely melt/vaporized & retained?
+
+    
     """
-    # Multiply by flux/yr by timestep and assume 10% hydration
-    scaling = timestep * 0.1
+    # Scale by ancient impact flux relative to today, assume some wt% hydration
+    scaling = hyd_wt_pct * impact_flux(age) / impact_flux(0)
+    micrometeorite_ice = timestep * scaling * mm_mass_rate
     # TODO: improve micrometeorite flux?
-    # TODO: why not impactor_mass2water() here?
-    # TODO: why not Avg retention from Ong et al., 2011
-    return scaling * impact_flux(age) / impact_flux(0)
+    return micrometeorite_ice 
 
 
 def ice_small_impactors(diams, num_per_bin, density=IMPACTOR_DENSITY):
@@ -634,8 +654,7 @@ def ice_small_impactors(diams, num_per_bin, density=IMPACTOR_DENSITY):
     total_impactor_mass = np.sum(impactor_masses * num_per_bin)
     total_impactor_water = impactor_mass2water(total_impactor_mass)
 
-    # Avg retention from Ong et al., 2011 (16.5% all asteroid mass retained)
-    return total_impactor_water * 0.165
+    return total_impactor_water
 
 
 def ice_small_craters(crater_diams, craters, regime, v=IMPACT_SPEED,
@@ -648,23 +667,22 @@ def ice_small_craters(crater_diams, craters, regime, v=IMPACT_SPEED,
     total_impactor_mass = np.sum(impactor_masses * craters)
     total_impactor_water = impactor_mass2water(total_impactor_mass)
 
-    # Avg retention from Ong et al., 2011 (16.5% all asteroid mass retained)
-    return total_impactor_water * 0.165
+    return total_impactor_water
 
 
-def ice_large_craters(crater_diams, regime, impactor_density=IMPACTOR_DENSITY):
+def ice_large_craters(crater_diams, regime, impactor_density=IMPACTOR_DENSITY,
+                      mean_impact_vel=IMPACT_SPEED, sd_impact_vel=IMPACT_SD,
+                      v_esc=ESCAPE_VEL, ctype_frac=CTYPE_FRAC, ctype_hyd=CTYPE_HYDRATED):
     """
     Return ice from simple/complex craters, shallow branch (Regime D-E, Cannon 2020).
     """
     # Randomly include only craters formed by hydrated, Ctype asteroids
-    # Uses same assumptions of impactor_mass2water()
-    # TODO: make these assumptions global parameters
     rand_arr = _RNG.random(size=len(crater_diams))
-    crater_diams = crater_diams[rand_arr < 0.36 * (2/3)]
+    crater_diams = crater_diams[rand_arr < CTYPE_FRAC * CTYPE_HYDRATED]
 
-    # Randomize impactor speeds with Gaussian around 20
-    impactor_speeds = _RNG.normal(20, 6, len(crater_diams))
-    impactor_speeds[impactor_speeds < 2.38] = 2.38 # minimum is Vesc
+    # Randomize impactor speeds with Gaussian around 20  # km/s
+    impactor_speeds = _RNG.normal(mean_impact_vel, sd_impact_vel, len(crater_diams))
+    impactor_speeds[impactor_speeds < v_esc] = v_esc # minimum is Vesc
     impactor_diams = diam2len(crater_diams, impactor_speeds, regime)
     impactor_masses =  diam2vol(impactor_diams) * impactor_density  # [kg]
 
@@ -684,33 +702,31 @@ def ice_large_craters(crater_diams, regime, impactor_density=IMPACTOR_DENSITY):
     # TODO: Why not avg retention from Ong et al. here?
     return np.sum(ice_masses)
 
-def impactor_mass2water(impactor_mass):
+
+def impactor_mass2water(impactor_mass, ctype_frac=CTYPE_FRAC, 
+                        ctype_hyd=CTYPE_HYDRATED, hyd_wt_pct=HYDRATED_WT_PCT,
+                        mass_retained=IMPACTOR_MASS_RETAINED):
     """
     Return water [kg] from impactor mass [kg] using assumptions of Cannon 2020:
         - 36% of impactors are C-type (Jedicke et al., 2018)
         - 2/3 of C-types are hydrated (Rivkin, 2012)
         - Hydrated impactors are 10% water by mass (Cannon et al., 2020)
+        - 16% of asteroid mass retained on impact (Ong et al. 2011)
     """
-    return 0.36 * (2/3) * 0.1 * impactor_mass
+    return ctype_frac * ctype_hyd * hyd_wt_pct * impactor_mass * mass_retained
 
 
-def get_impactor_pop(age, regime):
+def get_impactor_pop(age, regime, timestep=TIMESTEP):
     """
     Return population of impactors and number in regime B.
 
     Use constants and eqn. 3 from Brown et al. (2002) to compute N craters. 
     """
     impactor_diams = get_diam_array(regime)
-
-    # Get number of impactors given min and max diam (Brown et al. 2002)
-    c = 1.568 # constant (Brown et al. 2002)
-    d = 2.7 # constant (Brown et al. 2002)
-    n_impactors_gt_low = 10**(c - d * np.log10(impactor_diams[0]))  # [yr^-1]
-    n_impactors_gt_high = 10**(c - d * np.log10(impactor_diams[-1]))  # [yr^-1]
-    n_impactors = n_impactors_gt_low - n_impactors_gt_high
+    n_impactors = get_impactors_brown(impactor_diams[0], impactor_diams[1])
     
-    # Scale for timestep, Earth-Moon ratio (Mazrouei 2019) and impact flux
-    n_impactors *= 1e7 * (1 / 22.5) * impact_flux(age) / impact_flux(0)
+    # Scale for timestep and impact flux
+    n_impactors *= timestep * impact_flux(age) / impact_flux(0)
     
     # Scale by size-frequency distribution
     sfd = impactor_diams**sfd_slope[regime]
@@ -719,7 +735,17 @@ def get_impactor_pop(age, regime):
     return impactor_diams, impactors
 
 
-def get_crater_pop(age, regime):
+def get_impactors_brown(mindiam, maxdiam, c0=1.568, d0=2.7):
+    """
+    Return number of impactors per yr in range (mindiam, maxdiam) [m] 
+    (Brown et al. 2002) and scale by Earth-Moon impact ratio (Mazrouei et al. 2019).
+    """
+    n_impactors_gt_low = 10**(c0 - d0 * np.log10(mindiam))  # [yr^-1]
+    n_impactors_gt_high = 10**(c0 - d0 * np.log10(maxdiam))  # [yr^-1]
+    n_impactors = n_impactors_gt_low - n_impactors_gt_high
+    return n_impactors / 22.5  #  earth flux -> lunar flux
+
+def get_crater_pop(age, regime, timestep=TIMESTEP, sa_moon=SA_MOON):
     """
     Return population of crater diameters and number (regimes C - E).
 
@@ -730,7 +756,7 @@ def get_crater_pop(age, regime):
     crater_diams = get_diam_array(regime)
     n_craters = neukum(crater_diams[0]) - neukum(crater_diams[-1])
     # Scale for timestep, surface area and impact flux
-    n_craters *= (1e7/1e9) * 3.79e7 * impact_flux(age) / impact_flux(0)
+    n_craters *= timestep * sa_moon * impact_flux(age) / impact_flux(0)
     sfd = crater_diams ** sfd_slope[regime]
     sfd_prob = sfd / np.sum(sfd)
     if regime == 'C':
@@ -749,18 +775,26 @@ def get_crater_pop(age, regime):
 def impact_flux(time):
     """Return impact flux at time [yrs] (Derivative of eqn. 1, Ivanov 2008)."""
     time = time * 1e-9  # [yrs -> Ga] 
-    return 6.93 * 5.44e-14 * (np.exp(6.93 * time)) + 8.38e-4
+    flux = 6.93 * 5.44e-14 * (np.exp(6.93 * time)) + 8.38e-4
+    return flux * 1e9  # [yrs]
 
 
 def neukum(diam, fit='1983'):
-    """Return number of craters at diam (eqn. 2, Neukum 2001)."""
+    """
+    Return number of craters at diam [m] (eqn. 2, Neukum 2001).
+    
+    Eqn 2 expects diam [km], returns N [km^-2 Ga^-1].
+
+    """
     a = {
         '1983': (-3.0768, -3.6269, 0.4366, 0.7935, 0.0865, -0.2649, -0.0664, 
                  0.0379, 0.0106, -0.0022, -5.18e-4, 3.97e-5),
         '2000': ()  # TODO: copy other chronology function
     }
+    diam = diam * 1e-3  # [m] -> [km]
     j = np.arange(len(a[fit]))
-    return 10 ** np.sum(a[fit] * np.log10(diam)**j)
+    ncraters = 10**np.sum(a[fit] * np.log10(diam)**j)  # [km^-2 Ga^-1]
+    return ncraters * 1e-6 * 1e-9  # [km^-2 Ga^-1] -> [m^-2 yr^-1]
 
 
 def get_diam_array(regime):
