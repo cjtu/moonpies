@@ -1,6 +1,6 @@
 """
 Main mixing module adapted from Cannon et al. (2020)
-Date: 06/17/21
+Date: 06/21/21
 Authors: CJ Tai Udovicic, K Frizzell, K Luchsinger, A Madera, T Paladino
 
 Set params and run this file. 
@@ -732,6 +732,7 @@ def ice_micrometeorites(
     timestep=TIMESTEP,
     mm_mass_rate=MM_MASS_RATE,
     hyd_wt_pct=HYDRATED_WT_PCT,
+    mass_retained=IMPACTOR_MASS_RETAINED
 ):
     """
     Return ice from micrometeorites (Regime A, Cannon 2020).
@@ -747,7 +748,8 @@ def ice_micrometeorites(
     """
     # Scale by ancient impact flux relative to today, assume some wt% hydration
     scaling = hyd_wt_pct * impact_flux(age) / impact_flux(0)
-    micrometeorite_ice = timestep * scaling * mm_mass_rate
+    micrometeorite_ice = timestep * scaling * mm_mass_rate * mass_retained
+    # TODO: Why don't we account for 36% CC and 2/3 of CC hydrated (like regime B, C)
     # TODO: improve micrometeorite flux?
     return micrometeorite_ice
 
@@ -852,7 +854,7 @@ def get_impactor_pop(age, regime, sfd_slope=-3, timestep=TIMESTEP):
     Use constants and eqn. 3 from Brown et al. (2002) to compute N craters.
     """
     impactor_diams = get_diam_array(regime)
-    n_impactors = get_impactors_brown(impactor_diams[0], impactor_diams[1])
+    n_impactors = get_impactors_brown(impactor_diams[0], impactor_diams[-1])
 
     # Scale for timestep and impact flux
     n_impactors *= timestep * impact_flux(age) / impact_flux(0)
@@ -941,9 +943,13 @@ def diam2len(diams, speeds=None, regime="C"):
 
     Parameters
     ----------
-    diams (arr): Crater diameters.
-    speeds (arr): Impactor speeds.
+    diams (arr): Crater diameters [m].
+    speeds (arr): Impactor speeds [m/s].
     regime (str): Crater scaling regime ('C', 'D', or 'E').
+
+    Return
+    ------
+    lengths (arr): Impactor diameters [m].
     """
     t_diams = final2transient(diams)
     if regime == "C":
@@ -1079,9 +1085,9 @@ def diam2len_collins(
     -------
     impactor_length (num): impactor diameter [m]
     """
-    trad = np.sin(np.deg2rad(theta))
+    cube_root_theta = np.sin(np.deg2rad(theta)) ** (1/3)
     denom = (
-        1.161 * (rho_i / rho_t) ** 0.33 * v ** 0.44 * g ** -0.22 * trad ** 0.33
+        1.161 * (rho_i / rho_t) ** (1/3) * v ** 0.44 * g ** -0.22 * cube_root_theta
     )
     impactor_length = (t_diam / denom) ** (1 / 0.78)
     return impactor_length
