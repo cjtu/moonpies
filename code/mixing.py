@@ -55,7 +55,7 @@ GRDXSIZE = 400e3  # [m]
 GRDYSIZE = 400e3  # [m]
 GRDSTEP = 1e3  # [m / pixel]
 
-TIMESTEP = 5e6  # [yr]
+TIMESTEP = 10e6  # [yr]
 TIMESTART = 4.25e9  # [yr]
 
 # Parameters
@@ -159,7 +159,20 @@ NEUKUM1983 = (
     -5.18e-4,
     3.97e-5,
 )
-NEUKUM2001 = ()
+IVANOV2000 = (
+    -3.0876,
+    -3.557528,
+    0.781027,
+    1.021521,
+    -0.156012,
+    -0.444058,
+    0.019977,
+    0.086850,
+    -0.005874,
+    -0.006809,
+    8.25e-4,
+    5.54e-5
+)
 
 # Names of files to export
 SAVE_NPY = False  # npy save is slow. Generate age / ejecta grids as needed
@@ -892,13 +905,13 @@ def get_crater_pop(age, regime, sfd_slope=-3, ts=TIMESTEP, sa_moon=SA_MOON):
 def impact_flux(time):
     """Return impact flux at time [yrs] (Derivative of eqn. 1, Ivanov 2008)."""
     time = time * 1e-9  # [yrs -> Ga]
-    flux = 6.93 * 5.44e-14 * (np.exp(6.93 * time)) + 8.38e-4
-    return flux * 1e9  # [yrs]
+    flux = 6.93 * 5.44e-14 * (np.exp(6.93 * time)) + 8.38e-4  # [n/Ga]
+    return flux * 1e-9  # [Ga^-1 -> yrs^-1]
 
 
-def neukum(diam, a_values=NEUKUM1983):
+def neukum(diam, a_values=IVANOV2000):
     """
-    Return number of craters at diam [m] (eqn. 2, Neukum 2001).
+    Return number of craters per m^2 per yr at diam [m] (eqn. 2, Neukum 2001).
 
     Eqn 2 expects diam [km], returns N [km^-2 Ga^-1].
 
