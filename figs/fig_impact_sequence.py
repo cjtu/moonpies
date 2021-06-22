@@ -69,7 +69,7 @@ for i, row in sdf.iterrows():
     ax.add_patch(ejecta)
     crater = plt.Circle((x, y), rad, color=crater_color)
     ax.add_patch(crater)
-
+   
     # Set frame title
     title = f'{name} ({age})'
     ax.set_title(title)

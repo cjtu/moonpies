@@ -1,11 +1,10 @@
 """
 Main mixing module adapted from Cannon et al. (2020)
-Date: 06/21/21
+Date: 06/22/21
 Authors: CJ Tai Udovicic, K Frizzell, K Luchsinger, A Madera, T Paladino
 
-Set params and run this file. 
+Set params and run this file.
 All model results are saved to OUTPATH.
-
 
 # From Jupyter, in first cell type:
 import os
@@ -23,8 +22,8 @@ import pandas as pd
 
 # Metadata
 RUN_DATETIME = pd.Timestamp.now().strftime("%Y/%m/%d-%H:%M:%S")
-RUN = "week3"
-RANDOM_SEED = 5  # Set seed to make reproducible random results
+RUN = "ensemble1"
+RANDOM_SEED = 1  # Set seed to make reproducible random results
 
 # Paths
 if "JPY_PARENT_PID" in os.environ:
@@ -91,7 +90,8 @@ DIAM_RANGE = {
     "B": (0.01, 3, 1e-4),  # Small impactors (1 mm - 3 m)
     "C": (100, 1.5e3, 1),  # Simple craters, steep sfd (100 m - 1.5 km)
     "D": (1.5e3, 15e3, 1e2),  # Simple craters, shallow sfd (1.5 km - 15 km)
-    "E": (15e3, 300e3, 1e3),  # Complex craters, shallow sfd (15 km - 300 km)
+    # "E": (15e3, 300e3, 1e3),  # Complex craters, shallow sfd (15 km - 300 km)
+    "E": (15e3, 500e3, 1e3),  # Complex craters, shallow sfd (15 km - 300 km)
 }
 
 SFD_SLOPES = {
@@ -171,7 +171,7 @@ IVANOV2000 = (
     -0.005874,
     -0.006809,
     8.25e-4,
-    5.54e-5
+    5.54e-5,
 )
 
 # Names of files to export
@@ -199,6 +199,7 @@ COLD_TRAP_CRATERS = (
 
 # Make random number generator
 def set_seed(seed=RANDOM_SEED):
+    """Return numpy random number generator at given seed."""
     return np.random.default_rng(seed=seed)
 
 
@@ -233,7 +234,7 @@ def main(write=True):
     """
     # Before loop (setup)
     df = read_crater_list()
-    df = randomize_crater_ages(df)
+    # df = randomize_crater_ages(df)
     ej_thickness_matrix = get_ejecta_thickness_matrix(df)  # shape: (NY,NX,NT)
     volcanic_ice_matrix = get_volcanic_ice(mode=VOLC_MODE)  # shape: (NT)
 
@@ -251,9 +252,9 @@ def main(write=True):
     for t, time in enumerate(_TIME_ARR):
         # Compute ice mass [kg] gained by all processes
         new_ice_mass = 0
-        new_ice_mass += volcanic_ice_matrix[t] * ICE_HOP_EFFICIENCY
-        new_ice_mass += total_impact_ice(time) * ICE_HOP_EFFICIENCY
-
+        new_ice_mass += volcanic_ice_matrix[t]
+        new_ice_mass += total_impact_ice(time)
+        new_ice_mass = new_ice_mass * ICE_HOP_EFFICIENCY
         # Convert mass [kg] to thickness [m] assuming ice evenly distributed
         new_ice_thickness = get_ice_thickness(new_ice_mass)
         ice_cols = update_ice_cols(
@@ -360,14 +361,14 @@ def randomize_crater_ages(df, mode=MODEL_MODE):
     Return ages randomized uniformly between agelow, ageupp.
     """
     # TODO: make sure ages are unique to each timestep?
-    ages, agelow, ageupp = df[['age', 'age_low', 'age_upp']].values.T
+    ages, agelow, ageupp = df[["age", "age_low", "age_upp"]].values.T
     new_ages = np.zeros(len(df))
     for i, (age, low, upp) in enumerate(zip(ages, agelow, ageupp)):
-        new_ages[i] = _RNG.uniform(age-low, age+upp)
-    if mode == 'cannon':
+        new_ages[i] = _RNG.uniform(age - low, age + upp)
+    if mode == "cannon":
         new_ages = np.round(new_ages, -7)
-    df['age'] = new_ages
-    df = df.sort_values('age', ascending=False)
+    df["age"] = new_ages
+    df = df.sort_values("age", ascending=False)
     return df
 
 
@@ -712,7 +713,7 @@ def sublimate_ice_column(ice_column, sublimation_rate):
     return ice_column
 
 
-def total_impact_ice(age, regimes=IMPACT_REGIMES, sfd_slopes=SFD_SLOPES):
+def total_impact_ice(age, regimes=IMPACT_REGIMES):
     """Return total impact ice from regimes and sfd_slopes (Cannon 2020)."""
     total_ice = 0  # [kg]
     for r in regimes:
@@ -721,16 +722,18 @@ def total_impact_ice(age, regimes=IMPACT_REGIMES, sfd_slopes=SFD_SLOPES):
             total_ice += ice_micrometeorites(age)
         elif r == "B":
             # Small impactors
-            impactor_diams, impactors = get_impactor_pop(age, r, sfd_slopes[r])
+            impactor_diams, impactors = get_impactor_pop(age, r)
             total_ice += ice_small_impactors(impactor_diams, impactors)
         elif r == "C":
             # Small simple craters (continuous)
-            crater_diams, craters = get_crater_pop(age, r, sfd_slopes[r])
+            crater_diams, craters = get_crater_pop(age, r)
             total_ice += ice_small_craters(crater_diams, craters, r)
         else:
             # Large simple & complex craters (stochastic)
-            crater_diams = get_crater_pop(age, r, sfd_slopes[r])
-            total_ice += ice_large_craters(crater_diams, r)
+            crater_diams = get_crater_pop(age, r)
+            crater_diams = get_random_hydrated_craters(crater_diams)
+            impactor_speeds = get_random_impactor_speeds(len(crater_diams))
+            total_ice += ice_large_craters(crater_diams, impactor_speeds, r)
     return total_ice
 
 
@@ -739,7 +742,7 @@ def ice_micrometeorites(
     timestep=TIMESTEP,
     mm_mass_rate=MM_MASS_RATE,
     hyd_wt_pct=HYDRATED_WT_PCT,
-    mass_retained=IMPACTOR_MASS_RETAINED
+    mass_retained=IMPACTOR_MASS_RETAINED,
 ):
     """
     Return ice from micrometeorites (Regime A, Cannon 2020).
@@ -787,32 +790,44 @@ def ice_small_craters(
     impactor_masses = diam2vol(impactor_diams) * impactor_density  # [kg]
     total_impactor_mass = np.sum(impactor_masses * ncraters)
     total_impactor_water = impactor_mass2water(total_impactor_mass)
-
     return total_impactor_water
+
+
+def get_random_hydrated_craters(
+    crater_diams, ctype_frac=CTYPE_FRAC, ctype_hyd=CTYPE_HYDRATED
+):
+    """
+    Return crater diams of hydrated craters from random distribution.
+    """
+    # Randomly include only craters formed by hydrated, Ctype asteroids
+    rand_arr = _RNG.random(size=len(crater_diams))
+    crater_diams = crater_diams[rand_arr < ctype_frac * ctype_hyd]
+    return crater_diams
+
+
+def get_random_impactor_speeds(
+    n, mean_speed=IMPACT_SPEED, sd_speed=IMPACT_SD, esc_vel=ESCAPE_VEL
+):
+    """
+    Return n impactor speeds from normal distribution about mean, sd.
+    """
+    # Randomize impactor speeds with Gaussian around mean, sd
+    impactor_speeds = _RNG.normal(mean_speed, sd_speed, n)
+    impactor_speeds[impactor_speeds < esc_vel] = esc_vel  # minimum is esc_vel
+    return impactor_speeds
 
 
 def ice_large_craters(
     crater_diams,
+    impactor_speeds,
     regime,
     impactor_density=IMPACTOR_DENSITY,
-    mean_speed=IMPACT_SPEED,
-    sd_speed=IMPACT_SD,
-    v_esc=ESCAPE_VEL,
-    ctype_frac=CTYPE_FRAC,
-    ctype_hyd=CTYPE_HYDRATED,
     hyd_wt_pct=HYDRATED_WT_PCT,
 ):
     """
     Return ice from simple/complex craters, shallow branch of sfd
     (Regime D-E, Cannon 2020).
     """
-    # Randomly include only craters formed by hydrated, Ctype asteroids
-    rand_arr = _RNG.random(size=len(crater_diams))
-    crater_diams = crater_diams[rand_arr < ctype_frac * ctype_hyd]
-
-    # Randomize impactor speeds with Gaussian around mean, sd
-    impactor_speeds = _RNG.normal(mean_speed, sd_speed, len(crater_diams))
-    impactor_speeds[impactor_speeds < v_esc] = v_esc  # minimum is Vesc
     impactor_diams = diam2len(crater_diams, impactor_speeds, regime)
     impactor_masses = diam2vol(impactor_diams) * impactor_density  # [kg]
 
@@ -830,6 +845,7 @@ def ice_retention_factor(speeds):
     For speeds >= 10 km/s, use eqn ? (Ong et al. 2010 via Cannon 2020)
     """
     # TODO: find/verify retention(speed) eqn in Ong et al. 2010?
+    # retention distribution is discontinuous
     speeds = speeds * 1e-3  # [m/s] -> [km/s]
     retained = np.ones(len(speeds)) * 0.5  # nominal 50%
     retained[speeds >= 10] = 36.26 * np.exp(-0.3464 * speeds[speeds >= 10])
@@ -854,37 +870,43 @@ def impactor_mass2water(
     return ctype_frac * ctype_hyd * hyd_wt_pct * impactor_mass * mass_retained
 
 
-def get_impactor_pop(age, regime, sfd_slope=-3, timestep=TIMESTEP):
+def get_impactor_pop(age, regime, sfd_slopes=SFD_SLOPES, timestep=TIMESTEP):
     """
     Return population of impactors and number in regime B.
 
     Use constants and eqn. 3 from Brown et al. (2002) to compute N craters.
     """
     impactor_diams = get_diam_array(regime)
-    n_impactors = get_impactors_brown(impactor_diams[0], impactor_diams[-1])
+    n_impactors = get_impactors_brown(
+        impactor_diams[0], impactor_diams[-1], timestep
+    )
 
     # Scale for timestep and impact flux
-    n_impactors *= timestep * impact_flux(age) / impact_flux(0)
+    flux_scaling = impact_flux(age) / impact_flux(0)
+    n_impactors *= flux_scaling
 
     # Scale by size-frequency distribution
-    sfd = impactor_diams ** sfd_slope
+    sfd = impactor_diams ** sfd_slopes[regime]
     sfd_prob = sfd / np.sum(sfd)
     impactors = sfd_prob * n_impactors
     return impactor_diams, impactors
 
 
-def get_impactors_brown(mindiam, maxdiam, c0=1.568, d0=2.7):
+def get_impactors_brown(mindiam, maxdiam, timestep=TIMESTEP, c0=1.568, d0=2.7):
     """
     Return number of impactors per yr in range (mindiam, maxdiam) [m]
     (Brown et al. 2002) and scale by Earth-Moon impact ratio (Mazrouei et al. 2019).
     """
     n_impactors_gt_low = 10 ** (c0 - d0 * np.log10(mindiam))  # [yr^-1]
     n_impactors_gt_high = 10 ** (c0 - d0 * np.log10(maxdiam))  # [yr^-1]
-    n_impactors = n_impactors_gt_low - n_impactors_gt_high
-    return n_impactors / 22.5  #  earth flux -> lunar flux
+    n_impactors_earth_yr = n_impactors_gt_low - n_impactors_gt_high
+    n_impactors_moon = n_impactors_earth_yr * timestep / 22.5
+    return n_impactors_moon
 
 
-def get_crater_pop(age, regime, sfd_slope=-3, ts=TIMESTEP, sa_moon=SA_MOON):
+def get_crater_pop(
+    age, regime, sfd_slopes=SFD_SLOPES, ts=TIMESTEP, sa_moon=SA_MOON
+):
     """
     Return population of crater diameters and number (regimes C - E).
 
@@ -896,7 +918,7 @@ def get_crater_pop(age, regime, sfd_slope=-3, ts=TIMESTEP, sa_moon=SA_MOON):
     n_craters = neukum(crater_diams[0]) - neukum(crater_diams[-1])
     # Scale for timestep, surface area and impact flux
     n_craters *= ts * sa_moon * impact_flux(age) / impact_flux(0)
-    sfd = crater_diams ** sfd_slope
+    sfd = crater_diams ** sfd_slopes[regime]
     sfd_prob = sfd / np.sum(sfd)
     if regime == "C":
         # Steep branch of sfd (simple)
@@ -964,13 +986,13 @@ def diam2len(diams, speeds=None, regime="C"):
     elif regime == "D":
         impactor_length = diam2len_collins(t_diams, speeds)
     elif regime == "E":
-        impactor_length = diam2len_johnson(t_diams)
+        impactor_length = diam2len_johnson(diams)
     else:
         raise ValueError(f"Invalid regime {regime} in diam2len")
     return impactor_length
 
 
-def final2transient(diams, g=GRAV_MOON, rho_t=TARGET_DENSITY):
+def final2transient(diams, g=GRAV_MOON):
     """
     Return transient crater diameters from final crater diams (Melosh 1989).
 
@@ -989,7 +1011,7 @@ def final2transient(diams, g=GRAV_MOON, rho_t=TARGET_DENSITY):
     eta = 0.13
 
     # Scale simple to complex diameter
-    ds2c = simple2complex_diam(g, rho_t)  # [m]
+    ds2c = simple2complex_diam(g)  # [m]
     s_idx = diams <= ds2c
     c_idx = diams > ds2c
 
@@ -1004,10 +1026,10 @@ def final2transient(diams, g=GRAV_MOON, rho_t=TARGET_DENSITY):
 
 def simple2complex_diam(
     gravity,
-    density,
-    s2c_moon=SIMPLE2COMPLEX,
-    g_moon=GRAV_MOON,
-    rho_moon=BULK_DENSITY,
+    density=BULK_DENSITY,
+    s2c_moon=18e3,
+    g_moon=1.62,
+    rho_moon=2700,
 ):
     """
     Return simple to complex transition diameter given gravity of body [m s^-2]
@@ -1057,11 +1079,11 @@ def diam2len_prieur(
     impactor_length (num): impactor diameter [m]
     """
     i_lengths = np.linspace(np.min(t_diam) / 100, np.max(t_diam), 10000)
-
+    i_masses = rho_i * diam2vol(i_lengths)
     # Prieur impactor len to crater diam equation
     numer = 1.6 * (1.61 * g * i_lengths / v ** 2) ** -0.22
-    denom = rho_t / (rho_i * diam2vol(i_lengths))
-    t_diams = numer / denom ** 0.33
+    denom = (rho_t / i_masses) ** (1 / 3)
+    t_diams = numer / denom
 
     # Interpolate to back out impactor len from diam
     impactor_length = np.interp(t_diam, t_diams, i_lengths)
@@ -1092,28 +1114,34 @@ def diam2len_collins(
     -------
     impactor_length (num): impactor diameter [m]
     """
-    cube_root_theta = np.sin(np.deg2rad(theta)) ** (1/3)
+    cube_root_theta = np.sin(np.deg2rad(theta)) ** (1 / 3)
     denom = (
-        1.161 * (rho_i / rho_t) ** (1/3) * v ** 0.44 * g ** -0.22 * cube_root_theta
+        1.161
+        * (rho_i / rho_t) ** (1 / 3)
+        * v ** 0.44
+        * g ** -0.22
+        * cube_root_theta
     )
     impactor_length = (t_diam / denom) ** (1 / 0.78)
     return impactor_length
 
 
 def diam2len_johnson(
-    t_diam,
+    diam,
     rho_i=IMPACTOR_DENSITY,
-    rho_t=TARGET_DENSITY,
+    rho_t=BULK_DENSITY,
     g=GRAV_MOON,
     v=IMPACT_SPEED,
     theta=IMPACT_ANGLE,
+    ds2c=SIMPLE2COMPLEX,
 ):
     """
-    Return impactor length from input diam using Johnson et al. (2016) method.
+    Return impactor length from final crater diam using Johnson et al. (2016)
+    method. TODO: Only valid for diam > ds2c.
 
     Parameters
     ----------
-    t_diam (num or array): transient crater diameter [m]
+    diam (num or array): crater diameter [m]
     speeds (num): impact speed (m s^-1)
     rho_i (num): impactor density (kg m^-3)
     rho_t (num): target density (kg m^-3)
@@ -1124,17 +1152,16 @@ def diam2len_johnson(
     -------
     impactor_length (num): impactor diameter [m]
     """
-    trad = np.sin(np.deg2rad(theta))
-    ds2c = simple2complex_diam(g, rho_t)
+    sin_theta = np.sin(np.deg2rad(theta))
     denom = (
         1.52
         * (rho_i / rho_t) ** 0.38
         * v ** 0.5
         * g ** -0.25
         * ds2c ** -0.13
-        * trad ** 0.38
+        * sin_theta ** 0.38
     )
-    impactor_length = (t_diam / denom) ** (1 / 0.88)
+    impactor_length = (diam / denom) ** (1 / 0.88)
     return impactor_length
 
 

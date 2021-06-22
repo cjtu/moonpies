@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "essi21"
-version = "0.1.0"
+version = "0.1.1"
 description = ""
 authors = ["Your Name <you@example.com>"]
 
@@ -17,6 +17,7 @@ imageio = "^2.9.0"
 snakeviz = "^2.1.0"
 black = "^21.6b0"
 pylint = "^2.8.3"
+pytest = "^6.2.4"
 
 [tool.black]
 line-length=79
