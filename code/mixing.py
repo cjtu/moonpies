@@ -355,12 +355,19 @@ def save_outputs(outputs, fnames, outpath=OUTPATH):
     print(f"All outputs saved to {outpath}")
 
 
-def randomize_crater_ages(df, timestep=TIMESTEP):
+def randomize_crater_ages(df, mode=MODEL_MODE):
     """
-    Return df with age column unique and randomized within age_low, age_upp
-    at timestep precision.
+    Return ages randomized uniformly between agelow, ageupp.
     """
-    # TODO: randomize crater ages, make sure all ages are unique
+    # TODO: make sure ages are unique to each timestep?
+    ages, agelow, ageupp = df[['age', 'age_low', 'age_upp']].values.T
+    new_ages = np.zeros(len(df))
+    for i, (age, low, upp) in enumerate(zip(ages, agelow, ageupp)):
+        new_ages[i] = _RNG.uniform(age-low, age+upp)
+    if mode == 'cannon':
+        new_ages = np.round(new_ages, -7)
+    df['age'] = new_ages
+    df = df.sort_values('age', ascending=False)
     return df
 
 
