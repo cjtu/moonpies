@@ -12,6 +12,10 @@ os.chdir('/home/cjtu/projects/essi21/code')
 import mixing
 ej_cols, ice_cols, ice_meta, run_meta, age_grid, ej_matrix = mixing.main()
 
+# Run with gnuparallel
+conda activate essi
+seq 10000 | parallel python mixing.py
+
 # Code Profiling (trace efficiency)
 python -m cProfile -o mixing.prof mixing.py
 snakeviz mixing.prof
@@ -20,10 +24,18 @@ import os
 import numpy as np
 import pandas as pd
 
+# Check if random seed passed on cmd line
+import sys
+if __name__ == '__main__' and len(sys.argv) > 1:
+    RANDOM_SEED = int(sys.argv[1])  # 1st cmd-line arg is seed
+else:
+    RANDOM_SEED = 0
+
 # Metadata
-RUN_DATETIME = pd.Timestamp.now().strftime("%Y/%m/%d-%H:%M:%S")
-RUN = "ensemble1"
-RANDOM_SEED = 1  # Set seed to make reproducible random results
+_VERBOSE = False
+_DATETIME = pd.Timestamp.now()
+RUN_DATETIME = _DATETIME.strftime('%Y/%m/%d-%H:%M:%S')
+RUN = _DATETIME.strftime('%y%m%d') + f'_cannon{RANDOM_SEED}'
 
 # Paths
 if "JPY_PARENT_PID" in os.environ:
@@ -339,7 +351,7 @@ def format_outputs(ej_matrix, ice_cols):
     return ej_df, ice_cols_df, ice_meta_df, run_meta_df
 
 
-def save_outputs(outputs, fnames, outpath=OUTPATH):
+def save_outputs(outputs, fnames, outpath=OUTPATH, verbose=_VERBOSE):
     """
     Save outputs to files in fnames in directory outpath.
     """
@@ -352,7 +364,8 @@ def save_outputs(outputs, fnames, outpath=OUTPATH):
             out.to_csv(fout, index=False)
         elif isinstance(out, np.ndarray):
             np.save(fout, out)
-        print(f"Saved {fname}")
+        if verbose:
+            print(f"Saved {fname}")
     print(f"All outputs saved to {outpath}")
 
 
