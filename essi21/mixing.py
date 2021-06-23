@@ -3,20 +3,30 @@ Main mixing module adapted from Cannon et al. (2020)
 Date: 06/22/21
 Authors: CJ Tai Udovicic, K Frizzell, K Luchsinger, A Madera, T Paladino
 
-Set params and run this file.
 All model results are saved to OUTPATH.
 
-# From Jupyter, in first cell type:
+# From command line (requires python, numpy, pandas)
+     <seed> is any integer (default 0) and makes run deterministic
+     change seed between runs to get different randomness
+
+python mixing.py <seed>
+
+# From Jupyter, make sure to os.chdir to location of this file:
+    use import mixing to run any function in this file e.g. mixing.main()
+
 import os
 os.chdir('/home/cjtu/projects/essi21/code')
 import mixing
 ej_cols, ice_cols, ice_meta, run_meta, age_grid, ej_matrix = mixing.main()
 
-# Run with gnuparallel (50 in 26s, 1000 in 5min 40s, 53min 15s)
-conda activate essi
-seq 10000 | parallel -j-1 python mixing.py
+# Run with gnuparallel (6 s/run normal, 0.35 s/run 48 cores)
+    parallel -P-1 uses all cores except 1
 
-# Code Profiling (trace efficiency)
+conda activate essi
+seq 10000 | parallel -P-1 python mixing.py
+
+# Code Profiling (pip install snakeviz)
+
 python -m cProfile -o mixing.prof mixing.py
 snakeviz mixing.prof
 """
@@ -25,9 +35,8 @@ from functools import lru_cache
 import numpy as np
 import pandas as pd
 
-# Check if random seed passed on cmd line
+# Use random seed if passed on cmd line, else 0
 import sys
-
 if __name__ == "__main__" and len(sys.argv) > 1:
     RANDOM_SEED = int(sys.argv[1])  # 1st cmd-line arg is seed
 else:
@@ -37,15 +46,16 @@ else:
 _VERBOSE = False
 _DATETIME = pd.Timestamp.now()
 RUN_DATETIME = _DATETIME.strftime("%Y/%m/%d-%H:%M:%S")
-RUN = f"cannon{RANDOM_SEED:05d}"
+RUN_DIR = _DATETIME.strftime("%y%m%d")  # today's date, feel free to change
+RUN = f"cannon{RANDOM_SEED:05d}"  # seed necessary here data isn't overwritten
 
-# Paths
+# Paths (try to guess DATAPATH, but you can it manually)
 if "JPY_PARENT_PID" in os.environ:
-    FPATH = os.getcwd() + os.sep
+    _FPATH = os.getcwd() + os.sep
 else:
-    FPATH = os.path.abspath(os.path.dirname(__file__)) + os.sep
-DATAPATH = os.path.abspath(FPATH + "../data/") + os.sep
-OUTPATH = os.path.join(DATAPATH, _DATETIME.strftime("%y%m%d"), RUN) + os.sep
+    _FPATH = os.path.abspath(os.path.dirname(__file__)) + os.sep
+DATAPATH = os.path.abspath(_FPATH + "../data/") + os.sep
+OUTPATH = os.path.join(DATAPATH, RUN_DIR, RUN) + os.sep  # each run get a dir
 
 # Files to import (# of COLS must equal # columns in CSV)
 CRATER_CSV = DATAPATH + "crater_list.csv"
@@ -215,15 +225,17 @@ COLD_TRAP_CRATERS = (
 def set_seed(seed=RANDOM_SEED):
     """Return numpy random number generator at given seed."""
     return np.random.default_rng(seed=seed)
-
-
 _RNG = set_seed()
 
 # Make arrays
-_GRD_Y, _GRD_X = np.ogrid[
-    GRDYSIZE:-GRDYSIZE:-GRDSTEP, -GRDXSIZE:GRDXSIZE:GRDSTEP
-]
-_TIME_ARR = np.linspace(TIMESTART, TIMESTEP, int(TIMESTART / TIMESTEP))
+_DTYPEF = np.float32  # np.float64 (32 should be good for most purposes)
+_DTYPEI = np.uint32  # np.uint64 (NOTE: range 0 to 4.3e9, use 64 if expanding timearr)
+_GRD_Y, _GRD_X = np.meshgrid(
+    np.arange(GRDYSIZE, -GRDYSIZE, -GRDSTEP, dtype=_DTYPEI), 
+    np.arange(-GRDXSIZE, GRDXSIZE, GRDSTEP, dtype=_DTYPEI), 
+    sparse=True, indexing='ij'
+)
+_TIME_ARR = np.linspace(TIMESTART, TIMESTEP, int(TIMESTART / TIMESTEP), dtype=_DTYPEI)
 
 # Length of arrays
 _NY, _NX = _GRD_Y.shape[0], _GRD_X.shape[1]
@@ -248,7 +260,7 @@ def main(write=True):
     """
     # Before loop (setup)
     df = read_crater_list()
-    # df = randomize_crater_ages(df)
+    df = randomize_crater_ages(df)
     ej_thickness_matrix = get_ejecta_thickness_matrix(df)  # shape: (NY,NX,NT)
     volcanic_ice_matrix = get_volcanic_ice(mode=VOLC_MODE)  # shape: (NT)
 
@@ -296,7 +308,8 @@ def main(write=True):
 
 def get_age_grid(df, grd_x=_GRD_X, grd_y=_GRD_Y, timestart=TIMESTART):
     """Return final surface age of each grid point after all craters formed."""
-    age_grid = np.ones((grd_y.shape[0], grd_x.shape[1])) * timestart
+    ny, nx = grd_y.shape[0], grd_x.shape[1]
+    age_grid = timestart * np.ones((ny, nx), dtype=_DTYPEI) 
     for _, crater in df.iterrows():
         age_grid = update_age(age_grid, crater, grd_x, grd_y)
     return age_grid
@@ -306,7 +319,6 @@ def get_ejecta_thickness_matrix(df, time_arr=_TIME_ARR):
     """
     Return ejecta_matrix of thickness [m] at each time in time_arr.
     """
-
     # Ejecta thickness vs crater matrix (one grid per crater)
     ej_thick = get_ejecta_thickness(get_ejecta_distances(df), df.rad.values)
 
@@ -315,19 +327,20 @@ def get_ejecta_thickness_matrix(df, time_arr=_TIME_ARR):
     time_idx = np.searchsorted(-time_arr, -df.age.values)
 
     # Fill ejecta thickness vs time matrix (one grid per timestep)
-    ej_thick_time = np.zeros((*ej_thick.shape[:2], len(time_arr)))
+    ny, nx = ej_thick.shape[:2]
+    ej_thick_time = np.zeros((ny, nx, len(time_arr)), dtype=_DTYPEF)
     for c_idx, t_idx in enumerate(time_idx):
         # Note: Loop is needed to sum ejecta formed at same t_idx
         ej_thick_time[:, :, t_idx] += ej_thick[:, :, c_idx]
     return ej_thick_time
 
 
-def format_outputs(ej_matrix, ice_cols):
+def format_outputs(ej_matrix, ice_cols, time_arr=_TIME_ARR):
     """
     Return all formatted model outputs and write to outpath, if specified.
     """
-    ej_dict = {"time": _TIME_ARR}
-    ice_dict = {"time": _TIME_ARR}
+    ej_dict = {"time": time_arr}
+    ice_dict = {"time": time_arr}
     ice_meta = []
     for cname, (row, col, area, ice_column) in ice_cols.items():
         ej_dict[cname] = ej_matrix[row, col]
@@ -367,17 +380,20 @@ def save_outputs(outputs, fnames, outpath=OUTPATH, verbose=_VERBOSE):
     print(f"All outputs saved to {outpath}")
 
 
-def randomize_crater_ages(df, mode=MODEL_MODE):
+def round_to_ts(values, timestep):
+    """Return values rounded to nearest timestep."""
+    return np.around(values / timestep) * timestep
+
+
+def randomize_crater_ages(df, timestep=TIMESTEP):
     """
     Return ages randomized uniformly between agelow, ageupp.
     """
     # TODO: make sure ages are unique to each timestep?
     ages, agelow, ageupp = df[["age", "age_low", "age_upp"]].values.T
-    new_ages = np.zeros(len(df))
+    new_ages = np.zeros(len(df), dtype=_DTYPEI)
     for i, (age, low, upp) in enumerate(zip(ages, agelow, ageupp)):
-        new_ages[i] = _RNG.uniform(age - low, age + upp)
-    if mode == "cannon":
-        new_ages = np.round(new_ages, -7)
+        new_ages[i] = round_to_ts(_RNG.uniform(age - low, age + upp), timestep)
     df["age"] = new_ages
     df = df.sort_values("age", ascending=False)
     return df
@@ -500,7 +516,8 @@ def get_ejecta_distances(df, grd_x=_GRD_X, grd_y=_GRD_Y):
 
     Distances computed with simple dist. Distances within crater rad are NaN.
     """
-    ej_dist_all = np.zeros([_NY, _NX, len(df)])
+    ny, nx = grd_y.shape[0], grd_x.shape[1]
+    ej_dist_all = np.zeros([ny, nx, len(df)], dtype=_DTYPEF)
     for i, crater in df.iterrows():
         ej_dist = dist(crater.x, crater.y, grd_x, grd_y)
         ej_dist[ej_dist < crater.rad] = np.nan
@@ -595,7 +612,7 @@ def volcanic_ice_head(
     H2O_early = tot_H2O_dep * early_pct / len(early_idx)
     H2O_late = tot_H2O_dep * late_pct / len(late_idx)
 
-    out = np.zeros(len(time_arr))
+    out = np.zeros(len(time_arr), dtype=_DTYPEF)
     out[early_idx] = H2O_early
     out[late_idx] = H2O_late
     return out
@@ -616,7 +633,7 @@ def get_ballistic_sed(df):
     Return ballistic sedimentation mixing depths for each crater.
     """
     # TODO: add Kristen code
-    return np.zeros((_NY, _NX, len(df)))
+    return np.zeros((_NY, _NX, len(df)), dtype=_DTYPEI)
 
 
 def get_sublimation_rate(timestep=TIMESTEP, temp=COLDTRAP_MAX_TEMP):
@@ -657,7 +674,7 @@ def init_ice_columns(df, craters=COLD_TRAP_CRATERS, time_arr=_TIME_ARR):
         row = int(round(crater.x / GRDSTEP))
         col = int(round(crater.y / GRDSTEP))
         area = crater.psr_area
-        ice_col = np.zeros(len(time_arr))
+        ice_col = np.zeros(len(time_arr), dtype=_DTYPEF)
         # ice_col[crater.age < time_arr] = np.nan  # 0 ice before crater formed
         ice_columns[cname] = [row, col, area, ice_col]
     return ice_columns
@@ -858,7 +875,7 @@ def ice_retention_factor(speeds):
     # TODO: find/verify retention(speed) eqn in Ong et al. 2010?
     # BUG? retention distribution is discontinuous
     speeds = speeds * 1e-3  # [m/s] -> [km/s]
-    retained = np.ones(len(speeds)) * 0.5  # nominal 50%
+    retained = np.ones(len(speeds), dtype=_DTYPEF) * 0.5  # nominal 50%
     retained[speeds >= 10] = 36.26 * np.exp(-0.3464 * speeds[speeds >= 10])
     retained[retained < 0] = 0
     return retained
@@ -973,7 +990,7 @@ def get_diam_array(regime, diam_range=DIAM_RANGE):
     """Return array of diameters based on diameters in diam_range."""
     dmin, dmax, step = diam_range[regime]
     n = int((dmax - dmin) / step)
-    return np.linspace(dmin, dmax, n + 1)
+    return np.linspace(dmin, dmax, n + 1, dtype=_DTYPEF)
 
 
 # Crater scaling laws
@@ -1090,7 +1107,7 @@ def diam2len_prieur(
     -------
     impactor_length (num): impactor diameter [m]
     """
-    i_lengths = np.linspace(t_diam[0] / 100, t_diam[-1], 1000)
+    i_lengths = np.linspace(t_diam[0] / 100, t_diam[-1], 1000, dtype=_DTYPEF)
     i_masses = rho_i * diam2vol(i_lengths)
     # Prieur impactor len to crater diam equation
     numer = 1.6 * (1.61 * g * i_lengths / v ** 2) ** -0.22
