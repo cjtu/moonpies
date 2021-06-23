@@ -12,21 +12,23 @@ os.chdir('/home/cjtu/projects/essi21/code')
 import mixing
 ej_cols, ice_cols, ice_meta, run_meta, age_grid, ej_matrix = mixing.main()
 
-# Run with gnuparallel
+# Run with gnuparallel (50 in 26s, 1000 in 5min 40s, 53min 15s)
 conda activate essi
-seq 10000 | parallel python mixing.py
+seq 10000 | parallel -j-1 python mixing.py
 
 # Code Profiling (trace efficiency)
 python -m cProfile -o mixing.prof mixing.py
 snakeviz mixing.prof
 """
 import os
+from functools import lru_cache
 import numpy as np
 import pandas as pd
 
 # Check if random seed passed on cmd line
 import sys
-if __name__ == '__main__' and len(sys.argv) > 1:
+
+if __name__ == "__main__" and len(sys.argv) > 1:
     RANDOM_SEED = int(sys.argv[1])  # 1st cmd-line arg is seed
 else:
     RANDOM_SEED = 0
@@ -34,8 +36,8 @@ else:
 # Metadata
 _VERBOSE = False
 _DATETIME = pd.Timestamp.now()
-RUN_DATETIME = _DATETIME.strftime('%Y/%m/%d-%H:%M:%S')
-RUN = _DATETIME.strftime('%y%m%d') + f'_cannon{RANDOM_SEED}'
+RUN_DATETIME = _DATETIME.strftime("%Y/%m/%d-%H:%M:%S")
+RUN = f"cannon{RANDOM_SEED:05d}"
 
 # Paths
 if "JPY_PARENT_PID" in os.environ:
@@ -43,7 +45,7 @@ if "JPY_PARENT_PID" in os.environ:
 else:
     FPATH = os.path.abspath(os.path.dirname(__file__)) + os.sep
 DATAPATH = os.path.abspath(FPATH + "../data/") + os.sep
-OUTPATH = DATAPATH + RUN + os.sep
+OUTPATH = os.path.join(DATAPATH, _DATETIME.strftime("%y%m%d"), RUN) + os.sep
 
 # Files to import (# of COLS must equal # columns in CSV)
 CRATER_CSV = DATAPATH + "crater_list.csv"
@@ -304,24 +306,20 @@ def get_ejecta_thickness_matrix(df, time_arr=_TIME_ARR):
     """
     Return ejecta_matrix of thickness [m] at each time in time_arr.
     """
-    # Compute ejecta thicknesses of each crater
-    ejecta_dist = get_ejecta_distances(df)
-    ejecta_thickness = get_ejecta_thickness(ejecta_dist, df.rad.values)
+
+    # Ejecta thickness vs crater matrix (one grid per crater)
+    ej_thick = get_ejecta_thickness(get_ejecta_distances(df), df.rad.values)
 
     # Find indices of crater ages in time_arr
     # Note: searchsorted must be ascending, so do -time_arr (-4.3, 0) Ga
     time_idx = np.searchsorted(-time_arr, -df.age.values)
 
-    # Fill ejecta_thickness_time with values from ejecta_thickness
-    nx, ny = ejecta_thickness.shape[:2]
-    nt = len(time_arr)
-    ejecta_thickness_time = np.zeros((ny, nx, nt))
-
+    # Fill ejecta thickness vs time matrix (one grid per timestep)
+    ej_thick_time = np.zeros((*ej_thick.shape[:2], len(time_arr)))
     for c_idx, t_idx in enumerate(time_idx):
-        # Loop is needed to sum ejecta formed at same t_idx
-        ejecta_thickness_time[:, :, t_idx] += ejecta_thickness[:, :, c_idx]
-
-    return ejecta_thickness_time
+        # Note: Loop is needed to sum ejecta formed at same t_idx
+        ej_thick_time[:, :, t_idx] += ej_thick[:, :, c_idx]
+    return ej_thick_time
 
 
 def format_outputs(ej_matrix, ice_cols):
@@ -518,7 +516,7 @@ def get_ejecta_thickness(distance, radius, simple2complex=SIMPLE2COMPLEX):
     """
     # TODO: account for simple craters
     thickness = 0.14 * radius ** 0.74 * (distance / radius) ** (-3.0)
-    thickness = np.nan_to_num(thickness)  # fill nan with 0
+    thickness[np.isnan(thickness)] = 0
     return thickness
 
 
@@ -686,8 +684,8 @@ def erode_ice_cannon(
     # BUG in Cannon ds01: doesn't account for partial shielding by small ej
     layer = t
     while ice_to_erode > 0 and layer >= 0:
-        # if t < erosion_base:
-        if layer < erosion_base:
+        if t < erosion_base:
+            # if layer < erosion_base:
             # End loop if we reach erosion base
             # BUG in Cannon ds01: t should be layer
             # - loop doesn't end if we reach erosion base while eroding
@@ -858,7 +856,7 @@ def ice_retention_factor(speeds):
     For speeds >= 10 km/s, use eqn ? (Ong et al. 2010 via Cannon 2020)
     """
     # TODO: find/verify retention(speed) eqn in Ong et al. 2010?
-    # retention distribution is discontinuous
+    # BUG? retention distribution is discontinuous
     speeds = speeds * 1e-3  # [m/s] -> [km/s]
     retained = np.ones(len(speeds)) * 0.5  # nominal 50%
     retained[speeds >= 10] = 36.26 * np.exp(-0.3464 * speeds[speeds >= 10])
@@ -894,17 +892,22 @@ def get_impactor_pop(age, regime, sfd_slopes=SFD_SLOPES, timestep=TIMESTEP):
         impactor_diams[0], impactor_diams[-1], timestep
     )
 
-    # Scale for timestep and impact flux
+    # Scale for timestep, impact flux and size-frequency dist
     flux_scaling = impact_flux(age) / impact_flux(0)
-    n_impactors *= flux_scaling
-
-    # Scale by size-frequency distribution
-    sfd = impactor_diams ** sfd_slopes[regime]
-    sfd_prob = sfd / np.sum(sfd)
-    impactors = sfd_prob * n_impactors
-    return impactor_diams, impactors
+    sfd_prob = get_sfd_prob(regime)
+    n_impactors *= flux_scaling * sfd_prob
+    return impactor_diams, n_impactors
 
 
+@lru_cache(4)
+def get_sfd_prob(regime, sfd_slopes=SFD_SLOPES):
+    """Return size-frequency distribution probability given diams, sfd slope."""
+    diams = get_diam_array(regime)
+    sfd = diams ** sfd_slopes[regime]
+    return sfd / np.sum(sfd)
+
+
+@lru_cache(1)
 def get_impactors_brown(mindiam, maxdiam, timestep=TIMESTEP, c0=1.568, d0=2.7):
     """
     Return number of impactors per yr in range (mindiam, maxdiam) [m]
@@ -917,9 +920,7 @@ def get_impactors_brown(mindiam, maxdiam, timestep=TIMESTEP, c0=1.568, d0=2.7):
     return n_impactors_moon
 
 
-def get_crater_pop(
-    age, regime, sfd_slopes=SFD_SLOPES, ts=TIMESTEP, sa_moon=SA_MOON
-):
+def get_crater_pop(age, regime, ts=TIMESTEP, sa_moon=SA_MOON):
     """
     Return population of crater diameters and number (regimes C - E).
 
@@ -928,15 +929,14 @@ def get_crater_pop(
     Randomly resample large simple & complex crater diameters.
     """
     crater_diams = get_diam_array(regime)
+    sfd_prob = get_sfd_prob(regime)
     n_craters = neukum(crater_diams[0]) - neukum(crater_diams[-1])
     # Scale for timestep, surface area and impact flux
     n_craters *= ts * sa_moon * impact_flux(age) / impact_flux(0)
-    sfd = crater_diams ** sfd_slopes[regime]
-    sfd_prob = sfd / np.sum(sfd)
     if regime == "C":
         # Steep branch of sfd (simple)
-        craters = sfd_prob * n_craters
-        return crater_diams, craters
+        n_craters *= sfd_prob
+        return crater_diams, n_craters
 
     # Regimes D and E: shallow branch of sfd (simple / complex)
     n_craters = probabalistic_round(n_craters)
@@ -946,6 +946,7 @@ def get_crater_pop(
     return crater_diams
 
 
+@lru_cache(4)
 def impact_flux(time):
     """Return impact flux at time [yrs] (Derivative of eqn. 1, Ivanov 2008)."""
     time = time * 1e-9  # [yrs -> Ga]
@@ -953,6 +954,7 @@ def impact_flux(time):
     return flux * 1e-9  # [Ga^-1 -> yrs^-1]
 
 
+@lru_cache(6)
 def neukum(diam, a_values=IVANOV2000):
     """
     Return number of craters per m^2 per yr at diam [m] (eqn. 2, Neukum 2001).
@@ -966,6 +968,7 @@ def neukum(diam, a_values=IVANOV2000):
     return ncraters * 1e-6 * 1e-9  # [km^-2 Ga^-1] -> [m^-2 yr^-1]
 
 
+@lru_cache(4)
 def get_diam_array(regime, diam_range=DIAM_RANGE):
     """Return array of diameters based on diameters in diam_range."""
     dmin, dmax, step = diam_range[regime]
@@ -995,7 +998,7 @@ def diam2len(diams, speeds=None, regime="C"):
     """
     t_diams = final2transient(diams)
     if regime == "C":
-        impactor_length = diam2len_prieur(t_diams, speeds)
+        impactor_length = diam2len_prieur(tuple(t_diams), speeds)
     elif regime == "D":
         impactor_length = diam2len_collins(t_diams, speeds)
     elif regime == "E":
@@ -1005,7 +1008,9 @@ def diam2len(diams, speeds=None, regime="C"):
     return impactor_length
 
 
-def final2transient(diams, g=GRAV_MOON):
+def final2transient(
+    diams, g=GRAV_MOON, ds2c=SIMPLE2COMPLEX, gamma=1.25, eta=0.13
+):
     """
     Return transient crater diameters from final crater diams (Melosh 1989).
 
@@ -1019,21 +1024,14 @@ def final2transient(diams, g=GRAV_MOON):
     -------
     transient_diams (num or array): transient crater diameters [m]
     """
-    # Parameters from Melosh (1989)
-    gamma = 1.25
-    eta = 0.13
+    # Scale simple to complex diameter (only if target is not Moon)
+    # ds2c = simple2complex_diam(g)  # [m]
 
-    # Scale simple to complex diameter
-    ds2c = simple2complex_diam(g)  # [m]
-    s_idx = diams <= ds2c
-    c_idx = diams > ds2c
-
-    # Convert final diams to transient diams
-    t_diams = np.zeros(len(diams))
-    t_diams[s_idx] = diams[s_idx] / gamma
-    t_diams[c_idx] = (1 / gamma) * (diams[c_idx] * ds2c ** eta) ** (
-        1 / (1 + eta)
-    )
+    # diams < simple2complex == diam/gamma, else use complex scaling
+    t_diams = np.copy(diams) / gamma
+    t_diams[diams > ds2c] = (1 / gamma) * (
+        diams[diams > ds2c] * ds2c ** eta
+    ) ** (1 / (1 + eta))
     return t_diams
 
 
@@ -1065,6 +1063,7 @@ def complex2peakring_diam(
     return g_moon * rho_moon * c2pr_moon / (gravity * density)
 
 
+@lru_cache(1)
 def diam2len_prieur(
     t_diam,
     v=IMPACT_SPEED,
@@ -1091,7 +1090,7 @@ def diam2len_prieur(
     -------
     impactor_length (num): impactor diameter [m]
     """
-    i_lengths = np.linspace(np.min(t_diam) / 100, np.max(t_diam), 10000)
+    i_lengths = np.linspace(t_diam[0] / 100, t_diam[-1], 1000)
     i_masses = rho_i * diam2vol(i_lengths)
     # Prieur impactor len to crater diam equation
     numer = 1.6 * (1.61 * g * i_lengths / v ** 2) ** -0.22

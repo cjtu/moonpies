@@ -229,21 +229,11 @@ def test_ice_large_craters_E():
 
 def test_get_diam_array():
     """Test get_diam_array"""
-    actual = mm.get_diam_array("B")
-    expected = np.linspace(0.01, 3, int((3 - 0.01) / 0.0001) + 1)
-    np.testing.assert_array_almost_equal(actual, expected)
-
-    actual = mm.get_diam_array("C")
-    expected = np.linspace(0.1e3, 1.5e3, int((1.5e3 - 0.1e3) / 0.001e3) + 1)
-    np.testing.assert_array_almost_equal(actual, expected)
-
-    actual = mm.get_diam_array("D")
-    expected = np.linspace(1.5e3, 15e3, int((15e3 - 1.5e3) / 0.1e3) + 1)
-    np.testing.assert_array_almost_equal(actual, expected)
-
-    actual = mm.get_diam_array("E")
-    expected = np.linspace(15e3, 300e3, int((300e3 - 15e3) / 1e3) + 1)
-    np.testing.assert_array_almost_equal(actual, expected)
+    for regime in ("B", "C", "D", "E"):
+        actual = mm.get_diam_array(regime)
+        low, upp, step = mm.DIAM_RANGE[regime]
+        expected = np.linspace(low, upp, int((upp - low) / step) + 1)
+        np.testing.assert_array_almost_equal(actual, expected)
 
 
 def test_final2transient():
