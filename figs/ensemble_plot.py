@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 # Set these paths to match your system
 # DATA_DIR should be full path to run_dir from mixing.py
 
-DATA_DIR = '/home/cjtu/projects/essi21/data/210623/'
+DATA_DIR = '/home/cjtu/projects/essi21/data/210624/'
 FIGPATH = '/home/cjtu/projects/essi21/figs/ensemble_ice.png'
 ICE_COL = 1  # Column to use from ice_cols.csv (1 up to #cols)
 

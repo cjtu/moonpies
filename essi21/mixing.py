@@ -15,7 +15,7 @@ python mixing.py <seed>
     use import mixing to run any function in this file e.g. mixing.main()
 
 import os
-os.chdir('/home/cjtu/projects/essi21/code')
+os.chdir('/home/cjtu/projects/essi21/essi21')
 import mixing
 ej_cols, ice_cols, ice_meta, run_meta, age_grid, ej_matrix = mixing.main()
 
@@ -96,7 +96,7 @@ ESCAPE_VEL = 2.38e3  # [m/s] lunar escape velocity
 IMPACT_ANGLE = 45  # [deg]  average impact velocity
 TARGET_DENSITY = 1500  # [kg m^-3] (Cannon 2020)
 BULK_DENSITY = 2700  # [kg m^-3] simple to complex (Melosh)
-# EJECTA_THICKNESS_EXPONENT = # [-3.5, -3, -2.5] min, avg, max Kring 1995
+EJECTA_THICKNESS_ORDER = -3  # min: -3.5, avg: -3, max: -2.5 (Kring 1995)
 ICE_EROSION_RATE = 0.1 * (TIMESTEP / 10e6)  # [m], 10 cm / 10 Ma (Cannon 2020)
 
 # Impact ice delivery
@@ -228,14 +228,13 @@ def set_seed(seed=RANDOM_SEED):
 _RNG = set_seed()
 
 # Make arrays
-_DTYPEF = np.float32  # np.float64 (32 should be good for most purposes)
-_DTYPEI = np.uint32  # np.uint64 (NOTE: range 0 to 4.3e9, use 64 if expanding timearr)
+_DTYPE = np.float32  # np.float64 (32 should be good for most purposes)
 _GRD_Y, _GRD_X = np.meshgrid(
-    np.arange(GRDYSIZE, -GRDYSIZE, -GRDSTEP, dtype=_DTYPEI), 
-    np.arange(-GRDXSIZE, GRDXSIZE, GRDSTEP, dtype=_DTYPEI), 
+    np.arange(GRDYSIZE, -GRDYSIZE, -GRDSTEP, dtype=_DTYPE), 
+    np.arange(-GRDXSIZE, GRDXSIZE, GRDSTEP, dtype=_DTYPE), 
     sparse=True, indexing='ij'
 )
-_TIME_ARR = np.linspace(TIMESTART, TIMESTEP, int(TIMESTART / TIMESTEP), dtype=_DTYPEI)
+_TIME_ARR = np.linspace(TIMESTART, TIMESTEP, int(TIMESTART / TIMESTEP), dtype=_DTYPE)
 
 # Length of arrays
 _NY, _NX = _GRD_Y.shape[0], _GRD_X.shape[1]
@@ -259,43 +258,37 @@ def main(write=True):
         b. update age grid
     """
     # Before loop (setup)
-    df = read_crater_list()
-    df = randomize_crater_ages(df)
-    ej_thickness_matrix = get_ejecta_thickness_matrix(df)  # shape: (NY,NX,NT)
-    volcanic_ice_matrix = get_volcanic_ice(mode=VOLC_MODE)  # shape: (NT)
+    df = read_crater_list()  # DataFrame, len: NC
+    df = randomize_crater_ages(df)  # DataFrame, len: NC
+    ej_thickness_time = get_ejecta_thickness_matrix(df)  # shape: (NY,NX,NT)
+    volcanic_ice_time = get_volcanic_ice(mode=VOLC_MODE)  # shape: (NT)
 
-    if MODEL_MODE == "cannon":
-        ballistic_sed_matrix = sublimation_thickness = None
-    else:
-        ballistic_sed_matrix = get_ballistic_sed(df)  # shape: (NY,NX,len(df))
-        sublimation_thickness = get_sublimation_rate()  # [m]
+    # if MODEL_MODE == "cannon":
+    #     ballistic_sed_matrix = sublimation_thickness = None
+    # else:
+    #     ballistic_sed_matrix = get_ballistic_sed(df)  # shape: (NY,NX,len(df))
+    #     sublimation_thickness = get_sublimation_rate()  # [m]
 
     # Init ice columns dictionary based on desired COLD_TRAP_CRATERS
-    ice_cols = init_ice_columns(df)
+    strat_cols = init_strat_columns(df, ej_thickness_time)
 
     # Main time loop
     c = None
     for t, time in enumerate(_TIME_ARR):
         # Compute ice mass [kg] gained by all processes
-        new_ice_mass = 0
-        new_ice_mass += volcanic_ice_matrix[t]
-        new_ice_mass += total_impact_ice(time)
-        new_ice_mass = new_ice_mass * ICE_HOP_EFFICIENCY
-        # Convert mass [kg] to thickness [m] assuming ice evenly distributed
-        new_ice_thickness = get_ice_thickness(new_ice_mass)
-        ice_cols = update_ice_cols(
-            t,
-            c,
-            ice_cols,
-            new_ice_thickness,
-            sublimation_thickness,
-            ej_thickness_matrix,
-            ballistic_sed_matrix,
-        )
+        new_ice_kg = 0
+        new_ice_kg += volcanic_ice_time[t]
+        new_ice_kg += total_impact_ice(time)
+        new_ice_kg = new_ice_kg * ICE_HOP_EFFICIENCY
+        
+        # Convert mass [kg] to thickness [m]
+        new_ice_m = get_ice_thickness(new_ice_kg)
+        update_ice_cols(t, strat_cols, new_ice_m)
+        # TODO: add sublimation, ballistic sed
 
     age_grid = get_age_grid(df)  # shape: (NY, NX) age of youngest impact
-    df_outputs = format_outputs(ej_thickness_matrix, ice_cols)
-    outputs = [*df_outputs, age_grid, ej_thickness_matrix]
+    df_outputs = format_outputs(strat_cols)
+    outputs = [*df_outputs, age_grid, ej_thickness_time]
     if write:
         fnames = (FEJDF, FICEDF, FICEMETA, FRUNMETA, FAGEGRD, FEJMATRIX)
         # Numpy outputs take a long time to write - do we need them?
@@ -309,7 +302,7 @@ def main(write=True):
 def get_age_grid(df, grd_x=_GRD_X, grd_y=_GRD_Y, timestart=TIMESTART):
     """Return final surface age of each grid point after all craters formed."""
     ny, nx = grd_y.shape[0], grd_x.shape[1]
-    age_grid = timestart * np.ones((ny, nx), dtype=_DTYPEI) 
+    age_grid = timestart * np.ones((ny, nx), dtype=_DTYPE) 
     for _, crater in df.iterrows():
         age_grid = update_age(age_grid, crater, grd_x, grd_y)
     return age_grid
@@ -317,49 +310,63 @@ def get_age_grid(df, grd_x=_GRD_X, grd_y=_GRD_Y, timestart=TIMESTART):
 
 def get_ejecta_thickness_matrix(df, time_arr=_TIME_ARR):
     """
-    Return ejecta_matrix of thickness [m] at each time in time_arr.
+    Return ejecta_matrix of thickness [m] at each time in time_arr given
+    triangular matrix of distances between craters in df.
     """
-    # Ejecta thickness vs crater matrix (one grid per crater)
-    ej_thick = get_ejecta_thickness(get_ejecta_distances(df), df.rad.values)
+    # Symmetric matrix of distance from all craters to each other (NC, NC)
+    ej_distances = get_crater_distances(df)  
+    
+    # Ejecta thickness deposited in each crater from each crater (NC, NC)
+    rad = df.rad.values[:, np.newaxis]  # need to pass column vector of radii
+    ej_thick = get_ejecta_thickness(ej_distances, rad)
 
     # Find indices of crater ages in time_arr
     # Note: searchsorted must be ascending, so do -time_arr (-4.3, 0) Ga
     time_idx = np.searchsorted(-time_arr, -df.age.values)
 
-    # Fill ejecta thickness vs time matrix (one grid per timestep)
-    ny, nx = ej_thick.shape[:2]
-    ej_thick_time = np.zeros((ny, nx, len(time_arr)), dtype=_DTYPEF)
-    for c_idx, t_idx in enumerate(time_idx):
-        # Note: Loop is needed to sum ejecta formed at same t_idx
-        ej_thick_time[:, :, t_idx] += ej_thick[:, :, c_idx]
+    # Fill ejecta thickness vs time matrix (rows: time, cols:craters)
+    ej_thick_time = np.zeros((len(time_arr), len(time_idx)), dtype=_DTYPE)
+    for i, t_idx in enumerate(time_idx):
+        # Sum here in case more than one crater formed at t_idx
+        ej_thick_time[t_idx, :] += ej_thick[:, i]    
     return ej_thick_time
 
 
-def format_outputs(ej_matrix, ice_cols, time_arr=_TIME_ARR):
+def grid_interp(x, y, grdvalues, grd_x=_GRD_X, grd_y=_GRD_Y):
+    """Return ejecta thickness at (x, y) in ejecta_thickness 2D grid."""
+    ix, iy = get_grd_ind(x, y, grd_x, grd_y)
+    gx, gy = grd_x.flatten(), grd_y.flatten()
+
+    dy = (y - gy[iy]) / (gy[iy + 1] - gy[iy])
+    interp_y = (1 - dy) * grdvalues[iy] + dy * grdvalues[iy + 1]
+
+    dx = (x - gx[ix]) / (gx[ix + 1] - gx[ix])
+    interp = (1 - dx) * interp_y[ix] + dx * interp_y[ix + 1]
+
+    return interp
+
+
+def format_outputs(strat_cols, time_arr=_TIME_ARR):
     """
     Return all formatted model outputs and write to outpath, if specified.
     """
     ej_dict = {"time": time_arr}
     ice_dict = {"time": time_arr}
-    ice_meta = []
-    for cname, (row, col, area, ice_column) in ice_cols.items():
-        ej_dict[cname] = ej_matrix[row, col]
-        ice_dict[cname] = ice_column
-        ice_meta.append([cname, row, col, area])
+    for cname, (ice_col, ej_col) in strat_cols.items():
+        ej_dict[cname] = ej_col
+        ice_dict[cname] = ice_col
+
     # Save all uppercase globals except ones starting with "_"
     gvars = list(globals().items())
     run_meta = {k: v for k, v in gvars if k.isupper() and k[0] != "_"}
 
     # Convert to DataFrames
-    ej_df = pd.DataFrame(ej_dict)
+    ej_cols_df = pd.DataFrame(ej_dict)
     ice_cols_df = pd.DataFrame(ice_dict)
-    ice_meta_df = pd.DataFrame(
-        ice_meta, columns=["name", "row", "col", "psr_area"]
-    )
     run_meta_df = pd.DataFrame.from_dict(
         run_meta, orient="index"
     ).reset_index()
-    return ej_df, ice_cols_df, ice_meta_df, run_meta_df
+    return ej_cols_df, ice_cols_df, run_meta_df
 
 
 def save_outputs(outputs, fnames, outpath=OUTPATH, verbose=_VERBOSE):
@@ -391,7 +398,7 @@ def randomize_crater_ages(df, timestep=TIMESTEP):
     """
     # TODO: make sure ages are unique to each timestep?
     ages, agelow, ageupp = df[["age", "age_low", "age_upp"]].values.T
-    new_ages = np.zeros(len(df), dtype=_DTYPEI)
+    new_ages = np.zeros(len(df), dtype=_DTYPE)
     for i, (age, low, upp) in enumerate(zip(ages, agelow, ageupp)):
         new_ages[i] = round_to_ts(_RNG.uniform(age - low, age + upp), timestep)
     df["age"] = new_ages
@@ -411,40 +418,36 @@ def update_age(age_grid, crater, grd_x=_GRD_X, grd_y=_GRD_Y):
 
 def update_ice_cols(
     t,
-    c,
-    ice_cols,
+    strat_cols,
     new_ice_thickness,
-    sublimation_thickness,
-    ejecta_matrix,
-    ballistic_sed_matrix,
+    # sublimation_thickness,
+    # ballistic_sed_matrix,
     mode=MODEL_MODE,
 ):
-    """Return ice_cols updated with new ice added and ice eroded dep on mode"""
+    """
+    Update ice_cols new ice added and ice eroded.
+    """
     # Update all tracked ice columns
-    for cname, (row, col, area, ice_col) in ice_cols.items():
-        ejecta_column = ejecta_matrix[row, col]
-
+    for cname, (ice_col, ej_col) in strat_cols.items():
         # Ice gained by column
         ice_col[t] = new_ice_thickness
 
         # Ice eroded in column
         if mode == "cannon":
-            # pass
-            ice_col = erode_ice_cannon(ice_col, ejecta_column, t)
-        else:
-            if c is not None and ejecta_column[t] > 0:
-                ice_col = ballistic_sed_ice_column(
-                    c, ice_col, ballistic_sed_matrix
-                )
-            ice_col = garden_ice_column(ice_col, ejecta_column, t)
-            ice_col = sublimate_ice_column(ice_col, sublimation_thickness)
+            ice_col = erode_ice_cannon(ice_col, ej_col, t)
+        # else:
+        #     if c is not None and ej_col[t] > 0:
+        #         ice_col = ballistic_sed_ice_column(
+        #             c, ice_col, ballistic_sed_matrix
+        #         )
+        #     ice_col = garden_ice_column(ice_col, ej_col, t)
+        #     ice_col = sublimate_ice_column(ice_col, sublimation_thickness)
 
         # TODO: Other icy things?
         # thermal pumping?
 
-        # Save ice column
-        ice_cols[cname][3] = ice_col
-    return ice_cols
+        # Save ice column back to strat_cols dict
+        strat_cols[cname][0] = ice_col
 
 
 def read_crater_list(crater_csv=CRATER_CSV, columns=CRATER_COLS):
@@ -509,6 +512,21 @@ def read_volcanic_csv(volcanic_csv=VOLC_CSV, col=VOLC_COLS):
 
 
 # Pre-compute grid functions
+def get_crater_distances(df, symmetric=True):
+    """
+    Return 2D array of great circle dist between all craters in df.
+    """
+    out = np.zeros((len(df), len(df)), dtype=_DTYPE)
+    for i in range(len(df)):
+        for j in range(i):
+            d = gc_dist(*df.iloc[i][['lon', 'lat']], *df.iloc[j][['lon', 'lat']])
+            out[i, j] = d
+    if symmetric:
+        out += out.T
+    out[out <= 0] = np.nan
+    return out
+
+
 def get_ejecta_distances(df, grd_x=_GRD_X, grd_y=_GRD_Y):
     """
     Return 3D array shape (len(grd_x), len(grd_y), len(df)) of ejecta distances
@@ -517,7 +535,7 @@ def get_ejecta_distances(df, grd_x=_GRD_X, grd_y=_GRD_Y):
     Distances computed with simple dist. Distances within crater rad are NaN.
     """
     ny, nx = grd_y.shape[0], grd_x.shape[1]
-    ej_dist_all = np.zeros([ny, nx, len(df)], dtype=_DTYPEF)
+    ej_dist_all = np.zeros([ny, nx, len(df)], dtype=_DTYPE)
     for i, crater in df.iterrows():
         ej_dist = dist(crater.x, crater.y, grd_x, grd_y)
         ej_dist[ej_dist < crater.rad] = np.nan
@@ -525,14 +543,17 @@ def get_ejecta_distances(df, grd_x=_GRD_X, grd_y=_GRD_Y):
     return ej_dist_all
 
 
-def get_ejecta_thickness(distance, radius, simple2complex=SIMPLE2COMPLEX):
+def get_ejecta_thickness(distance, radius, exp_complex=0.74, s2c=SIMPLE2COMPLEX, 
+                         order=EJECTA_THICKNESS_ORDER):
     """
     Return ejecta thickness as a function of distance given crater radius.
 
-    Complex craters eqn. 1, Kring 1995
+    Complex craters McGetchin 1973
     """
-    # TODO: account for simple craters
-    thickness = 0.14 * radius ** 0.74 * (distance / radius) ** (-3.0)
+    exp_complex = 0.74  # McGetchin 1973, simple craters exp=1
+    exp = np.ones(radius.shape, dtype=_DTYPE)
+    exp[radius > s2c] = exp_complex
+    thickness = 0.14 * radius ** exp * (distance / radius) ** order
     thickness[np.isnan(thickness)] = 0
     return thickness
 
@@ -612,7 +633,7 @@ def volcanic_ice_head(
     H2O_early = tot_H2O_dep * early_pct / len(early_idx)
     H2O_late = tot_H2O_dep * late_pct / len(late_idx)
 
-    out = np.zeros(len(time_arr), dtype=_DTYPEF)
+    out = np.zeros(len(time_arr), dtype=_DTYPE)
     out[early_idx] = H2O_early
     out[late_idx] = H2O_late
     return out
@@ -633,7 +654,7 @@ def get_ballistic_sed(df):
     Return ballistic sedimentation mixing depths for each crater.
     """
     # TODO: add Kristen code
-    return np.zeros((_NY, _NX, len(df)), dtype=_DTYPEI)
+    return np.zeros((_NY, _NX, len(df)))
 
 
 def get_sublimation_rate(timestep=TIMESTEP, temp=COLDTRAP_MAX_TEMP):
@@ -653,9 +674,16 @@ def get_sublimation_rate(timestep=TIMESTEP, temp=COLDTRAP_MAX_TEMP):
 
 
 # Ice column functions
-def init_ice_columns(df, craters=COLD_TRAP_CRATERS, time_arr=_TIME_ARR):
+def get_grd_ind(x, y, grd_x=_GRD_X, grd_y=_GRD_Y):
+    """Return index of val in monotonic grid_axis."""
+    xidx = np.searchsorted(grd_x[0, :], x) - 1
+    yidx = grd_y.shape[0] - (np.searchsorted(-grd_y[:, 0], y) - 1)
+    return (xidx, yidx)
+
+
+def init_strat_columns(df, ej_cols, craters=COLD_TRAP_CRATERS, time_arr=_TIME_ARR):
     """
-    Return dict of ice columns for cold trap craters in df.
+    Return dict of ice and ejecta columns for cold trap craters in df.
 
     Currently init at start of time_arr, but possibly:
     - TODO: init after crater formed? Or destroy some pre-existing ice here?
@@ -663,21 +691,15 @@ def init_ice_columns(df, craters=COLD_TRAP_CRATERS, time_arr=_TIME_ARR):
 
     Return
     ------
-    ice_cols_dict[cname] = [row, col, area, ice_col]
+    strat_columns_dict[cname] = [ice_col, ej_col]
     """
-    ice_columns = {}
-    for cname in craters:
-        if not df.cname.str.contains(cname).any():
-            print(f"Cold trap crater {cname} not found. Skipping...")
-            continue
-        crater = df[df.cname == cname].iloc[0]
-        row = int(round(crater.x / GRDSTEP))
-        col = int(round(crater.y / GRDSTEP))
-        area = crater.psr_area
-        ice_col = np.zeros(len(time_arr), dtype=_DTYPEF)
-        # ice_col[crater.age < time_arr] = np.nan  # 0 ice before crater formed
-        ice_columns[cname] = [row, col, area, ice_col]
-    return ice_columns
+    strat_columns = {}
+    idxs = np.where(df.cname.isin(craters).values)[0]
+    ice_col = np.zeros(len(time_arr), _DTYPE)
+    strat_columns = {
+        c: [ice_col.copy(), ej_cols[:, i]] for c, i in zip(craters, idxs)
+    } 
+    return strat_columns
 
 
 def ballistic_sed_ice_column(c, ice_column, ballistic_sed_matrix):
@@ -875,7 +897,7 @@ def ice_retention_factor(speeds):
     # TODO: find/verify retention(speed) eqn in Ong et al. 2010?
     # BUG? retention distribution is discontinuous
     speeds = speeds * 1e-3  # [m/s] -> [km/s]
-    retained = np.ones(len(speeds), dtype=_DTYPEF) * 0.5  # nominal 50%
+    retained = np.ones(len(speeds), dtype=_DTYPE) * 0.5  # nominal 50%
     retained[speeds >= 10] = 36.26 * np.exp(-0.3464 * speeds[speeds >= 10])
     retained[retained < 0] = 0
     return retained
@@ -990,7 +1012,7 @@ def get_diam_array(regime, diam_range=DIAM_RANGE):
     """Return array of diameters based on diameters in diam_range."""
     dmin, dmax, step = diam_range[regime]
     n = int((dmax - dmin) / step)
-    return np.linspace(dmin, dmax, n + 1, dtype=_DTYPEF)
+    return np.linspace(dmin, dmax, n + 1, dtype=_DTYPE)
 
 
 # Crater scaling laws
@@ -1107,7 +1129,7 @@ def diam2len_prieur(
     -------
     impactor_length (num): impactor diameter [m]
     """
-    i_lengths = np.linspace(t_diam[0] / 100, t_diam[-1], 1000, dtype=_DTYPEF)
+    i_lengths = np.linspace(t_diam[0] / 100, t_diam[-1], 1000, dtype=_DTYPE)
     i_masses = rho_i * diam2vol(i_lengths)
     # Prieur impactor len to crater diam equation
     numer = 1.6 * (1.61 * g * i_lengths / v ** 2) ** -0.22
@@ -1214,13 +1236,12 @@ def xy2latlon(x, y, rp=RAD_MOON):
 def gc_dist(lon1, lat1, lon2, lat2, rp=RAD_MOON):
     """Return great circ dist (lon1, lat1) - (lon2, lat2) [deg] in rp units."""
     lon1, lat1, lon2, lat2 = map(np.radians, [lon1, lat1, lon2, lat2])
-    dlon = lon2 - lon1
-    dlat = lat2 - lat1
-    a = (
-        np.sin(dlat / 2.0) ** 2
-        + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2.0) ** 2
-    )
-    return rp * 2 * np.arcsin(np.sqrt(a))
+    sin2_dlon = np.sin((lon2 - lon1)/2) ** 2
+    sin2_dlat = np.sin((lat2 - lat1)/2) ** 2
+    a = sin2_dlat + np.cos(lat1) * np.cos(lat2) * sin2_dlon
+    old = rp * 2 * np.arcsin(np.sqrt(a))
+    c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
+    return rp * c
 
 
 def dist(x1, y1, x2, y2):
