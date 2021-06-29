@@ -16,7 +16,7 @@ python mixing.py <seed>
 
 import os
 os.chdir('/home/cjtu/projects/essi21/essi21')
-import mixing
+import mixing as mm
 ej_cols, ice_cols, ice_meta, run_meta, age_grid, ej_matrix = mixing.main()
 
 # Run with gnuparallel (6 s/run normal, 0.35 s/run 48 cores)
@@ -83,7 +83,6 @@ TIMESTART = 4.25e9  # [yr]
 
 # Parameters
 MODEL_MODE = "cannon"  # ['cannon', 'updated']
-ICE_DENSITY = 934  # [kg / m^3], (Cannon 2020)
 COLDTRAP_MAX_TEMP = 120  # [K]
 COLDTRAP_AREA = 1.3e4 * 1e6  # [m^2], (Williams 2019, via Text S1, Cannon 2020)
 ICE_HOP_EFFICIENCY = 0.054  # 5.4% gets to the S. Pole (Text S1, Cannon 2020)
@@ -98,6 +97,43 @@ TARGET_DENSITY = 1500  # [kg m^-3] (Cannon 2020)
 BULK_DENSITY = 2700  # [kg m^-3] simple to complex (Melosh)
 EJECTA_THICKNESS_ORDER = -3  # min: -3.5, avg: -3, max: -2.5 (Kring 1995)
 ICE_EROSION_RATE = 0.1 * (TIMESTEP / 10e6)  # [m], 10 cm / 10 Ma (Cannon 2020)
+
+# Ice properties
+ICE_DENSITY = 934  # [kg m^-3], (Cannon 2020)
+ICE_MELT_TEMP = 273  # [K]
+ICE_LATENT_HEAT = 334e3  # [J/kg] latent heat of H2O ice
+
+# Ballistic Sedimentation module
+ICE_FRAC = 0.056  # fraction ice vs regolith (5.6% Colaprete 2010)
+HEAT_FRAC = 0.5  # fraction of ballistic KE used in heating vs mixing
+HEAT_RETAINED = 0.1  # fraction of heat retained (10-30%; Stopar 2018)
+REGOLITH_CP = 4.3e3  # Heat capacity [J kg^-1 K^-1] (0.7-4.2 kJ/kg/K for H2O)
+
+# Impact gardening module (Costello 2020)
+COSTELLO_LAM_CSV = DATAPATH + 'costello_2018_t1.csv'
+OVERTURN_PROB_PCT = '99%'  # Poisson probability ['10%', '50%', '99%'] (Table 1, Costello 2018)
+CRATER_PROXIMITY = 0.41  # crater proximity scaling parameter
+DEPTH_OVERTURN = 0.04  # fractional depth overturned
+N_OVERTURN = 1  # number of overturns needed for ice loss
+TARGET_KR = None  # [] Costello 2018
+TARGET_K1 = None  # [] Costello 2018
+TARGET_K2 = None  # [] Costello 2018
+TARGET_MU = None  # [] Costello 2018
+TARGET_YIELD_STR = None  # [] Costello 2018
+
+# Overturn sfd parameters as uD^v (Table 2, Costello et al. 2018)
+# OVERTURN_REGIMES = ('primary', 'secondary', 'micrometeorite')
+# OVERTURN_UV = {
+#     'primary': (6.3e-11, -2.7),
+#     'secondary': (7.25e-9, -4), # 1e5 secondaries, -4 slope from McEwen 2005
+#     'micrometeorite': (1.53e-12, -2.64)
+# }
+# OVERTURN_DIAMS = {
+#     'primary': (1e-2, 1e3),  # Costello 2018 p. 334
+#     'secondary': (1e-2, 1e3),  # 1e5 secondaries, -4 slope from McEwen 2005
+#     'micrometeorite': (1e-9, 1e-2)  # Costello 2018 p. 334
+# }
+
 
 # Impact ice delivery
 MM_MASS_RATE = 1e6  # [kg/yr], lunar micrometeorite flux (Grun et al. 2011)
@@ -125,7 +161,7 @@ SFD_SLOPES = {
     "E": -1.80,  # Complex craters "shallow" branch
 }
 
-
+# Volcanic Ice Module
 VOLC_MODE = "Head"  # ['Head', 'Needham]
 
 # Head et al. (2020)
@@ -161,7 +197,7 @@ VOLC_COLS = (
     "max_atm_loss",
 )
 
-# Constants
+# Lunar constants
 RAD_MOON = 1737e3  # [m], lunar radius
 GRAV_MOON = 1.62  # [m s^-2], gravitational acceleration
 SA_MOON = 4 * np.pi * RAD_MOON ** 2  # [m^2]
@@ -262,7 +298,7 @@ def main(write=True):
     df = randomize_crater_ages(df)  # DataFrame, len: NC
     ej_thickness_time = get_ejecta_thickness_matrix(df)  # shape: (NY,NX,NT)
     volcanic_ice_time = get_volcanic_ice(mode=VOLC_MODE)  # shape: (NT)
-
+    overturn_time = get_overturn_depths()
     # if MODEL_MODE == "cannon":
     #     ballistic_sed_matrix = sublimation_thickness = None
     # else:
@@ -273,7 +309,6 @@ def main(write=True):
     strat_cols = init_strat_columns(df, ej_thickness_time)
 
     # Main time loop
-    c = None
     for t, time in enumerate(_TIME_ARR):
         # Compute ice mass [kg] gained by all processes
         new_ice_kg = 0
@@ -657,6 +692,126 @@ def get_ballistic_sed(df):
     return np.zeros((_NY, _NX, len(df)))
 
 
+def ballistic_planar(theta, d, g=GRAV_MOON):
+    """
+    Return ballistic speed (v) given ballistic range (d) and gravity of planet (g).
+    Assumes planar surface (d << R_planet).  
+    
+    Parameters
+    ----------
+    d (num or array): ballistic range [m]
+    g (num): gravitational force of the target body [m s^-2]
+    theta (num): angle of impaact [radians]
+    
+    Returns
+    -------
+    v (num or array): ballistic speed [m s^-1]   
+ 
+    """
+    return np.sqrt((d * g) / np.sin(2 * theta))
+
+
+def ballistic_spherical(theta, d, g=GRAV_MOON, rp=RAD_MOON):
+    """
+    Return ballistic speed (v) given ballistic range (d) and gravity of planet (g).
+    Assumes perfectly spherical planet (Vickery, 1986).
+    
+    Parameters
+    ----------
+    d (num or array): ballistic range [m]
+    g (num): gravitational force of the target body [m s^-2]
+    theta (num): angle of impaact [radians]
+    rp (num): radius of the target body [m]
+    
+    Returns
+    -------
+    v (num or array): ballistic speed [m s^-1]   
+ 
+    """
+    tan_phi = np.tan(d / (2 * rp))
+    return np.sqrt((g * rp * tan_phi) / ((np.sin(theta) * np.cos(theta)) + (np.cos(theta)**2 * tan_phi)))
+
+
+def mps2kmph(v):
+    """
+    Return v in km/hr, given v in m/s
+    
+    Parameters
+    ----------
+    v (num or array): velocity [m s^-1]
+    
+    Returns
+    -------
+    v (num or array): velocity [km hr^-1]
+    """
+    
+    return 3600 * v / 1000
+
+
+def thick2mass(thick, density=TARGET_DENSITY):
+    """
+    Convert an ejecta blanket thickness to kg per meter squared, default 
+    density of the ejecta blanket from Carrier et al. 1991. 
+    Density should NOT be the bulk density of the Moon! 
+    
+    Parameters
+    ----------
+    thick (num or array): ejecta blanket thickness [m]
+    density (num): ejecta blanket density [kg m^-3]
+    
+    Returns 
+    -------
+    mass (num or array): mass of the ejecta blanket [kg]
+    """
+    return thick * density
+
+
+def mps2KE(speed, mass):
+    """
+    Return kinetic energy [J m^-2] given mass [kg], speed [m s^-1].
+    
+    Parameters
+    ----------
+    v (num or array): ballistic speed [m s^-1]
+    m (num or array): mass of the ejecta blanket [kg]
+    
+    Returns
+    -------
+    KE (num or array): Kinetic energy [J m^-2]
+    """
+    return 0.5 * mass * speed**2.
+    
+
+def ice_melted(ke, t_surf=COLDTRAP_MAX_TEMP, cp=REGOLITH_CP, ice_rho=ICE_DENSITY,
+               ice_frac=ICE_FRAC, heat_frac=HEAT_FRAC, heat_ret=HEAT_RETAINED, 
+               lat_heat=ICE_LATENT_HEAT, t_melt=ICE_MELT_TEMP):
+    """
+    Return mass of ice [kg] melted by input kinetic energy.
+    
+    Parameters
+    ----------
+    ke (num or array): kinetic energy of ejecta blanket [J m^-2]
+    t_surf (num): surface temperature [K]
+    cp (num): heat capacity for regolith [J kg^-1 K^-1]
+    ice_rho (num): ice density [kg m^-3]
+    ice_frac (num): fraction ice vs regolith (default: 5.6%; Colaprete 2010)
+    heat_frac (num): fraction KE used in heating vs mixing (default 50%)
+    heat_ret (num): fraction of heat retained (10-30%; Stopar 2018)
+    lat_heat (num): latent heat of ice [J/kg]
+    t_melt (num): melting point of ice [K]
+    
+    Returns
+    -------
+    ice_mass (num or array): mass of ice melted due to ejecta [kg]
+    ice_depth (num or array): depth of ice melted due to ejecta [m]
+    """
+    heat = ice_frac * heat_ret * heat_frac * ke  # [J m^-2]
+    delta_t = t_melt - t_surf  # heat to go from t_surf to melting point
+    ice_mass = heat / (lat_heat + cp * delta_t)  # [kg]
+    # ice_depth = ice_mass / (ice_frac * ice_rho)  # [m]
+    return ice_mass
+
+
 def get_sublimation_rate(timestep=TIMESTEP, temp=COLDTRAP_MAX_TEMP):
     """
     Return ice lost due to sublimation at temp each timestep.
@@ -752,6 +907,112 @@ def garden_ice_column(
     """
     # TODO: Katelyn
     return ice_column
+
+
+def overturn_depth(t, u, v, n=N_OVERTURN, prob_pct=OVERTURN_PROB_PCT,
+                   c=CRATER_PROXIMITY, h=DEPTH_OVERTURN): 
+    """
+    Return regolith overturn depth at time t, given lambda and size-frequency 
+    u, v given (u*D^v). Uses eqn 10, Costello (2020).
+
+    Parameters
+    ----------
+    n (num): number of events this timestep
+    u (num): sfd scaling factor (u*x^v) [m^-(2+v) yrs^-1]
+    v (num): sfd slope/exponent (u*x^v). Must be < -2.
+    t (num): time elapsed [yrs] (i.e. timestep)
+    c (num): proximity scaling parameter for overlapping craters
+    h (num): depth fraction of crater overturn
+
+    Return
+    ----------
+    overturn_depth (num): gardening depth [meters] 
+    TODO: double check units (m?)
+    """
+    lam = overturn_lambda(n, prob_pct)
+    B = 1 / (v + 2)  # eq 12, Costello 2020
+    p1 = (v + 2) / (v * u)
+    p2 = 4 * lam / (np.pi * c**2)
+    A = abs(h * (p1 * p2)**B)  # eq 11, Costello 2020
+    overturn_depth = A * t**(-B)  # eq 10, Costello 2020
+    return overturn_depth
+
+
+def overturn_depth_costello(time):
+    """Example solutions to overturn eqn 10 (Costello 2020)."""
+    
+    return
+
+def overturn_depth_morris(time):
+    """Return reworking depth from Morris (1978) fits to Apollo samples."""
+    return 4.39e-5 * time ** 0.45
+
+
+def overturn_u(regime='strength', rho_t=TARGET_DENSITY, rho_i=IMPACTOR_DENSITY, 
+                kr=TARGET_KR, k1=TARGET_K1, k2=TARGET_K2, mu=TARGET_MU,
+                y=TARGET_YIELD_STR, vf=IMPACT_SPEED, g=GRAV_MOON):
+    """
+    Return size-frequecy factor u for overturn (eqn 13, Costello 2020).
+    """
+    u = 1
+    return u
+
+
+# def total_overturn_depth(time_arr=_TIME_ARR, n_overturns=N_OVERTURN, 
+#                         prob_pct=OVERTURN_PROB_PCT, regimes=OVERTURN_REGIMES, 
+#                         sfd_uv=OVERTURN_UV, ts=TIMESTEP):
+#     """Return array of overturn depth [m] as a function of time."""
+#     overturn_depths = []
+#     for r in regimes:
+#         u, v = sfd_uv[r]
+#         # n = num_impacts(r) * ts  # [m^-2 ts^-1]
+#         # n_scaled = n * impact_flux(time_arr) / impact_flux(0)
+#         u_scaled = u * impact_flux(time_arr) / impact_flux(0)
+#         lam = overturn_lambda(n_overturns, prob_pct)
+#         overturn = overturn_depth(ts, lam, u_scaled, v)
+
+#         overturn_depths.append(overturn)
+#     overturn_total = np.sum(overturn_depths, axis=0)
+#     return overturn_total
+
+
+@lru_cache(1)
+def read_lambda_table(costello_lam_csv=COSTELLO_LAM_CSV):
+    """Read lambda table (Table 1, Costello et al. 2018)."""
+    df = pd.read_csv(costello_lam_csv)
+    return df
+
+
+def overturn_lambda(n, prob_pct=OVERTURN_PROB_PCT):
+    """
+    Return lambda given prob_pct and n events (Table 1, Costello et al. 2018).
+
+    Parameters
+    ----------
+    n (num): cumulative number of overturn events 
+    prob_pct ('10%', '50%', or '90%): percent probability threshold
+
+    Return
+    ------
+    lam (num): avg number of events per area per time
+    """
+    df = read_lambda_table()
+
+    # Interpolate nearest value in df[prob_pct] from input n
+    lam = np.interp(n, df.n, df[prob_pct])
+    return lam
+
+
+# def num_impacts(regime, sfd_uv=OVERTURN_UV, diams=OVERTURN_DIAMS):
+#     """
+#     Return number of impacts in regime that occur in timstep [yrs].
+#     """
+#     u, v = sfd_uv[regime]
+#     mindiam, maxdiam = diams[regime]
+#     n_low = n_cumulative(mindiam, u, v)
+#     n_upp = n_cumulative(maxdiam, u, v)
+#     n = n_low - n_upp
+#     return n
 
 
 def sublimate_ice_column(ice_column, sublimation_rate):
@@ -938,6 +1199,23 @@ def get_impactor_pop(age, regime, sfd_slopes=SFD_SLOPES, timestep=TIMESTEP):
     return impactor_diams, n_impactors
 
 
+def n_cumulative(diam, a, b):
+    """
+    Return N(D) from a cumulative size-frequency distribution aD^b.
+    
+    Parameters
+    ----------
+    diam (num): crater diameter [m]
+    a (num): sfd scaling factor [m^-(2+b) yr^-1]
+    b (num): sfd slope / exponent
+
+    Return
+    ------
+    N(D): number of craters [m^-2 yr^-1]
+    """
+    return a * diam ** b
+
+
 @lru_cache(4)
 def get_sfd_prob(regime, sfd_slopes=SFD_SLOPES):
     """Return size-frequency distribution probability given diams, sfd slope."""
@@ -985,7 +1263,7 @@ def get_crater_pop(age, regime, ts=TIMESTEP, sa_moon=SA_MOON):
     return crater_diams
 
 
-@lru_cache(4)
+# @lru_cache(4)
 def impact_flux(time):
     """Return impact flux at time [yrs] (Derivative of eqn. 1, Ivanov 2008)."""
     time = time * 1e-9  # [yrs -> Ga]
@@ -1239,7 +1517,6 @@ def gc_dist(lon1, lat1, lon2, lat2, rp=RAD_MOON):
     sin2_dlon = np.sin((lon2 - lon1)/2) ** 2
     sin2_dlat = np.sin((lat2 - lat1)/2) ** 2
     a = sin2_dlat + np.cos(lat1) * np.cos(lat2) * sin2_dlon
-    old = rp * 2 * np.arcsin(np.sqrt(a))
     c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
     return rp * c
 

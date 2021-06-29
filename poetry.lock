@@ -1110,8 +1110,8 @@ python-versions = "*"
 
 [metadata]
 lock-version = "1.1"
-python-versions = "^3.8"
-content-hash = "be0ac301fdc33647e06e570b2c23c7af0122ee047c10e63ec6dba388f93bd1bb"
+python-versions = "^3.8,<3.10"
+content-hash = "2046590a96c3dd3069ae79afa35f1f15697557a52450867008f8cd36a77d08d1"
 
 [metadata.files]
 affine = [
