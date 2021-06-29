@@ -1,6 +1,6 @@
 """
-Main mixing module adapted from Cannon et al. (2020)
-Date: 06/22/21
+Main mixing module updated from Cannon et al. (2020)
+Date: 06/29/21
 Authors: CJ Tai Udovicic, K Frizzell, K Luchsinger, A Madera, T Paladino
 
 All model results are saved to OUTPATH.
@@ -31,16 +31,15 @@ python -m cProfile -o mixing.prof mixing.py
 snakeviz mixing.prof
 """
 import os
+import sys
 from functools import lru_cache
 import numpy as np
 import pandas as pd
 
 # Use random seed if passed on cmd line, else 0
-import sys
+RANDOM_SEED = 0
 if __name__ == "__main__" and len(sys.argv) > 1:
     RANDOM_SEED = int(sys.argv[1])  # 1st cmd-line arg is seed
-else:
-    RANDOM_SEED = 0
 
 # Metadata
 _VERBOSE = False
@@ -257,12 +256,6 @@ COLD_TRAP_CRATERS = (
     "Wiechert J",
 )
 
-# Make random number generator
-def set_seed(seed=RANDOM_SEED):
-    """Return numpy random number generator at given seed."""
-    return np.random.default_rng(seed=seed)
-_RNG = set_seed()
-
 # Make arrays
 _DTYPE = np.float32  # np.float64 (32 should be good for most purposes)
 _GRD_Y, _GRD_X = np.meshgrid(
@@ -277,7 +270,7 @@ _NY, _NX = _GRD_Y.shape[0], _GRD_X.shape[1]
 NT = len(_TIME_ARR)
 
 # Functions
-def main(write=True):
+def main(write=True, rng=None):
     """
     Before loop:
       1) read_crater_list(): Reads in crater list from CRATER_CSV above.
@@ -295,10 +288,10 @@ def main(write=True):
     """
     # Before loop (setup)
     df = read_crater_list()  # DataFrame, len: NC
-    df = randomize_crater_ages(df)  # DataFrame, len: NC
+    # df = randomize_crater_ages(df)  # DataFrame, len: NC
     ej_thickness_time = get_ejecta_thickness_matrix(df)  # shape: (NY,NX,NT)
     volcanic_ice_time = get_volcanic_ice(mode=VOLC_MODE)  # shape: (NT)
-    overturn_time = get_overturn_depths()
+    # overturn_time = get_overturn_depths()
     # if MODEL_MODE == "cannon":
     #     ballistic_sed_matrix = sublimation_thickness = None
     # else:
@@ -313,7 +306,7 @@ def main(write=True):
         # Compute ice mass [kg] gained by all processes
         new_ice_kg = 0
         new_ice_kg += volcanic_ice_time[t]
-        new_ice_kg += total_impact_ice(time)
+        new_ice_kg += total_impact_ice(time, rng=rng)
         new_ice_kg = new_ice_kg * ICE_HOP_EFFICIENCY
         
         # Convert mass [kg] to thickness [m]
@@ -343,7 +336,7 @@ def get_age_grid(df, grd_x=_GRD_X, grd_y=_GRD_Y, timestart=TIMESTART):
     return age_grid
 
 
-def get_ejecta_thickness_matrix(df, time_arr=_TIME_ARR):
+def get_ejecta_thickness_matrix(df, time_arr=_TIME_ARR, ts=TIMESTEP):
     """
     Return ejecta_matrix of thickness [m] at each time in time_arr given
     triangular matrix of distances between craters in df.
@@ -357,7 +350,10 @@ def get_ejecta_thickness_matrix(df, time_arr=_TIME_ARR):
 
     # Find indices of crater ages in time_arr
     # Note: searchsorted must be ascending, so do -time_arr (-4.3, 0) Ga
-    time_idx = np.searchsorted(-time_arr, -df.age.values)
+    # TODO: python rounding issue - (shoemaker index off by one - why only shoemaker??)
+    rounded_time = np.rint(time_arr / ts)
+    rounded_ages = np.rint(df.age.values / ts)
+    time_idx = np.searchsorted(-rounded_time, -rounded_ages)
 
     # Fill ejecta thickness vs time matrix (rows: time, cols:craters)
     ej_thick_time = np.zeros((len(time_arr), len(time_idx)), dtype=_DTYPE)
@@ -427,15 +423,16 @@ def round_to_ts(values, timestep):
     return np.around(values / timestep) * timestep
 
 
-def randomize_crater_ages(df, timestep=TIMESTEP):
+def randomize_crater_ages(df, timestep=TIMESTEP, rng=None):
     """
     Return ages randomized uniformly between agelow, ageupp.
     """
+    rng = np.random.default_rng(rng)
     # TODO: make sure ages are unique to each timestep?
     ages, agelow, ageupp = df[["age", "age_low", "age_upp"]].values.T
     new_ages = np.zeros(len(df), dtype=_DTYPE)
     for i, (age, low, upp) in enumerate(zip(ages, agelow, ageupp)):
-        new_ages[i] = round_to_ts(_RNG.uniform(age - low, age + upp), timestep)
+        new_ages[i] = round_to_ts(rng.uniform(age - low, age + upp), timestep)
     df["age"] = new_ages
     df = df.sort_values("age", ascending=False)
     return df
@@ -578,7 +575,7 @@ def get_ejecta_distances(df, grd_x=_GRD_X, grd_y=_GRD_Y):
     return ej_dist_all
 
 
-def get_ejecta_thickness(distance, radius, exp_complex=0.74, s2c=SIMPLE2COMPLEX, 
+def get_ejecta_thickness(distance, radius, exp_complex=0.74, ds2c=SIMPLE2COMPLEX, 
                          order=EJECTA_THICKNESS_ORDER):
     """
     Return ejecta thickness as a function of distance given crater radius.
@@ -587,7 +584,7 @@ def get_ejecta_thickness(distance, radius, exp_complex=0.74, s2c=SIMPLE2COMPLEX,
     """
     exp_complex = 0.74  # McGetchin 1973, simple craters exp=1
     exp = np.ones(radius.shape, dtype=_DTYPE)
-    exp[radius > s2c] = exp_complex
+    exp[radius * 2 > ds2c] = exp_complex
     thickness = 0.14 * radius ** exp * (distance / radius) ** order
     thickness[np.isnan(thickness)] = 0
     return thickness
@@ -772,8 +769,8 @@ def mps2KE(speed, mass):
     
     Parameters
     ----------
-    v (num or array): ballistic speed [m s^-1]
-    m (num or array): mass of the ejecta blanket [kg]
+    speed (num or array): ballistic speed [m s^-1]
+    mass (num or array): mass of the ejecta blanket [kg]
     
     Returns
     -------
@@ -1024,7 +1021,7 @@ def sublimate_ice_column(ice_column, sublimation_rate):
     return ice_column
 
 
-def total_impact_ice(age, regimes=IMPACT_REGIMES):
+def total_impact_ice(age, regimes=IMPACT_REGIMES, rng=None):
     """Return total impact ice from regimes and sfd_slopes (Cannon 2020)."""
     total_ice = 0  # [kg]
     for r in regimes:
@@ -1037,13 +1034,13 @@ def total_impact_ice(age, regimes=IMPACT_REGIMES):
             total_ice += ice_small_impactors(impactor_diams, impactors)
         elif r == "C":
             # Small simple craters (continuous)
-            crater_diams, craters = get_crater_pop(age, r)
+            crater_diams, craters = get_crater_pop(age, r, rng=rng)
             total_ice += ice_small_craters(crater_diams, craters, r)
         else:
             # Large simple & complex craters (stochastic)
-            crater_diams = get_crater_pop(age, r)
-            crater_diams = get_random_hydrated_craters(crater_diams)
-            impactor_speeds = get_random_impactor_speeds(len(crater_diams))
+            crater_diams = get_crater_pop(age, r, rng=rng)
+            crater_diams = get_random_hydrated_craters(crater_diams, rng=rng)
+            impactor_speeds = get_random_impactor_speeds(len(crater_diams), rng=rng)
             total_ice += ice_large_craters(crater_diams, impactor_speeds, r)
     return total_ice
 
@@ -1105,25 +1102,27 @@ def ice_small_craters(
 
 
 def get_random_hydrated_craters(
-    crater_diams, ctype_frac=CTYPE_FRAC, ctype_hyd=CTYPE_HYDRATED
+    crater_diams, ctype_frac=CTYPE_FRAC, ctype_hyd=CTYPE_HYDRATED, rng=None
 ):
     """
     Return crater diams of hydrated craters from random distribution.
     """
     # Randomly include only craters formed by hydrated, Ctype asteroids
-    rand_arr = _RNG.random(size=len(crater_diams))
+    rng = np.random.default_rng(rng)
+    rand_arr = rng.random(size=len(crater_diams))
     crater_diams = crater_diams[rand_arr < ctype_frac * ctype_hyd]
     return crater_diams
 
 
 def get_random_impactor_speeds(
-    n, mean_speed=IMPACT_SPEED, sd_speed=IMPACT_SD, esc_vel=ESCAPE_VEL
+    n, mean_speed=IMPACT_SPEED, sd_speed=IMPACT_SD, esc_vel=ESCAPE_VEL, rng=None
 ):
     """
     Return n impactor speeds from normal distribution about mean, sd.
     """
     # Randomize impactor speeds with Gaussian around mean, sd
-    impactor_speeds = _RNG.normal(mean_speed, sd_speed, n)
+    rng = np.random.default_rng(rng)
+    impactor_speeds = rng.normal(mean_speed, sd_speed, n)
     impactor_speeds[impactor_speeds < esc_vel] = esc_vel  # minimum is esc_vel
     return impactor_speeds
 
@@ -1237,7 +1236,7 @@ def get_impactors_brown(mindiam, maxdiam, timestep=TIMESTEP, c0=1.568, d0=2.7):
     return n_impactors_moon
 
 
-def get_crater_pop(age, regime, ts=TIMESTEP, sa_moon=SA_MOON):
+def get_crater_pop(age, regime, ts=TIMESTEP, sa_moon=SA_MOON, rng=None):
     """
     Return population of crater diameters and number (regimes C - E).
 
@@ -1256,10 +1255,11 @@ def get_crater_pop(age, regime, ts=TIMESTEP, sa_moon=SA_MOON):
         return crater_diams, n_craters
 
     # Regimes D and E: shallow branch of sfd (simple / complex)
-    n_craters = probabalistic_round(n_craters)
+    n_craters = probabilistic_round(n_craters, rng=rng)
 
     # Resample crater diameters with replacement, weighted by sfd
-    crater_diams = _RNG.choice(crater_diams, n_craters, p=sfd_prob)
+    rng = np.random.default_rng(rng)
+    crater_diams = rng.choice(crater_diams, n_craters, p=sfd_prob)
     return crater_diams
 
 
@@ -1526,14 +1526,15 @@ def dist(x1, y1, x2, y2):
     return np.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
 
 
-def probabalistic_round(x):
+def probabilistic_round(x, rng=None):
     """
     Randomly round positive float x up or down based on its distance to x + 1.
 
     E.g. 6.1 will round down ~90% of the time and round up ~10% of the time
     such that over many trials, the expected value is 6.1.
     """
-    return int(x + _RNG.random())
+    rng = np.random.default_rng(rng)
+    return int(x + rng.random())
 
 
 def diam2vol(diameter):
@@ -1542,4 +1543,4 @@ def diam2vol(diameter):
 
 
 if __name__ == "__main__":
-    _ = main()
+    _ = main(rng=RANDOM_SEED)
