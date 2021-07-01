@@ -86,6 +86,7 @@ COLDTRAP_MAX_TEMP = 120  # [K]
 COLDTRAP_AREA = 1.3e4 * 1e6  # [m^2], (Williams 2019, via Text S1, Cannon 2020)
 ICE_HOP_EFFICIENCY = 0.054  # 5.4% gets to the S. Pole (Text S1, Cannon 2020)
 IMPACTOR_DENSITY = 1300  # [kg m^-3], Cannon 2020
+IMPACTOR_DENSITY_AVG = 2780  # [kg m^-3] Costello 2018
 # IMPACTOR_DENSITY = 3000  # [kg m^-3] ordinary chondrite (Melosh scaling)
 # IMPACT_SPEED = 17e3  # [m/s] average impact speed (Melosh scaling)
 IMPACT_SPEED = 20e3  # [m/s] mean impact speed (Cannon 2020)
@@ -113,20 +114,25 @@ COSTELLO_LAM_CSV = DATAPATH + 'costello_2018_t1.csv'
 OVERTURN_PROB_PCT = '99%'  # Poisson probability ['10%', '50%', '99%'] (Table 1, Costello 2018)
 CRATER_PROXIMITY = 0.41  # crater proximity scaling parameter
 DEPTH_OVERTURN = 0.04  # fractional depth overturned
-N_OVERTURN = 1  # number of overturns needed for ice loss
-TARGET_KR = None  # [] Costello 2018
-TARGET_K1 = None  # [] Costello 2018
-TARGET_K2 = None  # [] Costello 2018
-TARGET_MU = None  # [] Costello 2018
-TARGET_YIELD_STR = None  # [] Costello 2018
+N_OVERTURN = 10  # number of overturns needed for ice loss
+TARGET_KR = 0.6  # Costello 2018, for lunar regolith
+TARGET_K1 = 0.132  # Costello 2018, for lunar regolith
+TARGET_K2 = 0.26  # Costello 2018, for lunar regolith
+TARGET_MU = 0.41  # Costello 2018, for lunar regolith
+TARGET_YIELD_STR = 0.01*1e6  # [Pa] Costello 2018, for lunar regolith
 
 # Overturn sfd parameters as uD^v (Table 2, Costello et al. 2018)
-# OVERTURN_REGIMES = ('primary', 'secondary', 'micrometeorite')
-# OVERTURN_UV = {
-#     'primary': (6.3e-11, -2.7),
-#     'secondary': (7.25e-9, -4), # 1e5 secondaries, -4 slope from McEwen 2005
-#     'micrometeorite': (1.53e-12, -2.64)
-# }
+OVERTURN_REGIMES = ('primary', 'secondary', 'micrometeorite')
+OVERTURN_AB = {
+    'primary': (6.3e-11, -2.7),
+    'secondary': (7.25e-9, -4), # 1e5 secondaries, -4 slope from McEwen 2005
+    'micrometeorite': (1.53e-12, -2.64)
+}
+IMPACT_SPEEDS = {
+    'primary': 1800,  # [km/s]
+    'secondary': 507,  # [km/s]
+    'micrometeorite': 1800  # [km/s]
+}
 # OVERTURN_DIAMS = {
 #     'primary': (1e-2, 1e3),  # Costello 2018 p. 334
 #     'secondary': (1e-2, 1e3),  # 1e5 secondaries, -4 slope from McEwen 2005
@@ -291,7 +297,7 @@ def main(write=True, rng=None):
     # df = randomize_crater_ages(df)  # DataFrame, len: NC
     ej_thickness_time = get_ejecta_thickness_matrix(df)  # shape: (NY,NX,NT)
     volcanic_ice_time = get_volcanic_ice(mode=VOLC_MODE)  # shape: (NT)
-    # overturn_time = get_overturn_depths()
+    overturn_time = total_overturn_depth()
     # if MODEL_MODE == "cannon":
     #     ballistic_sed_matrix = sublimation_thickness = None
     # else:
@@ -427,7 +433,7 @@ def randomize_crater_ages(df, timestep=TIMESTEP, rng=None):
     """
     Return ages randomized uniformly between agelow, ageupp.
     """
-    rng = np.random.default_rng(rng)
+    rng = get_rng(rng)
     # TODO: make sure ages are unique to each timestep?
     ages, agelow, ageupp = df[["age", "age_low", "age_upp"]].values.T
     new_ages = np.zeros(len(df), dtype=_DTYPE)
@@ -945,32 +951,47 @@ def overturn_depth_morris(time):
     return 4.39e-5 * time ** 0.45
 
 
-def overturn_u(regime='strength', rho_t=TARGET_DENSITY, rho_i=IMPACTOR_DENSITY, 
+def overturn_u(a, b, regime, rho_t=TARGET_DENSITY, rho_i=IMPACTOR_DENSITY_AVG, 
                 kr=TARGET_KR, k1=TARGET_K1, k2=TARGET_K2, mu=TARGET_MU,
-                y=TARGET_YIELD_STR, vf=IMPACT_SPEED, g=GRAV_MOON):
+                y=TARGET_YIELD_STR, vf=IMPACT_SPEED, g=GRAV_MOON, theta_i = IMPACT_ANGLE):
     """
     Return size-frequecy factor u for overturn (eqn 13, Costello 2020).
     """
-    u = 1
+    alpha = k2 * (y / (rho_t * vf**2))**(0.5 * (2 + mu))
+    beta = -3 * mu / (2 + mu)
+    delta = 2 * kr
+    gamma = (k1 * np.pi * rho_i) / (6 * rho_t)
+    eps = (g / (2 * vf**2)) * (rho_i / rho_t)**(1/3)
+
+    if regime == 'strength':
+        t1 = np.sin(np.deg2rad(theta_i))**(2/3)
+        denom = delta * (gamma * alpha**beta)**(1/3)
+        u =  t1 * a * (1 / denom)**b 
+
+    elif regime == 'gravity':
+        t1 = np.sin(np.deg2rad(theta_i))**(1/3)
+        denom = delta * (gamma * eps**beta)**(1/3)
+        exp = (3 * b) / (3 + beta)
+        u = t1 * a * (1 / denom)**exp
+    else:
+        print("choose a regime!")
     return u
 
 
-# def total_overturn_depth(time_arr=_TIME_ARR, n_overturns=N_OVERTURN, 
-#                         prob_pct=OVERTURN_PROB_PCT, regimes=OVERTURN_REGIMES, 
-#                         sfd_uv=OVERTURN_UV, ts=TIMESTEP):
-#     """Return array of overturn depth [m] as a function of time."""
-#     overturn_depths = []
-#     for r in regimes:
-#         u, v = sfd_uv[r]
-#         # n = num_impacts(r) * ts  # [m^-2 ts^-1]
-#         # n_scaled = n * impact_flux(time_arr) / impact_flux(0)
-#         u_scaled = u * impact_flux(time_arr) / impact_flux(0)
-#         lam = overturn_lambda(n_overturns, prob_pct)
-#         overturn = overturn_depth(ts, lam, u_scaled, v)
-
-#         overturn_depths.append(overturn)
-#     overturn_total = np.sum(overturn_depths, axis=0)
-#     return overturn_total
+def total_overturn_depth(time_arr=_TIME_ARR, n_overturns=N_OVERTURN, 
+                        prob_pct=OVERTURN_PROB_PCT, regimes=OVERTURN_REGIMES, 
+                        sfd_ab=OVERTURN_AB, ts=TIMESTEP, vfs=IMPACT_SPEEDS):
+    """Return array of overturn depth [m] as a function of time."""
+    overturn_depths = []
+    for r in regimes:
+        a, b = sfd_ab[r]
+        vf = vfs[r]
+        a_scaled = a * impact_flux(time_arr) / impact_flux(0)
+        u = overturn_u(a_scaled, b, 'strength', vf=vf)
+        overturn = overturn_depth(ts, u, b, n_overturns, prob_pct)
+        overturn_depths.append(overturn)
+    overturn_total = np.sum(overturn_depths, axis=0)
+    return overturn_total
 
 
 @lru_cache(1)
@@ -1000,7 +1021,7 @@ def overturn_lambda(n, prob_pct=OVERTURN_PROB_PCT):
     return lam
 
 
-# def num_impacts(regime, sfd_uv=OVERTURN_UV, diams=OVERTURN_DIAMS):
+# def num_impacts(regime, sfd_uv=OVERTURN_AB, diams=OVERTURN_DIAMS):
 #     """
 #     Return number of impacts in regime that occur in timstep [yrs].
 #     """
@@ -1108,7 +1129,7 @@ def get_random_hydrated_craters(
     Return crater diams of hydrated craters from random distribution.
     """
     # Randomly include only craters formed by hydrated, Ctype asteroids
-    rng = np.random.default_rng(rng)
+    rng = get_rng(rng)
     rand_arr = rng.random(size=len(crater_diams))
     crater_diams = crater_diams[rand_arr < ctype_frac * ctype_hyd]
     return crater_diams
@@ -1121,7 +1142,7 @@ def get_random_impactor_speeds(
     Return n impactor speeds from normal distribution about mean, sd.
     """
     # Randomize impactor speeds with Gaussian around mean, sd
-    rng = np.random.default_rng(rng)
+    rng = get_rng(rng)
     impactor_speeds = rng.normal(mean_speed, sd_speed, n)
     impactor_speeds[impactor_speeds < esc_vel] = esc_vel  # minimum is esc_vel
     return impactor_speeds
@@ -1258,7 +1279,7 @@ def get_crater_pop(age, regime, ts=TIMESTEP, sa_moon=SA_MOON, rng=None):
     n_craters = probabilistic_round(n_craters, rng=rng)
 
     # Resample crater diameters with replacement, weighted by sfd
-    rng = np.random.default_rng(rng)
+    rng = get_rng(rng)
     crater_diams = rng.choice(crater_diams, n_craters, p=sfd_prob)
     return crater_diams
 
@@ -1533,13 +1554,18 @@ def probabilistic_round(x, rng=None):
     E.g. 6.1 will round down ~90% of the time and round up ~10% of the time
     such that over many trials, the expected value is 6.1.
     """
-    rng = np.random.default_rng(rng)
+    rng = get_rng(rng)
     return int(x + rng.random())
 
 
 def diam2vol(diameter):
     """Return volume of sphere given diameter."""
     return (4 / 3) * np.pi * (diameter / 2) ** 3
+
+
+def get_rng(rng):
+    """Return np.random random number generator from given seed in rng."""
+    return np.random.default_rng(rng)
 
 
 if __name__ == "__main__":
