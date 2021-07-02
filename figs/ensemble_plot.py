@@ -6,9 +6,11 @@ import matplotlib.pyplot as plt
 # Set these paths to match your system
 # DATA_DIR should be full path to run_dir from mixing.py
 
-DATA_DIR = '/home/cjtu/projects/essi21/data/210624/'
-FIGPATH = '/home/cjtu/projects/essi21/figs/ensemble_ice.png'
-ICE_COL = 1  # Column to use from ice_cols.csv (1 up to #cols)
+MODE = 'essi'
+DATE = '210701'
+DATA_DIR = f'/home/cjtu/projects/essi21/data/{DATE}/'
+FIGPATH = f'/home/cjtu/projects/essi21/figs/ensemble_ice_{MODE}_{DATE}.png'
+ICE_COL = 2  # Column to use from ice_cols.csv (1 up to #cols)
 
 plt.style.use('tableau-colorblind10')
 plt.rcParams.update({
@@ -21,13 +23,13 @@ plt.rcParams.update({
 })
 
 # Find all ice_columns csvs recursively
-csvs = Path(DATA_DIR).glob('**/ice_columns_*.csv')
+csvs = Path(DATA_DIR).glob(f'**/ice_columns_{MODE}*.csv')
 f, ax = plt.subplots()
 for i, csv in enumerate(csvs):
         df = pd.read_csv(csv, usecols=[0, ICE_COL])
         ax.plot(df.iloc[:, 0], df.iloc[:, 1])
         if i % 100 == 0:
-            print(f'Starting csv {i}', flush=True)
+            print(f'Starting csv {i}: {csv}', flush=True)
 if 'i' not in locals():
     print(f'No ice_columns csvs found, check DATA_DIR: {DATA_DIR}')
     quit()

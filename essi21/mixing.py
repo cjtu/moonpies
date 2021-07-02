@@ -36,8 +36,15 @@ from functools import lru_cache
 import numpy as np
 import pandas as pd
 
+# Set model mode
+#    'cannon': Replicate cannon model
+#    'essi': Exploration Science Summer Intern version. Differences:
+#           - Improved impact gardening module 
+#           - Others coming soon!
+MODEL_MODE = 'essi'  # ['cannon', 'essi']
+
 # Use random seed if passed on cmd line, else 0
-RANDOM_SEED = 0
+RANDOM_SEED = 0  # change to None to get random result each time
 if __name__ == "__main__" and len(sys.argv) > 1:
     RANDOM_SEED = int(sys.argv[1])  # 1st cmd-line arg is seed
 
@@ -46,7 +53,7 @@ _VERBOSE = False
 _DATETIME = pd.Timestamp.now()
 RUN_DATETIME = _DATETIME.strftime("%Y/%m/%d-%H:%M:%S")
 RUN_DIR = _DATETIME.strftime("%y%m%d")  # today's date, feel free to change
-RUN = f"cannon{RANDOM_SEED:05d}"  # seed necessary here data isn't overwritten
+RUN = f"{MODEL_MODE}{RANDOM_SEED:05d}"  # seed necessary here data isn't overwritten
 
 # Paths (try to guess DATAPATH, but you can it manually)
 if "JPY_PARENT_PID" in os.environ:
@@ -81,7 +88,6 @@ TIMESTEP = 10e6  # [yr]
 TIMESTART = 4.25e9  # [yr]
 
 # Parameters
-MODEL_MODE = "cannon"  # ['cannon', 'updated']
 COLDTRAP_MAX_TEMP = 120  # [K]
 COLDTRAP_AREA = 1.3e4 * 1e6  # [m^2], (Williams 2019, via Text S1, Cannon 2020)
 ICE_HOP_EFFICIENCY = 0.054  # 5.4% gets to the S. Pole (Text S1, Cannon 2020)
@@ -112,9 +118,9 @@ REGOLITH_CP = 4.3e3  # Heat capacity [J kg^-1 K^-1] (0.7-4.2 kJ/kg/K for H2O)
 # Impact gardening module (Costello 2020)
 COSTELLO_LAM_CSV = DATAPATH + 'costello_2018_t1.csv'
 OVERTURN_PROB_PCT = '99%'  # Poisson probability ['10%', '50%', '99%'] (Table 1, Costello 2018)
+N_OVERTURN = 100  # number of overturns needed for ice loss
 CRATER_PROXIMITY = 0.41  # crater proximity scaling parameter
 DEPTH_OVERTURN = 0.04  # fractional depth overturned
-N_OVERTURN = 10  # number of overturns needed for ice loss
 TARGET_KR = 0.6  # Costello 2018, for lunar regolith
 TARGET_K1 = 0.132  # Costello 2018, for lunar regolith
 TARGET_K2 = 0.26  # Costello 2018, for lunar regolith
@@ -133,12 +139,6 @@ IMPACT_SPEEDS = {
     'secondary': 507,  # [km/s]
     'micrometeorite': 1800  # [km/s]
 }
-# OVERTURN_DIAMS = {
-#     'primary': (1e-2, 1e3),  # Costello 2018 p. 334
-#     'secondary': (1e-2, 1e3),  # 1e5 secondaries, -4 slope from McEwen 2005
-#     'micrometeorite': (1e-9, 1e-2)  # Costello 2018 p. 334
-# }
-
 
 # Impact ice delivery
 MM_MASS_RATE = 1e6  # [kg/yr], lunar micrometeorite flux (Grun et al. 2011)
@@ -276,7 +276,7 @@ _NY, _NX = _GRD_Y.shape[0], _GRD_X.shape[1]
 NT = len(_TIME_ARR)
 
 # Functions
-def main(write=True, rng=None):
+def main(write=True, vmode=VOLC_MODE, mmode=MODEL_MODE, rng=None):
     """
     Before loop:
       1) read_crater_list(): Reads in crater list from CRATER_CSV above.
@@ -295,42 +295,40 @@ def main(write=True, rng=None):
     # Before loop (setup)
     df = read_crater_list()  # DataFrame, len: NC
     # df = randomize_crater_ages(df)  # DataFrame, len: NC
-    ej_thickness_time = get_ejecta_thickness_matrix(df)  # shape: (NY,NX,NT)
-    volcanic_ice_time = get_volcanic_ice(mode=VOLC_MODE)  # shape: (NT)
-    overturn_time = total_overturn_depth()
-    # if MODEL_MODE == "cannon":
-    #     ballistic_sed_matrix = sublimation_thickness = None
-    # else:
-    #     ballistic_sed_matrix = get_ballistic_sed(df)  # shape: (NY,NX,len(df))
-    #     sublimation_thickness = get_sublimation_rate()  # [m]
+    ej_thickness_time = get_ejecta_thickness_matrix(df)  # [m] shape: NY,NX,NT
+    volcanic_ice_time = get_volcanic_ice(mode=vmode)  # [kg] len: NT
+    overturn_depth_time = total_overturn_depth(mode=mmode)  # [m] len: NT
+    # ballistic_sed_matrix = get_ballistic_sed(df, mode=cmode)
+    # sublimation_depth_time = get_sublimation_rate(mode=mmode)  # [m] len: NT
 
     # Init ice columns dictionary based on desired COLD_TRAP_CRATERS
     strat_cols = init_strat_columns(df, ej_thickness_time)
 
     # Main time loop
     for t, time in enumerate(_TIME_ARR):
-        # Compute ice mass [kg] gained by all processes
-        new_ice_kg = 0
-        new_ice_kg += volcanic_ice_time[t]
-        new_ice_kg += total_impact_ice(time, rng=rng)
-        new_ice_kg = new_ice_kg * ICE_HOP_EFFICIENCY
+        # Global ice mass gained [kg] by all processes
+        global_ice = volcanic_ice_time[t] + total_impact_ice(time, rng=rng)
+
+        # South polar ice gain [kg]
+        polar_ice = global_ice * ICE_HOP_EFFICIENCY
         
         # Convert mass [kg] to thickness [m]
-        new_ice_m = get_ice_thickness(new_ice_kg)
-        update_ice_cols(t, strat_cols, new_ice_m)
-        # TODO: add sublimation, ballistic sed
-
-    age_grid = get_age_grid(df)  # shape: (NY, NX) age of youngest impact
+        polar_ice_thickness = get_ice_thickness(polar_ice)
+        strat_cols = update_ice_cols(t, strat_cols, polar_ice_thickness, 
+                                     overturn_depth_time[t])
+    
+    # Format and save outputs
     df_outputs = format_outputs(strat_cols)
-    outputs = [*df_outputs, age_grid, ej_thickness_time]
     if write:
-        fnames = (FEJDF, FICEDF, FICEMETA, FRUNMETA, FAGEGRD, FEJMATRIX)
-        # Numpy outputs take a long time to write - do we need them?
+        df_fnames = (FEJDF, FICEDF, FICEMETA, FRUNMETA)
+        save_outputs(df_outputs, df_fnames)
         if SAVE_NPY:
-            save_outputs(outputs, fnames)
-        else:
-            save_outputs(outputs[:-2], fnames[:-2])
-    return outputs
+            # Compute these on demand (expensive to do every run)
+            age_grid = get_age_grid(df)  # shape: (NY, NX) age of youngest impact
+            npy_fnames = (FAGEGRD, FEJMATRIX)
+            npy_outputs = [age_grid, ej_thickness_time]
+            save_outputs(npy_outputs, npy_fnames)
+    return df_outputs
 
 
 def get_age_grid(df, grd_x=_GRD_X, grd_y=_GRD_Y, timestart=TIMESTART):
@@ -458,6 +456,7 @@ def update_ice_cols(
     t,
     strat_cols,
     new_ice_thickness,
+    overturn_depth=0,
     # sublimation_thickness,
     # ballistic_sed_matrix,
     mode=MODEL_MODE,
@@ -471,21 +470,13 @@ def update_ice_cols(
         ice_col[t] = new_ice_thickness
 
         # Ice eroded in column
-        if mode == "cannon":
-            ice_col = erode_ice_cannon(ice_col, ej_col, t)
-        # else:
-        #     if c is not None and ej_col[t] > 0:
-        #         ice_col = ballistic_sed_ice_column(
-        #             c, ice_col, ballistic_sed_matrix
-        #         )
-        #     ice_col = garden_ice_column(ice_col, ej_col, t)
-        #     ice_col = sublimate_ice_column(ice_col, sublimation_thickness)
-
-        # TODO: Other icy things?
-        # thermal pumping?
+        ice_col = remove_ice_overturn(ice_col, ej_col, t, overturn_depth, mode)
+        # ice_col = ballistic_sed_ice_column()
+        # ice_col = sublimate_ice_column()
 
         # Save ice column back to strat_cols dict
         strat_cols[cname][0] = ice_col
+    return strat_cols
 
 
 def read_crater_list(crater_csv=CRATER_CSV, columns=CRATER_COLS):
@@ -563,22 +554,6 @@ def get_crater_distances(df, symmetric=True):
         out += out.T
     out[out <= 0] = np.nan
     return out
-
-
-def get_ejecta_distances(df, grd_x=_GRD_X, grd_y=_GRD_Y):
-    """
-    Return 3D array shape (len(grd_x), len(grd_y), len(df)) of ejecta distances
-    from each crater in df.
-
-    Distances computed with simple dist. Distances within crater rad are NaN.
-    """
-    ny, nx = grd_y.shape[0], grd_x.shape[1]
-    ej_dist_all = np.zeros([ny, nx, len(df)], dtype=_DTYPE)
-    for i, crater in df.iterrows():
-        ej_dist = dist(crater.x, crater.y, grd_x, grd_y)
-        ej_dist[ej_dist < crater.rad] = np.nan
-        ej_dist_all[:, :, i] = ej_dist
-    return ej_dist_all
 
 
 def get_ejecta_thickness(distance, radius, exp_complex=0.74, ds2c=SIMPLE2COMPLEX, 
@@ -867,20 +842,28 @@ def ballistic_sed_ice_column(c, ice_column, ballistic_sed_matrix):
     return ice_column
 
 
-def erode_ice_cannon(
-    ice_column, ejecta_column, t, ice_to_erode=0.1, ejecta_shield=0.4
-):
+# Impact overturn removal of ice
+def remove_ice_overturn(ice_col, ej_col, t, overturn_depth, mode='cannon'):
+    """Return ice_col with ice removed due to impact overturn via current mode."""
+    if mode == 'cannon':
+        ice_col = erode_ice_cannon(ice_col, ej_col, t, overturn_depth)
+    else:
+        ice_col[:t+1] = garden_ice_column(ice_col[:t+1], ej_col[:t+1], overturn_depth)
+    return ice_col
+
+
+def erode_ice_cannon(ice_col, ej_col, t, overturn_depth=0.1, ej_shield=0.4):
     """
-    Return eroded ice column using impact gardening
+    Return eroded ice column using Cannon et al. (2020) method (10 cm / 10 Ma).
     """
     # BUG in Cannon ds01: erosion base not updated for adjacent ejecta layers
     # Erosion base is most recent time when ejecta column was > ejecta_shield
-    erosion_base = np.argmax(ejecta_column[: t + 1] > ejecta_shield)
+    erosion_base = np.argmax(ej_col[: t + 1] > ej_shield)
 
     # Garden from top of ice column until ice_to_erode amount is removed
     # BUG in Cannon ds01: doesn't account for partial shielding by small ej
     layer = t
-    while ice_to_erode > 0 and layer >= 0:
+    while overturn_depth > 0 and layer >= 0:
         if t < erosion_base:
             # if layer < erosion_base:
             # End loop if we reach erosion base
@@ -888,27 +871,38 @@ def erode_ice_cannon(
             # - loop doesn't end if we reach erosion base while eroding
             # - loop only ends here if we started at erosion_base
             break
-        ice_in_layer = ice_column[layer]
-        if ice_in_layer >= ice_to_erode:
-            ice_column[layer] -= ice_to_erode
+        ice_in_layer = ice_col[layer]
+        if ice_in_layer >= overturn_depth:
+            ice_col[layer] -= overturn_depth
         else:
-            ice_column[layer] = 0
-        ice_to_erode -= ice_in_layer
+            ice_col[layer] = 0
+        overturn_depth -= ice_in_layer
         layer -= 1
-    return ice_column
+    return ice_col
 
 
-def garden_ice_column(
-    ice_column, ejecta_column, time, dt=TIMESTEP, area=COLDTRAP_AREA
-):
+def garden_ice_column(ice_column, ejecta_column, overturn_depth):
     """
-    Return ice column (area m^2) gardened to some depth in dt amount of time
-    given the gardening rates in Costello (2018, 2020) at time yrs in the past.
+    Return ice_column gardened to overturn_depth, preserved by ejecta_column.
 
-    Ice is only gardened if the gardening depth exceed the thickness of the
-    ejecta column on top of the ice.
+    Ejecta deposited on last timestep preserves ice. Loop through ice_col and 
+    ejecta_col until overturn_depth and remove all ice that is encountered.
     """
-    # TODO: Katelyn
+    i = 0  # current loop iter 
+    d = 0  # current depth
+    while d < overturn_depth and i < 2*len(ice_column):
+        if i % 2:
+            # Odd i (ice): remove all ice from this layer, add it to depth
+            d += ice_column[-i//2]
+            ice_column[-i//2] = 0
+        else:
+            # Even i (ejecta): do nothing, add to current depth
+            d += ejecta_column[-i//2]
+        i += 1
+    # If odd i (ice) on last iter, we likely removed too much ice
+    #   Add back any excess depth we travelled to ice_col
+    if (i - 1) % 2 and d > overturn_depth:
+        ice_column[-i//2] = d - overturn_depth
     return ice_column
 
 
@@ -929,8 +923,7 @@ def overturn_depth(t, u, v, n=N_OVERTURN, prob_pct=OVERTURN_PROB_PCT,
 
     Return
     ----------
-    overturn_depth (num): gardening depth [meters] 
-    TODO: double check units (m?)
+    overturn_depth (num): impact gardening depth [m] 
     """
     lam = overturn_lambda(n, prob_pct)
     B = 1 / (v + 2)  # eq 12, Costello 2020
@@ -941,14 +934,24 @@ def overturn_depth(t, u, v, n=N_OVERTURN, prob_pct=OVERTURN_PROB_PCT,
     return overturn_depth
 
 
-def overturn_depth_costello(time):
-    """Example solutions to overturn eqn 10 (Costello 2020)."""
-    
-    return
+def overturn_depth_costello_str(time):
+    """Return Costello 2020 eqn 10, strength (1 overturn, 99% prob)."""
+    return 3.94e-5 * time ** 0.5
+
+
+def overturn_depth_costello_grav(time):
+    """Return Costello 2020 eqn 10, gravity (1 overturn, 99% prob)"""
+    return 7.35e-4 * time ** 0.35
+
 
 def overturn_depth_morris(time):
-    """Return reworking depth from Morris (1978) fits to Apollo samples."""
+    """Return overturn depth from Morris (1978) fits to Apollo samples."""
     return 4.39e-5 * time ** 0.45
+
+
+def overturn_depth_speyerer(time):
+    """Return overturn depth from Speyerer et al. (2016) LROC splotches."""
+    return 3.45e-5 * time ** 0.47
 
 
 def overturn_u(a, b, regime, rho_t=TARGET_DENSITY, rho_i=IMPACTOR_DENSITY_AVG, 
@@ -957,8 +960,8 @@ def overturn_u(a, b, regime, rho_t=TARGET_DENSITY, rho_i=IMPACTOR_DENSITY_AVG,
     """
     Return size-frequecy factor u for overturn (eqn 13, Costello 2020).
     """
-    alpha = k2 * (y / (rho_t * vf**2))**(0.5 * (2 + mu))
-    beta = -3 * mu / (2 + mu)
+    alpha = k2 * (y / (rho_t * vf**2))**((2 + mu) / 2)
+    beta = (-3 * mu) / (2 + mu)
     delta = 2 * kr
     gamma = (k1 * np.pi * rho_i) / (6 * rho_t)
     eps = (g / (2 * vf**2)) * (rho_i / rho_t)**(1/3)
@@ -974,14 +977,16 @@ def overturn_u(a, b, regime, rho_t=TARGET_DENSITY, rho_i=IMPACTOR_DENSITY_AVG,
         exp = (3 * b) / (3 + beta)
         u = t1 * a * (1 / denom)**exp
     else:
-        print("choose a regime!")
+        raise ValueError('Regime must be "strength" or "gravity"')
     return u
 
 
 def total_overturn_depth(time_arr=_TIME_ARR, n_overturns=N_OVERTURN, 
                         prob_pct=OVERTURN_PROB_PCT, regimes=OVERTURN_REGIMES, 
-                        sfd_ab=OVERTURN_AB, ts=TIMESTEP, vfs=IMPACT_SPEEDS):
+                        sfd_ab=OVERTURN_AB, ts=TIMESTEP, vfs=IMPACT_SPEEDS, mode='cannon'):
     """Return array of overturn depth [m] as a function of time."""
+    if mode == 'cannon':
+        return 0.1 * np.ones(len(time_arr), dtype=_DTYPE)
     overturn_depths = []
     for r in regimes:
         a, b = sfd_ab[r]
@@ -1019,18 +1024,6 @@ def overturn_lambda(n, prob_pct=OVERTURN_PROB_PCT):
     # Interpolate nearest value in df[prob_pct] from input n
     lam = np.interp(n, df.n, df[prob_pct])
     return lam
-
-
-# def num_impacts(regime, sfd_uv=OVERTURN_AB, diams=OVERTURN_DIAMS):
-#     """
-#     Return number of impacts in regime that occur in timstep [yrs].
-#     """
-#     u, v = sfd_uv[regime]
-#     mindiam, maxdiam = diams[regime]
-#     n_low = n_cumulative(mindiam, u, v)
-#     n_upp = n_cumulative(maxdiam, u, v)
-#     n = n_low - n_upp
-#     return n
 
 
 def sublimate_ice_column(ice_column, sublimation_rate):
@@ -1542,11 +1535,6 @@ def gc_dist(lon1, lat1, lon2, lat2, rp=RAD_MOON):
     return rp * c
 
 
-def dist(x1, y1, x2, y2):
-    """Return simple distance between coordinates (x1, y1) and (x2, y2)."""
-    return np.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
-
-
 def probabilistic_round(x, rng=None):
     """
     Randomly round positive float x up or down based on its distance to x + 1.
@@ -1569,4 +1557,6 @@ def get_rng(rng):
 
 
 if __name__ == "__main__":
-    _ = main(rng=RANDOM_SEED)
+    # Set rng for whole program to get deterministic randomness
+    rng = get_rng(RANDOM_SEED)
+    _ = main(rng=rng)

@@ -93,8 +93,7 @@ def test_ice_small_impactors():
     impactorNum = impactorNum * mm.impact_flux(t) / mm.impact_flux(0)
     sfd = impactorDiams ** -3.7
     impactors = sfd * (impactorNum / np.sum(sfd))
-    print(np.max(impactors), np.min(impactors))
-    np.testing.assert_allclose(ncraters, impactors)
+    np.testing.assert_allclose(ncraters, impactors, rtol=5e-7)
 
     # Cannon 2020: convert to mass
     impactorMasses = 1300 * (4 / 3) * np.pi * (impactorDiams / 2) ** 3
@@ -118,7 +117,7 @@ def test_get_crater_pop_C():
 
     sfd = craterDiams ** -3.82
     craters = sfd * (craterNum / sum(sfd))
-    np.testing.assert_allclose(ncraters, craters)
+    np.testing.assert_allclose(ncraters, craters, rtol=5e-7)
 
 
 def test_ice_small_craters():
@@ -266,3 +265,36 @@ def test_diam2len_johnson():
     actual = mm.diam2len_johnson(diams, 1300, 1300)
     expected = (0.37e3, 1.4e3, 8.5e3)
     np.testing.assert_allclose(actual, expected, rtol=0.35)
+
+
+def test_garden_ice_column():
+    """Test garden_ice_column."""
+    ice_col = np.array([10])
+    ejecta_col = np.array([10])
+    overturn_depth = 10
+    new_ice_col = mm.garden_ice_column(ice_col, ejecta_col, overturn_depth)
+    expected = [10]
+    np.testing.assert_array_almost_equal(new_ice_col, expected)
+
+
+    ice_col = np.array([10])
+    ejecta_col = np.array([5])
+    overturn_depth = 10
+    new_ice_col = mm.garden_ice_column(ice_col, ejecta_col, overturn_depth)
+    expected = [5]
+    np.testing.assert_array_almost_equal(new_ice_col, expected)
+
+
+    ice_col = np.array([10, 10])
+    ejecta_col = np.array([5, 0])
+    overturn_depth = 15
+    new_ice_col = mm.garden_ice_column(ice_col, ejecta_col, overturn_depth)
+    expected = [10, 0]
+    np.testing.assert_array_almost_equal(new_ice_col, expected)
+
+    ice_col = np.array([6, 4, 2])
+    ejecta_col = np.array([0, 2, 1])
+    overturn_depth = 10
+    new_ice_col = mm.garden_ice_column(ice_col, ejecta_col, overturn_depth)
+    expected = [5, 0, 0]
+    np.testing.assert_array_almost_equal(new_ice_col, expected)
