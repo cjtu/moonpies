@@ -466,13 +466,14 @@ def update_ice_cols(
     """
     # Update all tracked ice columns
     for cname, (ice_col, ej_col) in strat_cols.items():
+        # TODO: Ballistic sed first, if crater was formed
+        # ice_col = ballistic_sed_ice_column()
+
         # Ice gained by column
         ice_col[t] = new_ice_thickness
 
         # Ice eroded in column
         ice_col = remove_ice_overturn(ice_col, ej_col, t, overturn_depth, mode)
-        # ice_col = ballistic_sed_ice_column()
-        # ice_col = sublimate_ice_column()
 
         # Save ice column back to strat_cols dict
         strat_cols[cname][0] = ice_col
@@ -568,6 +569,8 @@ def get_ejecta_thickness(distance, radius, exp_complex=0.74, ds2c=SIMPLE2COMPLEX
     exp[radius * 2 > ds2c] = exp_complex
     thickness = 0.14 * radius ** exp * (distance / radius) ** order
     thickness[np.isnan(thickness)] = 0
+    # TODO: make this only cannon mode?
+    thickness[distance < 4 * radius] = 0  # Cannon cuts off at 4 crater radii
     return thickness
 
 
@@ -887,6 +890,8 @@ def garden_ice_column(ice_column, ejecta_column, overturn_depth):
 
     Ejecta deposited on last timestep preserves ice. Loop through ice_col and 
     ejecta_col until overturn_depth and remove all ice that is encountered.
+    
+    TODO: garden new ice first, new ejecta next (swap evens and odds)
     """
     i = 0  # current loop iter 
     d = 0  # current depth
