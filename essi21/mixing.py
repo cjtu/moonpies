@@ -1,6 +1,6 @@
 """
 Main mixing module updated from Cannon et al. (2020)
-Date: 06/29/21
+Date: 07/05/21
 Authors: CJ Tai Udovicic, K Frizzell, K Luchsinger, A Madera, T Paladino
 
 All model results are saved to OUTPATH.
@@ -17,7 +17,7 @@ python mixing.py <seed>
 import os
 os.chdir('/home/cjtu/projects/essi21/essi21')
 import mixing as mm
-ej_cols, ice_cols, ice_meta, run_meta, age_grid, ej_matrix = mixing.main()
+ej_cols, ice_cols, run_meta = mixing.main()
 
 # Run with gnuparallel (6 s/run normal, 0.35 s/run 48 cores)
     parallel -P-1 uses all cores except 1
@@ -35,248 +35,11 @@ import sys
 from functools import lru_cache
 import numpy as np
 import pandas as pd
+from essi21 import config
 
-# Set model mode
-#    'cannon': Replicate cannon model
-#    'essi': Exploration Science Summer Intern version. Differences:
-#           - Improved impact gardening module 
-#           - Others coming soon!
-MODEL_MODE = 'essi'  # ['cannon', 'essi']
-
-# Use random seed if passed on cmd line, else 0
-RANDOM_SEED = 0  # change to None to get random result each time
-if __name__ == "__main__" and len(sys.argv) > 1:
-    RANDOM_SEED = int(sys.argv[1])  # 1st cmd-line arg is seed
-
-# Metadata
-_VERBOSE = False
-_DATETIME = pd.Timestamp.now()
-RUN_DATETIME = _DATETIME.strftime("%Y/%m/%d-%H:%M:%S")
-RUN_DIR = _DATETIME.strftime("%y%m%d")  # today's date, feel free to change
-RUN = f"{MODEL_MODE}{RANDOM_SEED:05d}"  # seed necessary here data isn't overwritten
-
-# Paths (try to guess DATAPATH, but you can it manually)
-if "JPY_PARENT_PID" in os.environ:
-    _FPATH = os.getcwd() + os.sep
-else:
-    _FPATH = os.path.abspath(os.path.dirname(__file__)) + os.sep
-DATAPATH = os.path.abspath(_FPATH + "../data/") + os.sep
-OUTPATH = os.path.join(DATAPATH, RUN_DIR, RUN) + os.sep  # each run get a dir
-
-# Files to import (# of COLS must equal # columns in CSV)
-CRATER_CSV = DATAPATH + "crater_list.csv"
-CRATER_COLS = (
-    "cname",
-    "lat",
-    "lon",
-    "diam",
-    "age",
-    "age_low",
-    "age_upp",
-    "psr_area",
-    "age_ref",
-    "priority",
-    "notes",
-)
-
-# Model grid
-GRDXSIZE = 400e3  # [m]
-GRDYSIZE = 400e3  # [m]
-GRDSTEP = 1e3  # [m / pixel]
-
-TIMESTEP = 10e6  # [yr]
-TIMESTART = 4.25e9  # [yr]
-
-# Parameters
-COLDTRAP_MAX_TEMP = 120  # [K]
-COLDTRAP_AREA = 1.3e4 * 1e6  # [m^2], (Williams 2019, via Text S1, Cannon 2020)
-ICE_HOP_EFFICIENCY = 0.054  # 5.4% gets to the S. Pole (Text S1, Cannon 2020)
-IMPACTOR_DENSITY = 1300  # [kg m^-3], Cannon 2020
-IMPACTOR_DENSITY_AVG = 2780  # [kg m^-3] Costello 2018
-# IMPACTOR_DENSITY = 3000  # [kg m^-3] ordinary chondrite (Melosh scaling)
-# IMPACT_SPEED = 17e3  # [m/s] average impact speed (Melosh scaling)
-IMPACT_SPEED = 20e3  # [m/s] mean impact speed (Cannon 2020)
-IMPACT_SD = 6e3  # [m/s] standard deviation impact speed (Cannon 2020)
-ESCAPE_VEL = 2.38e3  # [m/s] lunar escape velocity
-IMPACT_ANGLE = 45  # [deg]  average impact velocity
-TARGET_DENSITY = 1500  # [kg m^-3] (Cannon 2020)
-BULK_DENSITY = 2700  # [kg m^-3] simple to complex (Melosh)
-EJECTA_THICKNESS_ORDER = -3  # min: -3.5, avg: -3, max: -2.5 (Kring 1995)
-ICE_EROSION_RATE = 0.1 * (TIMESTEP / 10e6)  # [m], 10 cm / 10 Ma (Cannon 2020)
-
-# Ice properties
-ICE_DENSITY = 934  # [kg m^-3], (Cannon 2020)
-ICE_MELT_TEMP = 273  # [K]
-ICE_LATENT_HEAT = 334e3  # [J/kg] latent heat of H2O ice
-
-# Ballistic Sedimentation module
-ICE_FRAC = 0.056  # fraction ice vs regolith (5.6% Colaprete 2010)
-HEAT_FRAC = 0.5  # fraction of ballistic KE used in heating vs mixing
-HEAT_RETAINED = 0.1  # fraction of heat retained (10-30%; Stopar 2018)
-REGOLITH_CP = 4.3e3  # Heat capacity [J kg^-1 K^-1] (0.7-4.2 kJ/kg/K for H2O)
-
-# Impact gardening module (Costello 2020)
-COSTELLO_LAM_CSV = DATAPATH + 'costello_2018_t1.csv'
-OVERTURN_PROB_PCT = '99%'  # Poisson probability ['10%', '50%', '99%'] (Table 1, Costello 2018)
-N_OVERTURN = 100  # number of overturns needed for ice loss
-CRATER_PROXIMITY = 0.41  # crater proximity scaling parameter
-DEPTH_OVERTURN = 0.04  # fractional depth overturned
-TARGET_KR = 0.6  # Costello 2018, for lunar regolith
-TARGET_K1 = 0.132  # Costello 2018, for lunar regolith
-TARGET_K2 = 0.26  # Costello 2018, for lunar regolith
-TARGET_MU = 0.41  # Costello 2018, for lunar regolith
-TARGET_YIELD_STR = 0.01*1e6  # [Pa] Costello 2018, for lunar regolith
-
-# Overturn sfd parameters as uD^v (Table 2, Costello et al. 2018)
-OVERTURN_REGIMES = ('primary', 'secondary', 'micrometeorite')
-OVERTURN_AB = {
-    'primary': (6.3e-11, -2.7),
-    'secondary': (7.25e-9, -4), # 1e5 secondaries, -4 slope from McEwen 2005
-    'micrometeorite': (1.53e-12, -2.64)
-}
-IMPACT_SPEEDS = {
-    'primary': 1800,  # [km/s]
-    'secondary': 507,  # [km/s]
-    'micrometeorite': 1800  # [km/s]
-}
-
-# Impact ice delivery
-MM_MASS_RATE = 1e6  # [kg/yr], lunar micrometeorite flux (Grun et al. 2011)
-CTYPE_FRAC = 0.36  # 36% of impactors are C-type (Jedicke et al., 2018)
-CTYPE_HYDRATED = 2 / 3  # 2/3 of C-types are hydrated (Rivkin, 2012)
-HYDRATED_WT_PCT = 0.1  # impactors are 10 wt% water (Cannon 2020)
-IMPACTOR_MASS_RETAINED = 0.165  # Asteroid mass retention (Ong et al., 2011)
-
-# Impact ice module
-IMPACT_REGIMES = ("A", "B", "C", "D", "E")
-DIAM_RANGE = {
-    # Regime: (rad_min, rad_max, step)
-    "A": (0, 0.01, None),  # Micrometeorites (<1 mm)
-    "B": (0.01, 3, 1e-4),  # Small impactors (1 mm - 3 m)
-    "C": (100, 1.5e3, 1),  # Simple craters, steep sfd (100 m - 1.5 km)
-    "D": (1.5e3, 15e3, 1e2),  # Simple craters, shallow sfd (1.5 km - 15 km)
-    # "E": (15e3, 300e3, 1e3),  # Complex craters, shallow sfd (15 km - 300 km)
-    "E": (15e3, 500e3, 1e3),  # Complex craters, shallow sfd (15 km - 300 km)
-}
-
-SFD_SLOPES = {
-    "B": -3.70,  # Small impactors
-    "C": -3.82,  # Simple craters "steep" branch
-    "D": -1.80,  # Simple craters "shallow" branch
-    "E": -1.80,  # Complex craters "shallow" branch
-}
-
-# Volcanic Ice Module
-VOLC_MODE = "Head"  # ['Head', 'Needham]
-
-# Head et al. (2020)
-VOLC_EARLY = (4e9, 3e9)  # [yrs]
-VOLC_LATE = (3e9, 2e9)  # [yrs]
-VOLC_EARLY_PCT = 0.75  # 75%
-VOLC_LATE_PCT = 0.25  # 25%
-VOLC_TOTAL_VOL = 1e7 * 1e9  # [m^3] basalt
-VOLC_H2O_PPM = 10  # [ppm]
-VOLC_MAGMA_DENSITY = 3000  # [kg/m^3]
-
-# Needham & Kring (2017)
-VOLC_POLE_PCT = 0.1  # 10%
-VOLC_SPECIES = "min_H2O"  # volcanic species, must be in VOLC_COLS
-VOLC_CSV = DATAPATH + "needham_kring_2017.csv"
-VOLC_COLS = (
-    "age",
-    "tot_vol",
-    "sphere_mass",
-    "min_CO",
-    "max_CO",
-    "min_H2O",
-    "max_H2O",
-    "min_H",
-    "max_H",
-    "min_S",
-    "max_S",
-    "min_sum",
-    "max_sum",
-    "min_psurf",
-    "max_psurf",
-    "min_atm_loss",
-    "max_atm_loss",
-)
-
-# Lunar constants
-RAD_MOON = 1737e3  # [m], lunar radius
-GRAV_MOON = 1.62  # [m s^-2], gravitational acceleration
-SA_MOON = 4 * np.pi * RAD_MOON ** 2  # [m^2]
-SIMPLE2COMPLEX = 18e3  # [m], lunar s2c transition diameter (Melosh 1989)
-COMPLEX2PEAKRING = 1.4e5  # [m], lunar c2pr transition diameter (Melosh 1989)
-
-# Lunar production function a_values (Neukum 2001)
-NEUKUM1983 = (
-    -3.0768,
-    -3.6269,
-    0.4366,
-    0.7935,
-    0.0865,
-    -0.2649,
-    -0.0664,
-    0.0379,
-    0.0106,
-    -0.0022,
-    -5.18e-4,
-    3.97e-5,
-)
-IVANOV2000 = (
-    -3.0876,
-    -3.557528,
-    0.781027,
-    1.021521,
-    -0.156012,
-    -0.444058,
-    0.019977,
-    0.086850,
-    -0.005874,
-    -0.006809,
-    8.25e-4,
-    5.54e-5,
-)
-
-# Names of files to export
-SAVE_NPY = False  # npy save is slow. Generate age / ejecta grids as needed
-FEJDF = OUTPATH + f"ej_columns_{RUN}.csv"
-FICEDF = OUTPATH + f"ice_columns_{RUN}.csv"
-FICEMETA = OUTPATH + f"ice_metadata_{RUN}.csv"
-FRUNMETA = OUTPATH + f"run_metadata_{RUN}.csv"
-FAGEGRD = OUTPATH + f"age_grid_{RUN}.npy"
-FEJMATRIX = OUTPATH + f"ejecta_matrix_{RUN}.npy"
-
-# Set options
-COLD_TRAP_CRATERS = (
-    "Haworth",
-    "Shoemaker",
-    "Faustini",
-    "Shackleton",
-    "Amundsen",
-    "Sverdrup",
-    "Cabeus B",
-    "de Gerlache",
-    "Idel'son L",
-    "Wiechert J",
-)
-
-# Make arrays
-_DTYPE = np.float32  # np.float64 (32 should be good for most purposes)
-_GRD_Y, _GRD_X = np.meshgrid(
-    np.arange(GRDYSIZE, -GRDYSIZE, -GRDSTEP, dtype=_DTYPE), 
-    np.arange(-GRDXSIZE, GRDXSIZE, GRDSTEP, dtype=_DTYPE), 
-    sparse=True, indexing='ij'
-)
-_TIME_ARR = np.linspace(TIMESTART, TIMESTEP, int(TIMESTART / TIMESTEP), dtype=_DTYPE)
-
-# Length of arrays
-_NY, _NX = _GRD_Y.shape[0], _GRD_X.shape[1]
-NT = len(_TIME_ARR)
-
+# TODO: remove all CFG
 # Functions
-def main(write=True, vmode=VOLC_MODE, mmode=MODEL_MODE, rng=None):
+def main(write=True, cfg=CFG, rng=None, verbose=CFG._verbose):
     """
     Before loop:
       1) read_crater_list(): Reads in crater list from CRATER_CSV above.
@@ -293,11 +56,13 @@ def main(write=True, vmode=VOLC_MODE, mmode=MODEL_MODE, rng=None):
         b. update age grid
     """
     # Before loop (setup)
+    if verbose:
+        print("Initializing run...")
     df = read_crater_list()  # DataFrame, len: NC
     # df = randomize_crater_ages(df)  # DataFrame, len: NC
     ej_thickness_time = get_ejecta_thickness_matrix(df)  # [m] shape: NY,NX,NT
-    volcanic_ice_time = get_volcanic_ice(mode=vmode)  # [kg] len: NT
-    overturn_depth_time = total_overturn_depth(mode=mmode)  # [m] len: NT
+    volcanic_ice_time = get_volcanic_ice(mode=cfg.volc_mode)  # [kg] len: NT
+    overturn_depth_time = total_overturn_depth(mode=cfg.mode)  # [m] len: NT
     # ballistic_sed_matrix = get_ballistic_sed(df, mode=cmode)
     # sublimation_depth_time = get_sublimation_rate(mode=mmode)  # [m] len: NT
 
@@ -305,72 +70,89 @@ def main(write=True, vmode=VOLC_MODE, mmode=MODEL_MODE, rng=None):
     strat_cols = init_strat_columns(df, ej_thickness_time)
 
     # Main time loop
-    for t, time in enumerate(_TIME_ARR):
+    if verbose:
+        print("Starting main loop...")
+    for t, time in enumerate(cfg._time_arr):
         # Global ice mass gained [kg] by all processes
         global_ice = volcanic_ice_time[t] + total_impact_ice(time, rng=rng)
 
         # South polar ice gain [kg]
-        polar_ice = global_ice * ICE_HOP_EFFICIENCY
-        
+        polar_ice = global_ice * cfg.ice_hop_efficiency
+
         # Convert mass [kg] to thickness [m]
         polar_ice_thickness = get_ice_thickness(polar_ice)
-        strat_cols = update_ice_cols(t, strat_cols, polar_ice_thickness, 
-                                     overturn_depth_time[t])
-    
+        strat_cols = update_ice_cols(
+            t, strat_cols, polar_ice_thickness, overturn_depth_time[t]
+        )
+
     # Format and save outputs
+    if verbose:
+        print("Formatting outputs")
     df_outputs = format_outputs(strat_cols)
     if write:
-        df_fnames = (FEJDF, FICEDF, FICEMETA, FRUNMETA)
-        save_outputs(df_outputs, df_fnames)
-        if SAVE_NPY:
+        if verbose:
+            print(f"Saving outputs to {cfg.outdir}")
+        fnames = (cfg.ejcols_csv_out, cfg.icecols_csv_out, cfg.runmeta_csv_out)
+        save_outputs(df_outputs, fnames)
+        if cfg.save_npy:
             # Compute these on demand (expensive to do every run)
-            age_grid = get_age_grid(df)  # shape: (NY, NX) age of youngest impact
-            npy_fnames = (FAGEGRD, FEJMATRIX)
+            age_grid = get_age_grid(
+                df
+            )  # shape: (NY, NX) age of youngest impact
+            npy_fnames = (cfg.agegrd_npy_out, cfg.ejmatrix_npy_out)
             npy_outputs = [age_grid, ej_thickness_time]
             save_outputs(npy_outputs, npy_fnames)
     return df_outputs
 
 
-def get_age_grid(df, grd_x=_GRD_X, grd_y=_GRD_Y, timestart=TIMESTART):
+def get_age_grid(
+    df,
+    grdx=CFG._grdx,
+    grdy=CFG._grdy,
+    timestart=CFG.timestart,
+    dtype=CFG.dtype,
+):
     """Return final surface age of each grid point after all craters formed."""
-    ny, nx = grd_y.shape[0], grd_x.shape[1]
-    age_grid = timestart * np.ones((ny, nx), dtype=_DTYPE) 
+    ny, nx = grdy.shape[0], grdx.shape[1]
+    age_grid = timestart * np.ones((ny, nx), dtype=dtype)
     for _, crater in df.iterrows():
-        age_grid = update_age(age_grid, crater, grd_x, grd_y)
+        age_grid = update_age(age_grid, crater, grdx, grdy)
     return age_grid
 
 
-def get_ejecta_thickness_matrix(df, time_arr=_TIME_ARR, ts=TIMESTEP):
+def get_ejecta_thickness_matrix(
+    df, time_arr=CFG._time_arr, ts=CFG.timestep, dtype=CFG.dtype
+):
     """
     Return ejecta_matrix of thickness [m] at each time in time_arr given
     triangular matrix of distances between craters in df.
     """
     # Symmetric matrix of distance from all craters to each other (NC, NC)
-    ej_distances = get_crater_distances(df)  
-    
+    ej_distances = get_crater_distances(df)
+
     # Ejecta thickness deposited in each crater from each crater (NC, NC)
     rad = df.rad.values[:, np.newaxis]  # need to pass column vector of radii
     ej_thick = get_ejecta_thickness(ej_distances, rad)
 
     # Find indices of crater ages in time_arr
     # Note: searchsorted must be ascending, so do -time_arr (-4.3, 0) Ga
-    # TODO: python rounding issue - (shoemaker index off by one - why only shoemaker??)
+    # BUG: python rounding issue - (only shoemaker index off by one)
     rounded_time = np.rint(time_arr / ts)
     rounded_ages = np.rint(df.age.values / ts)
     time_idx = np.searchsorted(-rounded_time, -rounded_ages)
 
     # Fill ejecta thickness vs time matrix (rows: time, cols:craters)
-    ej_thick_time = np.zeros((len(time_arr), len(time_idx)), dtype=_DTYPE)
+    ej_thick_time = np.zeros((len(time_arr), len(time_idx)), dtype=dtype)
     for i, t_idx in enumerate(time_idx):
         # Sum here in case more than one crater formed at t_idx
-        ej_thick_time[t_idx, :] += ej_thick[:, i]    
+        ej_thick_time[t_idx, :] += ej_thick[:, i]
     return ej_thick_time
 
 
-def grid_interp(x, y, grdvalues, grd_x=_GRD_X, grd_y=_GRD_Y):
+def grid_interp(x, y, grdvalues, grdx=CFG._grdx, grdy=CFG._grdy):
     """Return ejecta thickness at (x, y) in ejecta_thickness 2D grid."""
-    ix, iy = get_grd_ind(x, y, grd_x, grd_y)
-    gx, gy = grd_x.flatten(), grd_y.flatten()
+    ix, iy = get_grd_ind(x, y, grdx, grdy)
+    gx, gy = grdx.flatten(), grdy.flatten()
 
     dy = (y - gy[iy]) / (gy[iy + 1] - gy[iy])
     interp_y = (1 - dy) * grdvalues[iy] + dy * grdvalues[iy + 1]
@@ -381,7 +163,7 @@ def grid_interp(x, y, grdvalues, grd_x=_GRD_X, grd_y=_GRD_Y):
     return interp
 
 
-def format_outputs(strat_cols, time_arr=_TIME_ARR):
+def format_outputs(strat_cols, time_arr=CFG._time_arr, cfg=CFG):
     """
     Return all formatted model outputs and write to outpath, if specified.
     """
@@ -391,9 +173,8 @@ def format_outputs(strat_cols, time_arr=_TIME_ARR):
         ej_dict[cname] = ej_col
         ice_dict[cname] = ice_col
 
-    # Save all uppercase globals except ones starting with "_"
-    gvars = list(globals().items())
-    run_meta = {k: v for k, v in gvars if k.isupper() and k[0] != "_"}
+    # Save cfg excluding "_" fields
+    run_meta = cfg.to_dict_no_underscore()
 
     # Convert to DataFrames
     ej_cols_df = pd.DataFrame(ej_dict)
@@ -404,21 +185,21 @@ def format_outputs(strat_cols, time_arr=_TIME_ARR):
     return ej_cols_df, ice_cols_df, run_meta_df
 
 
-def save_outputs(outputs, fnames, outpath=OUTPATH, verbose=_VERBOSE):
+def save_outputs(outputs, fnames, verbose=CFG._verbose):
     """
     Save outputs to files in fnames in directory outpath.
     """
-    if not os.path.exists(outpath):
-        print(f"Creating new directory: {outpath}.")
-        os.makedirs(outpath)
-    for out, fname in zip(outputs, fnames):
-        fout = os.path.join(outpath, fname)
+    for out, fout in zip(outputs, fnames):
+        outpath = os.path.dirname(fout)
+        if not os.path.exists(outpath):
+            print(f"Creating new directory: {outpath}")
+            os.makedirs(outpath)
         if isinstance(out, pd.DataFrame):
             out.to_csv(fout, index=False)
         elif isinstance(out, np.ndarray):
             np.save(fout, out)
         if verbose:
-            print(f"Saved {fname}")
+            print(f"Saved {fout}")
     print(f"All outputs saved to {outpath}")
 
 
@@ -427,14 +208,16 @@ def round_to_ts(values, timestep):
     return np.around(values / timestep) * timestep
 
 
-def randomize_crater_ages(df, timestep=TIMESTEP, rng=None):
+def randomize_crater_ages(
+    df, timestep=CFG.timestep, dtype=CFG.dtype, rng=None
+):
     """
     Return ages randomized uniformly between agelow, ageupp.
     """
     rng = get_rng(rng)
     # TODO: make sure ages are unique to each timestep?
     ages, agelow, ageupp = df[["age", "age_low", "age_upp"]].values.T
-    new_ages = np.zeros(len(df), dtype=_DTYPE)
+    new_ages = np.zeros(len(df), dtype=dtype)
     for i, (age, low, upp) in enumerate(zip(ages, agelow, ageupp)):
         new_ages[i] = round_to_ts(rng.uniform(age - low, age + upp), timestep)
     df["age"] = new_ages
@@ -442,12 +225,12 @@ def randomize_crater_ages(df, timestep=TIMESTEP, rng=None):
     return df
 
 
-def update_age(age_grid, crater, grd_x=_GRD_X, grd_y=_GRD_Y):
+def update_age(age_grid, crater, grdx=CFG._grdx, grdy=CFG._grdy):
     """
     Return new age grid updating the points interior to crater with its age.
     """
     x, y, rad = crater.x, crater.y, crater.rad
-    crater_mask = (np.abs(grd_x - x) < rad) * (np.abs(grd_y - y) < rad)
+    crater_mask = (np.abs(grdx - x) < rad) * (np.abs(grdy - y) < rad)
     age_grid[crater_mask] = crater.age
     return age_grid
 
@@ -459,7 +242,7 @@ def update_ice_cols(
     overturn_depth=0,
     # sublimation_thickness,
     # ballistic_sed_matrix,
-    mode=MODEL_MODE,
+    mode=CFG.mode,
 ):
     """
     Update ice_cols new ice added and ice eroded.
@@ -480,7 +263,7 @@ def update_ice_cols(
     return strat_cols
 
 
-def read_crater_list(crater_csv=CRATER_CSV, columns=CRATER_COLS):
+def read_crater_list(crater_csv=CFG.crater_csv_in, columns=CFG.crater_cols):
     """
     Return dataframe of craters from path to crater_csv with columns names.
 
@@ -535,21 +318,38 @@ def read_crater_list(crater_csv=CRATER_CSV, columns=CRATER_COLS):
     return df
 
 
-def read_volcanic_csv(volcanic_csv=VOLC_CSV, col=VOLC_COLS):
+def read_volcanic_csv(volcanic_csv=CFG.volc_csv_in, col=CFG.volc_cols):
     df = pd.read_csv(volcanic_csv, names=col, header=3)
     df["age"] = df["age"] * 1e9  # [Gyr -> yr]
     return df
 
 
 # Pre-compute grid functions
-def get_crater_distances(df, symmetric=True):
+def get_crater_distances(df, symmetric=True, dtype=CFG.dtype):
     """
-    Return 2D array of great circle dist between all craters in df.
+    Return 2D array of great circle dist between all craters in df. Distance
+    from a crater to itself (or repeat distances if symmetric=False) are nan.
+
+    Mandatory
+        - df : Read in crater_list.csv as a DataFrame with defined columns
+        - df : Required columns defined 'lat' and 'lon'
+        - See 'read_crater_list' function
+
+    Parameters
+    ----------
+    df (DataFrame): Crater DataFrame, e.g., read by read_crater_list
+    TODO: Symmetric :
+
+    Returns
+    -------
+    out (2D array): great circle distances between all craters in df
     """
-    out = np.zeros((len(df), len(df)), dtype=_DTYPE)
+    out = np.zeros((len(df), len(df)), dtype=dtype)
     for i in range(len(df)):
         for j in range(i):
-            d = gc_dist(*df.iloc[i][['lon', 'lat']], *df.iloc[j][['lon', 'lat']])
+            d = gc_dist(
+                *df.iloc[i][["lon", "lat"]], *df.iloc[j][["lon", "lat"]]
+            )
             out[i, j] = d
     if symmetric:
         out += out.T
@@ -557,15 +357,21 @@ def get_crater_distances(df, symmetric=True):
     return out
 
 
-def get_ejecta_thickness(distance, radius, exp_complex=0.74, ds2c=SIMPLE2COMPLEX, 
-                         order=EJECTA_THICKNESS_ORDER):
+def get_ejecta_thickness(
+    distance,
+    radius,
+    exp_complex=0.74,
+    ds2c=CFG.simple2complex,
+    order=CFG.ejecta_thickness_order,
+    dtype=CFG.dtype,
+):
     """
     Return ejecta thickness as a function of distance given crater radius.
 
     Complex craters McGetchin 1973
     """
     exp_complex = 0.74  # McGetchin 1973, simple craters exp=1
-    exp = np.ones(radius.shape, dtype=_DTYPE)
+    exp = np.ones(radius.shape, dtype=dtype)
     exp[radius * 2 > ds2c] = exp_complex
     thickness = 0.14 * radius ** exp * (distance / radius) ** order
     thickness[np.isnan(thickness)] = 0
@@ -574,7 +380,7 @@ def get_ejecta_thickness(distance, radius, exp_complex=0.74, ds2c=SIMPLE2COMPLEX
     return thickness
 
 
-def get_volcanic_ice(time_arr=_TIME_ARR, mode="Needham"):
+def get_volcanic_ice(time_arr=CFG._time_arr, mode="Needham"):
     """
     Return ice mass deposited in cold traps by volcanic outgassing over time.
 
@@ -595,12 +401,12 @@ def get_volcanic_ice(time_arr=_TIME_ARR, mode="Needham"):
 
 def volcanic_ice_needham(
     time_arr,
-    f=VOLC_CSV,
-    cols=VOLC_COLS,
-    species=VOLC_SPECIES,
-    pole_pct=VOLC_POLE_PCT,
-    coldtrap_area=COLDTRAP_AREA,
-    moon_area=SA_MOON,
+    f=CFG.volc_csv_in,
+    cols=CFG.volc_cols,
+    species=CFG.volc_species,
+    pole_pct=CFG.volc_pole_pct,
+    coldtrap_area=CFG.coldtrap_area,
+    moon_area=CFG.sa_moon,
 ):
     """
     Return ice [units] deposited in each timestep with Needham & Kring (2017).
@@ -626,14 +432,15 @@ def volcanic_ice_needham(
 
 def volcanic_ice_head(
     time_arr,
-    early=VOLC_EARLY,
-    late=VOLC_LATE,
-    early_pct=VOLC_EARLY_PCT,
-    late_pct=VOLC_LATE_PCT,
-    magma_vol=VOLC_TOTAL_VOL,
-    outgassed_h2o=VOLC_H2O_PPM,
-    magma_rho=VOLC_MAGMA_DENSITY,
-    ice_rho=ICE_DENSITY,
+    early=CFG.volc_early,
+    late=CFG.volc_late,
+    early_pct=CFG.volc_early_pct,
+    late_pct=CFG.volc_late_pct,
+    magma_vol=CFG.volc_total_vol,
+    outgassed_h2o=CFG.volc_h2o_ppm,
+    magma_rho=CFG.volc_magma_density,
+    ice_rho=CFG.ice_density,
+    dtype=CFG.dtype,
 ):
     """
     Return ice [units] deposited in each timestep with Head et al. (2020).
@@ -649,13 +456,15 @@ def volcanic_ice_head(
     H2O_early = tot_H2O_dep * early_pct / len(early_idx)
     H2O_late = tot_H2O_dep * late_pct / len(late_idx)
 
-    out = np.zeros(len(time_arr), dtype=_DTYPE)
+    out = np.zeros(len(time_arr), dtype=dtype)
     out[early_idx] = H2O_early
     out[late_idx] = H2O_late
     return out
 
 
-def get_ice_thickness(mass, density=ICE_DENSITY, cold_trap_area=COLDTRAP_AREA):
+def get_ice_thickness(
+    mass, density=CFG.ice_density, cold_trap_area=CFG.coldtrap_area
+):
     """
     Return ice thickness applied to all cold traps given total ice mass
     produced, density of ice and total cold_trap_area.
@@ -670,77 +479,80 @@ def get_ballistic_sed(df):
     Return ballistic sedimentation mixing depths for each crater.
     """
     # TODO: add Kristen code
-    return np.zeros((_NY, _NX, len(df)))
+    return np.zeros((CFG._ny, CFG._nx, len(df)))
 
 
-def ballistic_planar(theta, d, g=GRAV_MOON):
+def ballistic_planar(theta, d, g=CFG.grav_moon):
     """
     Return ballistic speed (v) given ballistic range (d) and gravity of planet (g).
-    Assumes planar surface (d << R_planet).  
-    
+    Assumes planar surface (d << R_planet).
+
     Parameters
     ----------
     d (num or array): ballistic range [m]
     g (num): gravitational force of the target body [m s^-2]
     theta (num): angle of impaact [radians]
-    
+
     Returns
     -------
-    v (num or array): ballistic speed [m s^-1]   
- 
+    v (num or array): ballistic speed [m s^-1]
+
     """
     return np.sqrt((d * g) / np.sin(2 * theta))
 
 
-def ballistic_spherical(theta, d, g=GRAV_MOON, rp=RAD_MOON):
+def ballistic_spherical(theta, d, g=CFG.grav_moon, rp=CFG.rad_moon):
     """
     Return ballistic speed (v) given ballistic range (d) and gravity of planet (g).
     Assumes perfectly spherical planet (Vickery, 1986).
-    
+
     Parameters
     ----------
     d (num or array): ballistic range [m]
     g (num): gravitational force of the target body [m s^-2]
     theta (num): angle of impaact [radians]
     rp (num): radius of the target body [m]
-    
+
     Returns
     -------
-    v (num or array): ballistic speed [m s^-1]   
- 
+    v (num or array): ballistic speed [m s^-1]
+
     """
     tan_phi = np.tan(d / (2 * rp))
-    return np.sqrt((g * rp * tan_phi) / ((np.sin(theta) * np.cos(theta)) + (np.cos(theta)**2 * tan_phi)))
+    return np.sqrt(
+        (g * rp * tan_phi)
+        / ((np.sin(theta) * np.cos(theta)) + (np.cos(theta) ** 2 * tan_phi))
+    )
 
 
 def mps2kmph(v):
     """
     Return v in km/hr, given v in m/s
-    
+
     Parameters
     ----------
     v (num or array): velocity [m s^-1]
-    
+
     Returns
     -------
     v (num or array): velocity [km hr^-1]
     """
-    
+
     return 3600 * v / 1000
 
 
-def thick2mass(thick, density=TARGET_DENSITY):
+def thick2mass(thick, density=CFG.target_density):
     """
-    Convert an ejecta blanket thickness to kg per meter squared, default 
-    density of the ejecta blanket from Carrier et al. 1991. 
-    Density should NOT be the bulk density of the Moon! 
-    
+    Convert an ejecta blanket thickness to kg per meter squared, default
+    density of the ejecta blanket from Carrier et al. 1991.
+    Density should NOT be the bulk density of the Moon!
+
     Parameters
     ----------
     thick (num or array): ejecta blanket thickness [m]
     density (num): ejecta blanket density [kg m^-3]
-    
-    Returns 
+
+    Returns
     -------
     mass (num or array): mass of the ejecta blanket [kg]
     """
@@ -750,25 +562,33 @@ def thick2mass(thick, density=TARGET_DENSITY):
 def mps2KE(speed, mass):
     """
     Return kinetic energy [J m^-2] given mass [kg], speed [m s^-1].
-    
+
     Parameters
     ----------
     speed (num or array): ballistic speed [m s^-1]
     mass (num or array): mass of the ejecta blanket [kg]
-    
+
     Returns
     -------
     KE (num or array): Kinetic energy [J m^-2]
     """
-    return 0.5 * mass * speed**2.
-    
+    return 0.5 * mass * speed ** 2.0
 
-def ice_melted(ke, t_surf=COLDTRAP_MAX_TEMP, cp=REGOLITH_CP, ice_rho=ICE_DENSITY,
-               ice_frac=ICE_FRAC, heat_frac=HEAT_FRAC, heat_ret=HEAT_RETAINED, 
-               lat_heat=ICE_LATENT_HEAT, t_melt=ICE_MELT_TEMP):
+
+def ice_melted(
+    ke,
+    t_surf=CFG.coldtrap_max_temp,
+    cp=CFG.regolith_cp,
+    ice_rho=CFG.ice_density,
+    ice_frac=CFG.ice_frac,
+    heat_frac=CFG.heat_frac,
+    heat_ret=CFG.heat_retained,
+    lat_heat=CFG.ice_latent_heat,
+    t_melt=CFG.ice_melt_temp,
+):
     """
     Return mass of ice [kg] melted by input kinetic energy.
-    
+
     Parameters
     ----------
     ke (num or array): kinetic energy of ejecta blanket [J m^-2]
@@ -780,7 +600,7 @@ def ice_melted(ke, t_surf=COLDTRAP_MAX_TEMP, cp=REGOLITH_CP, ice_rho=ICE_DENSITY
     heat_ret (num): fraction of heat retained (10-30%; Stopar 2018)
     lat_heat (num): latent heat of ice [J/kg]
     t_melt (num): melting point of ice [K]
-    
+
     Returns
     -------
     ice_mass (num or array): mass of ice melted due to ejecta [kg]
@@ -793,7 +613,7 @@ def ice_melted(ke, t_surf=COLDTRAP_MAX_TEMP, cp=REGOLITH_CP, ice_rho=ICE_DENSITY
     return ice_mass
 
 
-def get_sublimation_rate(timestep=TIMESTEP, temp=COLDTRAP_MAX_TEMP):
+def get_sublimation_rate(timestep=CFG.timestep, temp=CFG.coldtrap_max_temp):
     """
     Return ice lost due to sublimation at temp each timestep.
 
@@ -810,14 +630,20 @@ def get_sublimation_rate(timestep=TIMESTEP, temp=COLDTRAP_MAX_TEMP):
 
 
 # Ice column functions
-def get_grd_ind(x, y, grd_x=_GRD_X, grd_y=_GRD_Y):
+def get_grd_ind(x, y, grdx=CFG._grdx, grdy=CFG._grdy):
     """Return index of val in monotonic grid_axis."""
-    xidx = np.searchsorted(grd_x[0, :], x) - 1
-    yidx = grd_y.shape[0] - (np.searchsorted(-grd_y[:, 0], y) - 1)
+    xidx = np.searchsorted(grdx[0, :], x) - 1
+    yidx = grdy.shape[0] - (np.searchsorted(-grdy[:, 0], y) - 1)
     return (xidx, yidx)
 
 
-def init_strat_columns(df, ej_cols, craters=COLD_TRAP_CRATERS, time_arr=_TIME_ARR):
+def init_strat_columns(
+    df,
+    ej_cols,
+    craters=CFG.cold_trap_craters,
+    time_arr=CFG._time_arr,
+    dtype=CFG.dtype,
+):
     """
     Return dict of ice and ejecta columns for cold trap craters in df.
 
@@ -831,10 +657,10 @@ def init_strat_columns(df, ej_cols, craters=COLD_TRAP_CRATERS, time_arr=_TIME_AR
     """
     strat_columns = {}
     idxs = np.where(df.cname.isin(craters).values)[0]
-    ice_col = np.zeros(len(time_arr), _DTYPE)
+    ice_col = np.zeros(len(time_arr), dtype)
     strat_columns = {
         c: [ice_col.copy(), ej_cols[:, i]] for c, i in zip(craters, idxs)
-    } 
+    }
     return strat_columns
 
 
@@ -846,12 +672,14 @@ def ballistic_sed_ice_column(c, ice_column, ballistic_sed_matrix):
 
 
 # Impact overturn removal of ice
-def remove_ice_overturn(ice_col, ej_col, t, overturn_depth, mode='cannon'):
+def remove_ice_overturn(ice_col, ej_col, t, overturn_depth, mode="cannon"):
     """Return ice_col with ice removed due to impact overturn via current mode."""
-    if mode == 'cannon':
+    if mode == "cannon":
         ice_col = erode_ice_cannon(ice_col, ej_col, t, overturn_depth)
     else:
-        ice_col[:t+1] = garden_ice_column(ice_col[:t+1], ej_col[:t+1], overturn_depth)
+        ice_col[: t + 1] = garden_ice_column(
+            ice_col[: t + 1], ej_col[: t + 1], overturn_depth
+        )
     return ice_col
 
 
@@ -888,33 +716,40 @@ def garden_ice_column(ice_column, ejecta_column, overturn_depth):
     """
     Return ice_column gardened to overturn_depth, preserved by ejecta_column.
 
-    Ejecta deposited on last timestep preserves ice. Loop through ice_col and 
+    Ejecta deposited on last timestep preserves ice. Loop through ice_col and
     ejecta_col until overturn_depth and remove all ice that is encountered.
-    
+
     TODO: garden new ice first, new ejecta next (swap evens and odds)
     """
-    i = 0  # current loop iter 
+    i = 0  # current loop iter
     d = 0  # current depth
-    while d < overturn_depth and i < 2*len(ice_column):
+    while d < overturn_depth and i < 2 * len(ice_column):
         if i % 2:
             # Odd i (ice): remove all ice from this layer, add it to depth
-            d += ice_column[-i//2]
-            ice_column[-i//2] = 0
+            d += ice_column[-i // 2]
+            ice_column[-i // 2] = 0
         else:
             # Even i (ejecta): do nothing, add to current depth
-            d += ejecta_column[-i//2]
+            d += ejecta_column[-i // 2]
         i += 1
     # If odd i (ice) on last iter, we likely removed too much ice
     #   Add back any excess depth we travelled to ice_col
     if (i - 1) % 2 and d > overturn_depth:
-        ice_column[-i//2] = d - overturn_depth
+        ice_column[-i // 2] = d - overturn_depth
     return ice_column
 
 
-def overturn_depth(t, u, v, n=N_OVERTURN, prob_pct=OVERTURN_PROB_PCT,
-                   c=CRATER_PROXIMITY, h=DEPTH_OVERTURN): 
+def overturn_depth(
+    t,
+    u,
+    v,
+    n=CFG.n_overturn,
+    prob_pct=CFG.overturn_prob_pct,
+    c=CFG.crater_proximity,
+    h=CFG.depth_overturn,
+):
     """
-    Return regolith overturn depth at time t, given lambda and size-frequency 
+    Return regolith overturn depth at time t, given lambda and size-frequency
     u, v given (u*D^v). Uses eqn 10, Costello (2020).
 
     Parameters
@@ -928,14 +763,14 @@ def overturn_depth(t, u, v, n=N_OVERTURN, prob_pct=OVERTURN_PROB_PCT,
 
     Return
     ----------
-    overturn_depth (num): impact gardening depth [m] 
+    overturn_depth (num): impact gardening depth [m]
     """
     lam = overturn_lambda(n, prob_pct)
-    B = 1 / (v + 2)  # eq 12, Costello 2020
+    b = 1 / (v + 2)  # eq 12, Costello 2020
     p1 = (v + 2) / (v * u)
-    p2 = 4 * lam / (np.pi * c**2)
-    A = abs(h * (p1 * p2)**B)  # eq 11, Costello 2020
-    overturn_depth = A * t**(-B)  # eq 10, Costello 2020
+    p2 = 4 * lam / (np.pi * c ** 2)
+    a = abs(h * (p1 * p2) ** b)  # eq 11, Costello 2020
+    overturn_depth = a * t ** (-b)  # eq 10, Costello 2020
     return overturn_depth
 
 
@@ -959,45 +794,65 @@ def overturn_depth_speyerer(time):
     return 3.45e-5 * time ** 0.47
 
 
-def overturn_u(a, b, regime, rho_t=TARGET_DENSITY, rho_i=IMPACTOR_DENSITY_AVG, 
-                kr=TARGET_KR, k1=TARGET_K1, k2=TARGET_K2, mu=TARGET_MU,
-                y=TARGET_YIELD_STR, vf=IMPACT_SPEED, g=GRAV_MOON, theta_i = IMPACT_ANGLE):
+def overturn_u(
+    a,
+    b,
+    regime,
+    rho_t=CFG.target_density,
+    rho_i=CFG.impactor_density_avg,
+    kr=CFG.target_kr,
+    k1=CFG.target_k1,
+    k2=CFG.target_k2,
+    mu=CFG.target_mu,
+    y=CFG.target_yield_str,
+    vf=CFG.impact_speed,
+    g=CFG.grav_moon,
+    theta_i=CFG.impact_angle,
+):
     """
     Return size-frequecy factor u for overturn (eqn 13, Costello 2020).
     """
-    alpha = k2 * (y / (rho_t * vf**2))**((2 + mu) / 2)
+    alpha = k2 * (y / (rho_t * vf ** 2)) ** ((2 + mu) / 2)
     beta = (-3 * mu) / (2 + mu)
     delta = 2 * kr
     gamma = (k1 * np.pi * rho_i) / (6 * rho_t)
-    eps = (g / (2 * vf**2)) * (rho_i / rho_t)**(1/3)
+    eps = (g / (2 * vf ** 2)) * (rho_i / rho_t) ** (1 / 3)
 
-    if regime == 'strength':
-        t1 = np.sin(np.deg2rad(theta_i))**(2/3)
-        denom = delta * (gamma * alpha**beta)**(1/3)
-        u =  t1 * a * (1 / denom)**b 
+    if regime == "strength":
+        t1 = np.sin(np.deg2rad(theta_i)) ** (2 / 3)
+        denom = delta * (gamma * alpha ** beta) ** (1 / 3)
+        u = t1 * a * (1 / denom) ** b
 
-    elif regime == 'gravity':
-        t1 = np.sin(np.deg2rad(theta_i))**(1/3)
-        denom = delta * (gamma * eps**beta)**(1/3)
+    elif regime == "gravity":
+        t1 = np.sin(np.deg2rad(theta_i)) ** (1 / 3)
+        denom = delta * (gamma * eps ** beta) ** (1 / 3)
         exp = (3 * b) / (3 + beta)
-        u = t1 * a * (1 / denom)**exp
+        u = t1 * a * (1 / denom) ** exp
     else:
         raise ValueError('Regime must be "strength" or "gravity"')
     return u
 
 
-def total_overturn_depth(time_arr=_TIME_ARR, n_overturns=N_OVERTURN, 
-                        prob_pct=OVERTURN_PROB_PCT, regimes=OVERTURN_REGIMES, 
-                        sfd_ab=OVERTURN_AB, ts=TIMESTEP, vfs=IMPACT_SPEEDS, mode='cannon'):
+def total_overturn_depth(
+    time_arr=CFG._time_arr,
+    n_overturns=CFG.n_overturn,
+    prob_pct=CFG.overturn_prob_pct,
+    regimes=CFG.overturn_regimes,
+    sfd_ab=CFG.overturn_ab,
+    ts=CFG.timestep,
+    vfs=CFG.impact_speeds,
+    mode="cannon",
+    dtype=CFG.dtype,
+):
     """Return array of overturn depth [m] as a function of time."""
-    if mode == 'cannon':
-        return 0.1 * np.ones(len(time_arr), dtype=_DTYPE)
+    if mode == "cannon":
+        return 0.1 * np.ones(len(time_arr), dtype=dtype)
     overturn_depths = []
     for r in regimes:
         a, b = sfd_ab[r]
         vf = vfs[r]
         a_scaled = a * impact_flux(time_arr) / impact_flux(0)
-        u = overturn_u(a_scaled, b, 'strength', vf=vf)
+        u = overturn_u(a_scaled, b, "strength", vf=vf)
         overturn = overturn_depth(ts, u, b, n_overturns, prob_pct)
         overturn_depths.append(overturn)
     overturn_total = np.sum(overturn_depths, axis=0)
@@ -1005,19 +860,19 @@ def total_overturn_depth(time_arr=_TIME_ARR, n_overturns=N_OVERTURN,
 
 
 @lru_cache(1)
-def read_lambda_table(costello_lam_csv=COSTELLO_LAM_CSV):
+def read_lambda_table(costello_csv=CFG.costello_csv_in):
     """Read lambda table (Table 1, Costello et al. 2018)."""
-    df = pd.read_csv(costello_lam_csv)
+    df = pd.read_csv(costello_csv)
     return df
 
 
-def overturn_lambda(n, prob_pct=OVERTURN_PROB_PCT):
+def overturn_lambda(n, prob_pct=CFG.overturn_prob_pct):
     """
     Return lambda given prob_pct and n events (Table 1, Costello et al. 2018).
 
     Parameters
     ----------
-    n (num): cumulative number of overturn events 
+    n (num): cumulative number of overturn events
     prob_pct ('10%', '50%', or '90%): percent probability threshold
 
     Return
@@ -1040,18 +895,18 @@ def sublimate_ice_column(ice_column, sublimation_rate):
     return ice_column
 
 
-def total_impact_ice(age, regimes=IMPACT_REGIMES, rng=None):
+def total_impact_ice(age, regimes=CFG.impact_regimes, rng=None):
     """Return total impact ice from regimes and sfd_slopes (Cannon 2020)."""
     total_ice = 0  # [kg]
     for r in regimes:
-        if r == "A":
+        if r == "a":
             # Micrometeorites
             total_ice += ice_micrometeorites(age)
-        elif r == "B":
+        elif r == "b":
             # Small impactors
             impactor_diams, impactors = get_impactor_pop(age, r)
             total_ice += ice_small_impactors(impactor_diams, impactors)
-        elif r == "C":
+        elif r == "c":
             # Small simple craters (continuous)
             crater_diams, craters = get_crater_pop(age, r, rng=rng)
             total_ice += ice_small_craters(crater_diams, craters, r)
@@ -1059,17 +914,19 @@ def total_impact_ice(age, regimes=IMPACT_REGIMES, rng=None):
             # Large simple & complex craters (stochastic)
             crater_diams = get_crater_pop(age, r, rng=rng)
             crater_diams = get_random_hydrated_craters(crater_diams, rng=rng)
-            impactor_speeds = get_random_impactor_speeds(len(crater_diams), rng=rng)
+            impactor_speeds = get_random_impactor_speeds(
+                len(crater_diams), rng=rng
+            )
             total_ice += ice_large_craters(crater_diams, impactor_speeds, r)
     return total_ice
 
 
 def ice_micrometeorites(
     age=0,
-    timestep=TIMESTEP,
-    mm_mass_rate=MM_MASS_RATE,
-    hyd_wt_pct=HYDRATED_WT_PCT,
-    mass_retained=IMPACTOR_MASS_RETAINED,
+    timestep=CFG.timestep,
+    mm_mass_rate=CFG.mm_mass_rate,
+    hyd_wt_pct=CFG.hydrated_wt_pct,
+    mass_retained=CFG.impactor_mass_retained,
 ):
     """
     Return ice from micrometeorites (Regime A, Cannon 2020).
@@ -1091,7 +948,7 @@ def ice_micrometeorites(
     return micrometeorite_ice
 
 
-def ice_small_impactors(diams, num_per_bin, density=IMPACTOR_DENSITY):
+def ice_small_impactors(diams, num_per_bin, density=CFG.impactor_density):
     """
     Return ice mass [kg] from small impactors (Regime B, Cannon 2020) given
     impactor diams, num_per_bin, and density.
@@ -1107,8 +964,8 @@ def ice_small_craters(
     crater_diams,
     ncraters,
     regime,
-    v=IMPACT_SPEED,
-    impactor_density=IMPACTOR_DENSITY,
+    v=CFG.impact_speed,
+    impactor_density=CFG.impactor_density,
 ):
     """
     Return ice from simple craters, steep branch (Regime C, Cannon 2020).
@@ -1121,7 +978,10 @@ def ice_small_craters(
 
 
 def get_random_hydrated_craters(
-    crater_diams, ctype_frac=CTYPE_FRAC, ctype_hyd=CTYPE_HYDRATED, rng=None
+    crater_diams,
+    ctype_frac=CFG.ctype_frac,
+    ctype_hyd=CFG.ctype_hydrated,
+    rng=None,
 ):
     """
     Return crater diams of hydrated craters from random distribution.
@@ -1134,7 +994,11 @@ def get_random_hydrated_craters(
 
 
 def get_random_impactor_speeds(
-    n, mean_speed=IMPACT_SPEED, sd_speed=IMPACT_SD, esc_vel=ESCAPE_VEL, rng=None
+    n,
+    mean_speed=CFG.impact_speed,
+    sd_speed=CFG.impact_sd,
+    esc_vel=CFG.escape_vel,
+    rng=None,
 ):
     """
     Return n impactor speeds from normal distribution about mean, sd.
@@ -1150,8 +1014,8 @@ def ice_large_craters(
     crater_diams,
     impactor_speeds,
     regime,
-    impactor_density=IMPACTOR_DENSITY,
-    hyd_wt_pct=HYDRATED_WT_PCT,
+    impactor_density=CFG.impactor_density,
+    hyd_wt_pct=CFG.hydrated_wt_pct,
 ):
     """
     Return ice from simple/complex craters, shallow branch of sfd
@@ -1166,7 +1030,7 @@ def ice_large_craters(
     return np.sum(ice_masses)
 
 
-def ice_retention_factor(speeds):
+def ice_retention_factor(speeds, dtype=CFG.dtype):
     """
     Return ice retained in impact, given impactor speeds (Cannon 2020).
 
@@ -1176,7 +1040,7 @@ def ice_retention_factor(speeds):
     # TODO: find/verify retention(speed) eqn in Ong et al. 2010?
     # BUG? retention distribution is discontinuous
     speeds = speeds * 1e-3  # [m/s] -> [km/s]
-    retained = np.ones(len(speeds), dtype=_DTYPE) * 0.5  # nominal 50%
+    retained = np.ones(len(speeds), dtype=dtype) * 0.5  # nominal 50%
     retained[speeds >= 10] = 36.26 * np.exp(-0.3464 * speeds[speeds >= 10])
     retained[retained < 0] = 0
     return retained
@@ -1184,10 +1048,10 @@ def ice_retention_factor(speeds):
 
 def impactor_mass2water(
     impactor_mass,
-    ctype_frac=CTYPE_FRAC,
-    ctype_hyd=CTYPE_HYDRATED,
-    hyd_wt_pct=HYDRATED_WT_PCT,
-    mass_retained=IMPACTOR_MASS_RETAINED,
+    ctype_frac=CFG.ctype_frac,
+    ctype_hyd=CFG.ctype_hydrated,
+    hyd_wt_pct=CFG.hydrated_wt_pct,
+    mass_retained=CFG.impactor_mass_retained,
 ):
     """
     Return water [kg] from impactor mass [kg] using assumptions of Cannon 2020:
@@ -1199,7 +1063,9 @@ def impactor_mass2water(
     return ctype_frac * ctype_hyd * hyd_wt_pct * impactor_mass * mass_retained
 
 
-def get_impactor_pop(age, regime, sfd_slopes=SFD_SLOPES, timestep=TIMESTEP):
+def get_impactor_pop(
+    age, regime, sfd_slopes=CFG.sfd_slopes, timestep=CFG.timestep
+):
     """
     Return population of impactors and number in regime B.
 
@@ -1220,7 +1086,7 @@ def get_impactor_pop(age, regime, sfd_slopes=SFD_SLOPES, timestep=TIMESTEP):
 def n_cumulative(diam, a, b):
     """
     Return N(D) from a cumulative size-frequency distribution aD^b.
-    
+
     Parameters
     ----------
     diam (num): crater diameter [m]
@@ -1235,7 +1101,7 @@ def n_cumulative(diam, a, b):
 
 
 @lru_cache(4)
-def get_sfd_prob(regime, sfd_slopes=SFD_SLOPES):
+def get_sfd_prob(regime, sfd_slopes=CFG.sfd_slopes):
     """Return size-frequency distribution probability given diams, sfd slope."""
     diams = get_diam_array(regime)
     sfd = diams ** sfd_slopes[regime]
@@ -1243,7 +1109,9 @@ def get_sfd_prob(regime, sfd_slopes=SFD_SLOPES):
 
 
 @lru_cache(1)
-def get_impactors_brown(mindiam, maxdiam, timestep=TIMESTEP, c0=1.568, d0=2.7):
+def get_impactors_brown(
+    mindiam, maxdiam, timestep=CFG.timestep, c0=1.568, d0=2.7
+):
     """
     Return number of impactors per yr in range (mindiam, maxdiam) [m]
     (Brown et al. 2002) and scale by Earth-Moon impact ratio (Mazrouei et al. 2019).
@@ -1255,7 +1123,9 @@ def get_impactors_brown(mindiam, maxdiam, timestep=TIMESTEP, c0=1.568, d0=2.7):
     return n_impactors_moon
 
 
-def get_crater_pop(age, regime, ts=TIMESTEP, sa_moon=SA_MOON, rng=None):
+def get_crater_pop(
+    age, regime, ts=CFG.timestep, sa_moon=CFG.sa_moon, rng=None
+):
     """
     Return population of crater diameters and number (regimes C - E).
 
@@ -1268,7 +1138,7 @@ def get_crater_pop(age, regime, ts=TIMESTEP, sa_moon=SA_MOON, rng=None):
     n_craters = neukum(crater_diams[0]) - neukum(crater_diams[-1])
     # Scale for timestep, surface area and impact flux
     n_craters *= ts * sa_moon * impact_flux(age) / impact_flux(0)
-    if regime == "C":
+    if regime == "c":
         # Steep branch of sfd (simple)
         n_craters *= sfd_prob
         return crater_diams, n_craters
@@ -1291,7 +1161,7 @@ def impact_flux(time):
 
 
 @lru_cache(6)
-def neukum(diam, a_values=IVANOV2000):
+def neukum(diam, a_values=CFG.ivanov2000):
     """
     Return number of craters per m^2 per yr at diam [m] (eqn. 2, Neukum 2001).
 
@@ -1305,39 +1175,39 @@ def neukum(diam, a_values=IVANOV2000):
 
 
 @lru_cache(4)
-def get_diam_array(regime, diam_range=DIAM_RANGE):
+def get_diam_array(regime, diam_range=CFG.diam_range, dtype=CFG.dtype):
     """Return array of diameters based on diameters in diam_range."""
     dmin, dmax, step = diam_range[regime]
     n = int((dmax - dmin) / step)
-    return np.linspace(dmin, dmax, n + 1, dtype=_DTYPE)
+    return np.linspace(dmin, dmax, n + 1, dtype=dtype)
 
 
 # Crater scaling laws
-def diam2len(diams, speeds=None, regime="C"):
+def diam2len(diams, speeds=None, regime="c"):
     """
     Return size of impactors based on diam and sometimes speeds of craters.
 
     Different crater regimes are scaled via the following scaling laws:
-    - regime=='C': (Prieur et al., 2017)
-    - regime=='D': (Collins et al., 2005)
-    - regime=='E': (Johnson et al., 2016)
+    - regime=='c': (Prieur et al., 2017)
+    - regime=='d': (Collins et al., 2005)
+    - regime=='e': (Johnson et al., 2016)
 
     Parameters
     ----------
     diams (arr): Crater diameters [m].
     speeds (arr): Impactor speeds [m/s].
-    regime (str): Crater scaling regime ('C', 'D', or 'E').
+    regime (str): Crater scaling regime ('c', 'd', or 'e').
 
     Return
     ------
     lengths (arr): Impactor diameters [m].
     """
     t_diams = final2transient(diams)
-    if regime == "C":
+    if regime == "c":
         impactor_length = diam2len_prieur(tuple(t_diams), speeds)
-    elif regime == "D":
+    elif regime == "d":
         impactor_length = diam2len_collins(t_diams, speeds)
-    elif regime == "E":
+    elif regime == "e":
         impactor_length = diam2len_johnson(diams)
     else:
         raise ValueError(f"Invalid regime {regime} in diam2len")
@@ -1345,7 +1215,7 @@ def diam2len(diams, speeds=None, regime="C"):
 
 
 def final2transient(
-    diams, g=GRAV_MOON, ds2c=SIMPLE2COMPLEX, gamma=1.25, eta=0.13
+    diams, g=CFG.grav_moon, ds2c=CFG.simple2complex, gamma=1.25, eta=0.13
 ):
     """
     Return transient crater diameters from final crater diams (Melosh 1989).
@@ -1373,14 +1243,26 @@ def final2transient(
 
 def simple2complex_diam(
     gravity,
-    density=BULK_DENSITY,
+    density=CFG.bulk_density,
     s2c_moon=18e3,
     g_moon=1.62,
     rho_moon=2700,
 ):
     """
-    Return simple to complex transition diameter given gravity of body [m s^-2]
+    Return simple-to-complex transition diameter given gravity of body [m s^-2]
     and density of target [kg m^-3] (Melosh 1989).
+
+    Parameters
+    ----------
+    gravity [num] : Gravity of a planetary body [m s^-2]
+    density [num] : Density of the target material [kg m^-3]
+    s2c_moon [num] : Lunar simple-to-complex transition diamter [m]
+    g_moon [num] : Gravity of the Moon [m s^-2]
+    rho_moon [num] : Bulk density of the Moon [kg m^-3]
+
+    Return
+    ------
+    simple2complex (num): Simple-to-complex transition diameter [m]
     """
     return g_moon * rho_moon * s2c_moon / (gravity * density)
 
@@ -1388,13 +1270,25 @@ def simple2complex_diam(
 def complex2peakring_diam(
     gravity,
     density,
-    c2pr_moon=COMPLEX2PEAKRING,
-    g_moon=GRAV_MOON,
-    rho_moon=BULK_DENSITY,
+    c2pr_moon=CFG.complex2peakring,
+    g_moon=CFG.grav_moon,
+    rho_moon=CFG.bulk_density,
 ):
     """
-    Return complex to peak ring basin transition diameter given gravity of
+    Return complex-to-peak ring basin transition diameter given gravity of
     body [m s^-2] and density of target [kg m^-3] (Melosh 1989).
+
+    Parameters
+    ----------
+    gravity [num] : Gravity of a planetary body [m s^-2]
+    density [num] : Density of the target material [kg m^-3]
+    c2pr_moon [num] : Lunar complex crater to peak ring transition diamter [m]
+    g_moon [num] : Gravity of the Moon [m s^-2]
+    rho_moon [num] : Bulk density of the Moon [kg m^-3]
+
+    Return
+    ------
+    complex2peakring (num): Complex-to-peak ring basin transition diameter [m]
     """
     return g_moon * rho_moon * c2pr_moon / (gravity * density)
 
@@ -1402,10 +1296,11 @@ def complex2peakring_diam(
 @lru_cache(1)
 def diam2len_prieur(
     t_diam,
-    v=IMPACT_SPEED,
-    rho_i=IMPACTOR_DENSITY,
-    rho_t=TARGET_DENSITY,
-    g=GRAV_MOON,
+    v=CFG.impact_speed,
+    rho_i=CFG.impactor_density,
+    rho_t=CFG.target_density,
+    g=CFG.grav_moon,
+    dtype=CFG.dtype,
 ):
     """
     Return impactor length from input diam using Prieur et al. (2017) method.
@@ -1426,7 +1321,7 @@ def diam2len_prieur(
     -------
     impactor_length (num): impactor diameter [m]
     """
-    i_lengths = np.linspace(t_diam[0] / 100, t_diam[-1], 1000, dtype=_DTYPE)
+    i_lengths = np.linspace(t_diam[0] / 100, t_diam[-1], 1000, dtype=dtype)
     i_masses = rho_i * diam2vol(i_lengths)
     # Prieur impactor len to crater diam equation
     numer = 1.6 * (1.61 * g * i_lengths / v ** 2) ** -0.22
@@ -1440,11 +1335,11 @@ def diam2len_prieur(
 
 def diam2len_collins(
     t_diam,
-    v=IMPACT_SPEED,
-    rho_i=IMPACTOR_DENSITY,
-    rho_t=TARGET_DENSITY,
-    g=GRAV_MOON,
-    theta=IMPACT_ANGLE,
+    v=CFG.impact_speed,
+    rho_i=CFG.impactor_density,
+    rho_t=CFG.target_density,
+    g=CFG.grav_moon,
+    theta=CFG.impact_angle,
 ):
     """
     Return impactor length from input diam using Collins et al. (2005) method.
@@ -1476,12 +1371,12 @@ def diam2len_collins(
 
 def diam2len_johnson(
     diam,
-    rho_i=IMPACTOR_DENSITY,
-    rho_t=BULK_DENSITY,
-    g=GRAV_MOON,
-    v=IMPACT_SPEED,
-    theta=IMPACT_ANGLE,
-    ds2c=SIMPLE2COMPLEX,
+    rho_i=CFG.impactor_density,
+    rho_t=CFG.bulk_density,
+    g=CFG.grav_moon,
+    v=CFG.impact_speed,
+    theta=CFG.impact_angle,
+    ds2c=CFG.simple2complex,
 ):
     """
     Return impactor length from final crater diam using Johnson et al. (2016)
@@ -1514,45 +1409,100 @@ def diam2len_johnson(
 
 
 # Helper functions
-def latlon2xy(lat, lon, rp=RAD_MOON):
-    """Return (x, y) [rp units] S. Pole stereo coords from (lon, lat) [deg]."""
+def latlon2xy(lat, lon, rp=CFG.rad_moon):
+    """
+    Return (x, y) [m] South Polar stereo coords from (lat, lon) [deg].
+
+    Parameters
+    ----------
+    lat (num or arr): Latitude(s) [deg]
+    lon (num or arr): Longitude(s) [deg]
+    rp (num): Radius of the planet or moon [m]
+
+    Return
+    -------
+    x (num or arr): South Pole stereo x coordinate(s) [m]
+    y (num or arr): South Pole stereo y coordinate(s) [m]
+    """
     lat, lon = np.deg2rad(lat), np.deg2rad(lon)
     x = rp * np.cos(lat) * np.sin(lon)
     y = rp * np.cos(lat) * np.cos(lon)
     return x, y
 
 
-def xy2latlon(x, y, rp=RAD_MOON):
-    """Return (lat, lon) [deg] from S. Pole stereo coords (x, y) [rp units]."""
+def xy2latlon(x, y, rp=CFG.rad_moon):
+    """
+    Return (lat, lon) [deg] from South Polar stereo coords (x, y) [m].
+
+    Parameters
+    ----------
+    x (num or arr): South Pole stereo x coordinate(s) [m]
+    y (num or arr): South Pole stereo y coordinate(s) [m]
+    rp (num): Radius of the planet or moon [m]
+
+    Return
+    -------
+    lat (num or arr): Latitude(s) [deg]
+    lon (num or arr): Longitude(s) [deg]
+    """
     z = np.sqrt(rp ** 2 - x ** 2 - y ** 2)
-    lat = -np.arcsin(z / rp)
-    lon = np.arctan2(x, y)
-    return np.rad2deg(lat), np.rad2deg(lon)
+    lat = np.rad2deg(-np.arcsin(z / rp))
+    lon = np.rad2deg(np.arctan2(x, y))
+    return lat, lon
 
 
-def gc_dist(lon1, lat1, lon2, lat2, rp=RAD_MOON):
-    """Return great circ dist (lon1, lat1) - (lon2, lat2) [deg] in rp units."""
-    lon1, lat1, lon2, lat2 = map(np.radians, [lon1, lat1, lon2, lat2])
-    sin2_dlon = np.sin((lon2 - lon1)/2) ** 2
-    sin2_dlat = np.sin((lat2 - lat1)/2) ** 2
+def gc_dist(lon1, lat1, lon2, lat2, rp=CFG.rad_moon):
+    """
+    Return great circle distance [m] from (lon1, lat1) - (lon2, lat2) [deg].
+
+    Uses the Haversine formula adapted from C. Veness
+    https://www.movable-type.co.uk/scripts/latlong.html
+
+    Parameters
+    ----------
+    lon1 (num or arr): Longitude [deg] of start point
+    lat1 (num or arr): Latitude [deg] of start point
+    lon2 (num or arr): Longitude [deg] of end point
+    lat2 (num or arr): Latitude [deg] of end point
+    rp (num): Radius of the planet or moon [m]
+
+    Return
+    ------
+    gc_dist (num or arr): Great circle distance(s) in meters [m]
+    """
+    lon1, lat1, lon2, lat2 = map(np.deg2rad, [lon1, lat1, lon2, lat2])
+    sin2_dlon = np.sin((lon2 - lon1) / 2) ** 2
+    sin2_dlat = np.sin((lat2 - lat1) / 2) ** 2
     a = sin2_dlat + np.cos(lat1) * np.cos(lat2) * sin2_dlon
     c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
-    return rp * c
+    gc_dist = rp * c
+    return gc_dist
 
 
 def probabilistic_round(x, rng=None):
     """
-    Randomly round positive float x up or down based on its distance to x + 1.
+    Randomly round float x up or down weighted by its distance to x + 1.
 
     E.g. 6.1 will round down ~90% of the time and round up ~10% of the time
-    such that over many trials, the expected value is 6.1.
+    such that over many trials the expected value is 6.1.
+
+    Modified from C. Locke https://stackoverflow.com/a/40921597/8742181
+
+    Parameters
+    ----------
+    x (float): Any float (works on positive and negative values).
+
+    Return
+    ------
+    x_rounded (int): Either floor(x) or ceil(x), rounded probabalistically
     """
     rng = get_rng(rng)
-    return int(x + rng.random())
+    x_rounded = int(np.floor(x + rng.random()))
+    return x_rounded
 
 
 def diam2vol(diameter):
-    """Return volume of sphere given diameter."""
+    """Return volume of sphere [m^3] given diameter [m]."""
     return (4 / 3) * np.pi * (diameter / 2) ** 3
 
 
@@ -1562,6 +1512,9 @@ def get_rng(rng):
 
 
 if __name__ == "__main__":
-    # Set rng for whole program to get deterministic randomness
-    rng = get_rng(RANDOM_SEED)
-    _ = main(rng=rng)
+    # Set rng random seed for whole model run
+    if len(sys.argv) > 1:
+        seed = int(sys.argv[1])  # 1st cmd-line arg is seed
+        cfg = config.Cfg(seed=seed)
+    rng = get_rng(cfg.seed)
+    _ = main(cfg=cfg, rng=rng)

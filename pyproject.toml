@@ -21,6 +21,7 @@ pytest = "^6.2.4"
 
 [tool.black]
 line-length=79
+exclude="config.py"
 
 [tool.pylint.reports]
 output-format="colorized"

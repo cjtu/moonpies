@@ -80,7 +80,7 @@ def test_get_impactors_brown():
 def test_ice_small_impactors():
     """Test ice_small_impactors."""
     t = 4.25e9
-    diams, ncraters = mm.get_impactor_pop(t, "B")
+    diams, ncraters = mm.get_impactor_pop(t, "b")
     actual = mm.ice_small_impactors(diams, ncraters)
 
     # Brown (tested above)
@@ -106,13 +106,13 @@ def test_ice_small_impactors():
 def test_get_crater_pop_C():
     """Test get_crater_pop on regime C."""
     t = 4.25e9
-    diams, ncraters = mm.get_crater_pop(t, regime="C")
+    diams, ncraters = mm.get_crater_pop(t, regime="c")
 
     # Cannon regime C
     craterDiams = diams  # m
     craterNum = mm.neukum(craterDiams[0]) - mm.neukum(craterDiams[-1])
     craterNum = craterNum * (1e7)
-    craterNum = craterNum * mm.SA_MOON
+    craterNum = craterNum * mm.CFG.sa_moon
     craterNum = craterNum * mm.impact_flux(t) / mm.impact_flux(0)
 
     sfd = craterDiams ** -3.82
@@ -123,7 +123,7 @@ def test_get_crater_pop_C():
 def test_ice_small_craters():
     """Test ice_small_craters."""
     t = 4.25e9
-    regime = "C"
+    regime = "c"
     diams, ncraters = mm.get_crater_pop(t, regime=regime)
     actual = mm.ice_small_craters(diams, ncraters, regime)
 
@@ -142,7 +142,7 @@ def test_ice_small_craters():
 
 def test_ice_large_craters_D():
     """Test ice_large_craters regime D."""
-    regime = "D"
+    regime = "d"
 
     # Cannon 2020: Regime D
     def cannon_D(crater_diams, impactor_speeds):
@@ -184,7 +184,7 @@ def test_ice_large_craters_D():
 
 def test_ice_large_craters_E():
     """Test ice_large_craters regime E."""
-    regime = "E"
+    regime = "e"
 
     # Cannon 2020 Regime E
     def cannon_E(crater_diams, impactor_speeds):
@@ -228,9 +228,9 @@ def test_ice_large_craters_E():
 
 def test_get_diam_array():
     """Test get_diam_array"""
-    for regime in ("B", "C", "D", "E"):
+    for regime in ("b", "c", "d", "e"):
         actual = mm.get_diam_array(regime)
-        low, upp, step = mm.DIAM_RANGE[regime]
+        low, upp, step = mm.CFG.diam_range[regime]
         expected = np.linspace(low, upp, int((upp - low) / step) + 1)
         np.testing.assert_array_almost_equal(actual, expected)
 
