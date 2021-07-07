@@ -1,3 +1,24 @@
+"""
+# From Jupyter, make sure to os.chdir to location of this file:
+    use import mixing to run any function in this file e.g. mixing.main()
+
+import os
+os.chdir('/home/cjtu/projects/moonpies/moonpies')
+import mixing as mm
+ej_cols, ice_cols, run_meta = mixing.main()
+
+# Run with gnuparallel (6 s/run normal, 0.35 s/run 48 cores)
+    parallel -P-1 uses all cores except 1
+
+conda activate moonpies
+seq 10000 | parallel -P-1 python mixing.py
+
+# Code Profiling (pip install snakeviz)
+
+python -m cProfile -o mixing.prof mixing.py
+snakeviz mixing.prof
+"""
+
 # Ballistic sedimentation module
 def ballistic_sed_ice_column(c, ice_column, ballistic_sed_matrix):
     """Return ice column with ballistic sed grid applied"""

@@ -4,16 +4,15 @@ Date: 07/06/21
 Authors: CJ Tai Udovicic, K Frizzell, K Luchsinger, A Madera, T Paladino
 Acknowledgements: This model is largely updated from Cannon et al. (2020)
 """
-import os
-import sys
+import argparse, ast, os
 from functools import lru_cache
 import numpy as np
 import pandas as pd
-import config
+import default_config
 
 
 def main(cfg):
-    """Run mixing model with options in cfg (see config.py)."""
+    """Run mixing model with options in cfg (see default_config.py)."""
     # Setup phase
     vprint = print if cfg.verbose else lambda *a, **k: None
     vprint("Initializing run...")
@@ -179,7 +178,7 @@ def save_outputs(outputs, fnames):
             out.to_csv(fout, index=False)
         elif isinstance(out, np.ndarray):
             np.save(fout, out)
-        elif isinstance(out, config.Cfg):
+        elif isinstance(out, default_config.Cfg):
             out.to_py(fout)
 
 
@@ -1384,10 +1383,27 @@ def diam2vol(diameter):
 
 
 if __name__ == "__main__":
-    # Get random seed from cmd-line arg, set config for run
-    if len(sys.argv) > 1:
-        seed = int(sys.argv[1])  # 1st cmd-line arg is seed
-        cfg = config.Cfg(seed=seed)
-    else:
-        cfg = config.Cfg()
+    # Get optional random seed and cfg options from cmd-line args
+    parser = argparse.ArgumentParser()
+    parser.add_argument('seed', 
+                        type=int, 
+                        nargs='?', 
+                        # default=0, 
+                        help='random seed for this run - superceeds cfg.seed')
+    parser.add_argument('--cfg', '-c', 
+                        nargs='?', 
+                        type=str, 
+                        help='path to custom my_config.py')
+    args = parser.parse_args()
+    cfg_dict = {}
+    if args.cfg:  # Read config options from args.cfg path
+        with open(os.path.abspath(args.cfg), 'r') as f:
+            cfg_dict = ast.literal_eval(f.read())
+    if args.seed:  # If seed given, it takes precedence
+        cfg_dict['seed'] = args.seed    
+    elif 'seed' not in cfg_dict: # If no seed given and no cfg seed, randomize
+        cfg_dict['seed'] = np.random.randint(1, 99999)
+    
+    # Configure run (populates blank fields with defaults in default_config.py)
+    cfg = default_config.Cfg(**cfg_dict)
     _ = main(cfg)

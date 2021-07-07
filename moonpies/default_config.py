@@ -1,4 +1,4 @@
-"""Default config for moonpies. DO NOT EDIT (see README for config guide)."""
+"""DO NOT EDIT. Default config for moonpies (see README for config guide)."""
 import pprint
 from os import path, sep, environ, getcwd
 from dataclasses import dataclass, fields, field, asdict
@@ -9,13 +9,13 @@ import pandas as pd
 @dataclass
 class Cfg:
     """Class to configure a mixing model run."""
+    seed: int = 0  # Note: Should not be set here - set when model is run only
+    run: str = 'mpies'  # Name of the current run
     verbose: bool = False  # Print info as model is running
     write: bool = True  # Write model outputs to a file (if False, just return)
     write_npy: bool = False  # Write large arrays to files - slow! (age_grid, ej_thickness)
     plot: bool = False  # Save strat column plots - slow!
     mode: str = 'moonpies'  # 'moonpies' or 'cannon'
-    seed: int = 0  # Set to None to get random results
-    run: str = 'moonpies'  # Name of the current run
     run_date: str = pd.Timestamp.now().strftime("%y%m%d")
     run_time: str = pd.Timestamp.now().strftime("%H:%M:%S")
 
@@ -174,7 +174,6 @@ class Cfg:
         if not fdict:
             fdict = self.to_dict()
         s = pprint.pformat(fdict, compact=True, sort_dicts=False)
-        s = 'cfg={\n ' + s[1:]
         return s
 
 
@@ -189,6 +188,7 @@ class Cfg:
     def to_default(self, outpath):
         """Write defaults to my_config.py"""
         ddict = self.to_dict()
+        del ddict['seed']
         del ddict['run_time']
         del ddict['run_date']
         for k, v in ddict.copy().items():
@@ -270,6 +270,7 @@ def get_outpath(cfg):
         run_seed = f'{cfg.run}_{cfg.seed:05d}'
         outpath = path.join(datapath, run_date, run_seed) + sep
     return outpath
+
 
 def enforce_dataclass_type(cfg, field):
     """
