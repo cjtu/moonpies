@@ -139,9 +139,19 @@ Use `ensemble_plot.py` to visualize a collection of many model runs. It plots ic
 
 By default the figure will be saved to `figs/` and should look like:
 
+![](./figs/ensemble_example.png){ width=80% }
 
+The above model outputs were run for the lunar South Pole in Cannon mode which closely reproduces the Cannon et al. (2020) model:
 
-To specify one collection of runs, you may specify a configuration file
+![](./figs/cannon_etal_2020_fig_s3.png){ width=90% }
+
+To specify one collection of runs, you may specify a configuration file as a command line argument:
+
+`python ensemble_plot.py my_config.py`
+
+### More plots
+
+*Coming soon!*
 
 ## Model details
 
