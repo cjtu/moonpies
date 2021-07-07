@@ -5,7 +5,7 @@ Authors: CJ Tai Udovicic, K Frizzell, K Luchsinger, A Madera, T Paladino
 Acknowledgements: This model is largely updated from Cannon et al. (2020)
 """
 import argparse, ast, os
-from functools import lru_cache
+from functools import lru_cache, wraps
 import numpy as np
 import pandas as pd
 import default_config
@@ -485,23 +485,21 @@ def garden_ice_column(ice_column, ejecta_column, overturn_depth):
 
     Ejecta deposited on last timestep preserves ice. Loop through ice_col and
     ejecta_col until overturn_depth and remove all ice that is encountered.
-
-    TODO: garden new ice first, new ejecta next (swap evens and odds)
     """
     i = 0  # current loop iter
     d = 0  # current depth
     while d < overturn_depth and i < 2 * len(ice_column):
         if i % 2:
-            # Odd i (ice): remove all ice from this layer, add it to depth
+            # Odd i (ejecta): do nothing except add to current depth, d
+            d += ejecta_column[-i // 2]
+        else:
+            # Even i (ice): remove all ice from this layer, add it to depth, d
             d += ice_column[-i // 2]
             ice_column[-i // 2] = 0
-        else:
-            # Even i (ejecta): do nothing, add to current depth
-            d += ejecta_column[-i // 2]
         i += 1
     # If odd i (ice) on last iter, we likely removed too much ice
     #   Add back any excess depth we travelled to ice_col
-    if (i - 1) % 2 and d > overturn_depth:
+    if i % 2 and d > overturn_depth:
         ice_column[-i // 2] = d - overturn_depth
     return ice_column
 
@@ -764,7 +762,7 @@ def ice_small_impactors(diams, num_per_bin, cfg):
     Return ice mass [kg] from small impactors (Regime B, Cannon 2020) given
     impactor diams, num_per_bin, and density.
     """
-    impactor_masses = diam2vol(diams) * cfg.impactor_density  # [kg]
+    impactor_masses = diam2vol(diams) * cfg.impactor_density
     total_impactor_mass = np.sum(impactor_masses * num_per_bin)
     total_impactor_water = impactor_mass2water(
         total_impactor_mass,
@@ -785,9 +783,7 @@ def ice_small_craters(
     """
     Return ice from simple craters, steep branch (Regime C, Cannon 2020).
     """
-    impactor_diams = diam2len(
-        crater_diams, cfg.impact_speed, regime, cfg
-    )  # [m]
+    impactor_diams = diam2len(crater_diams, cfg.impact_speed, regime, cfg) 
     impactor_masses = diam2vol(impactor_diams) * cfg.impactor_density  # [kg]
     total_impactor_mass = np.sum(impactor_masses * ncraters)
     total_impactor_water = impactor_mass2water(
@@ -964,8 +960,7 @@ def get_crater_pop(
 
     Randomly resample large simple & complex crater diameters.
     """
-    crater_diams = get_diam_array(*diam_range[regime], dtype)
-    sfd_prob = get_sfd_prob(crater_diams, sfd_slopes[regime])
+    crater_diams, sfd_prob = get_diams_probs(*diam_range[regime], sfd_slopes[regime], dtype)
     n_craters = neukum(crater_diams[0], csfd_coeffs) - neukum(
         crater_diams[-1], csfd_coeffs
     )
@@ -993,26 +988,31 @@ def get_impactor_pop(
 
     Use constants and eqn. 3 from Brown et al. (2002) to compute N craters.
     """
-    impactor_diams = get_diam_array(*diam_range[regime], dtype)
-    n_impactors = get_impactors_brown(
-        impactor_diams[0], impactor_diams[-1], timestep
-    )
+    diams, sfd_prob = get_diams_probs(*diam_range[regime], sfd_slopes[regime], dtype)
+    n_impactors = get_impactors_brown(diams[0], diams[-1], timestep)
 
     # Scale for timestep, impact flux and size-frequency dist
     flux_scaling = impact_flux(time) / impact_flux(0)
-    sfd_prob = get_sfd_prob(impactor_diams, sfd_slopes[regime])
     n_impactors *= flux_scaling * sfd_prob
-    return impactor_diams, n_impactors
+    return diams, n_impactors
 
 
-# @lru_cache(4)
+@lru_cache(4)
+def get_diams_probs(dmin, dmax, step, sfd_slope, dtype=None):
+    """
+    Return diam_array and sfd_prob. This func makes it easier to cache both.
+    """
+    diam_array = get_diam_array(dmin, dmax, step, dtype)
+    sfd_prob = get_sfd_prob(diam_array, sfd_slope)
+    return diam_array, sfd_prob
+
+
 def get_sfd_prob(diams, sfd_slope):
     """Return size-frequency distribution probability given diams, sfd slope."""
     sfd = diams ** sfd_slope
     return sfd / np.sum(sfd)
 
 
-@lru_cache(4)
 def get_diam_array(dmin, dmax, step, dtype=None):
     """Return array of diameters based on diameters in diam_range."""
     n = int((dmax - dmin) / step)

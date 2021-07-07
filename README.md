@@ -116,7 +116,7 @@ apt install parallel  # Ubuntu / WSL
 brew install parallel  # MacOS
 ```
 
-**Note:** On MacOS, you may first need to install homebrew (see [brew.sh](https://brew.sh/)).
+**Note:** On MacOS, you may need to install homebrew first (see [brew.sh](https://brew.sh/)).
 
 Now, many iterations of the model may now be run in parallel with a simple command:
 
@@ -141,7 +141,7 @@ By default the figure will be saved to `figs/` and should look like:
 
 ![](./figs/ensemble_example.png){ width=80% }
 
-The above model outputs were run for the lunar South Pole in Cannon mode which closely reproduces the Cannon et al. (2020) model:
+The above model outputs were run for the lunar South Pole in Cannon mode which closely reproduces Figure S3 from Cannon et al. (2020):
 
 ![](./figs/cannon_etal_2020_fig_s3.png){ width=90% }
 
