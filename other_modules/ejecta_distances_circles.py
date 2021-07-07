@@ -18,7 +18,7 @@ def gc_dist(lon1, lat1, lon2, lat2, rp=RAD_MOON):
 
     return d
 
-df = pd.read_csv('/home/cjtu/projects/essi21/data/crater_list.csv')
+df = pd.read_csv('/home/cjtu/projects/moonpies/data/crater_list.csv')
 df.columns = ['cname','lat','lon', 'diam','age','age_low','age_upp','psr_area','age_ref','priority','notes']
 
 hlat, hlon = df[df.cname == 'Haworth'][['lat', 'lon']].values.T

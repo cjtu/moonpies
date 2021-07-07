@@ -1,4 +1,5 @@
-"""Set up configuration for the model run."""
+"""Default config for moonpies. DO NOT EDIT (see README for config guide)."""
+import pprint
 from os import path, sep, environ, getcwd
 from dataclasses import dataclass, fields, field, asdict
 import numpy as np
@@ -8,10 +9,13 @@ import pandas as pd
 @dataclass
 class Cfg:
     """Class to configure a mixing model run."""
-    _verbose = False
-    mode: str = 'essi'  # 'essi' or 'cannon'
+    verbose: bool = False  # Print info as model is running
+    write: bool = True  # Write model outputs to a file (if False, just return)
+    write_npy: bool = False  # Write large arrays to files - slow! (age_grid, ej_thickness)
+    plot: bool = False  # Save strat column plots - slow!
+    mode: str = 'moonpies'  # 'moonpies' or 'cannon'
     seed: int = 0  # Set to None to get random results
-    run: str = 'essi'  # Name of the current run
+    run: str = 'moonpies'  # Name of the current run
     run_date: str = pd.Timestamp.now().strftime("%y%m%d")
     run_time: str = pd.Timestamp.now().strftime("%H:%M:%S")
 
@@ -19,17 +23,17 @@ class Cfg:
     modelpath: str = ''  # path to mixing.py
     datapath: str = ''  # path to import data
     outpath: str = ''  # path to save outputs
+    figspath: str = ''  # path to save figures
     
     # Files to import from datapath (attr name must end with "_in")
     crater_csv_in: str = 'crater_list.csv'
     volc_csv_in: str = 'needham_kring_2017.csv'
-    costello_csv_in: str = 'costello_2018_t1.csv'
+    costello_csv_in: str = 'costello_etal_2018_t1.csv'
 
     # Files to export to outpath (attr name must end with "_out")
-    save_npy: bool = False  # toggle saving age grid / ej matrix
     ejcols_csv_out: str = f'ej_columns_{run}.csv'
     icecols_csv_out: str = f'ice_columns_{run}.csv'
-    runmeta_csv_out: str = f'run_metadata_{run}.csv'
+    config_py_out: str = f'config_{run}.py'
     agegrd_npy_out: str = f'age_grid_{run}.npy'
     ejmatrix_npy_out: str = f'ejecta_matrix_{run}.npy'
 
@@ -46,7 +50,7 @@ class Cfg:
     coldtrap_max_temp: float = 120  # [k]
     coldtrap_area: float = 1.3e4 * 1e6  # [m^2], (williams 2019, via text s1, cannon 2020)
     ice_hop_efficiency: float = 0.054  # 5.4% gets to the s. pole (text s1, cannon 2020)
-    cold_trap_craters: tuple = (
+    coldtrap_craters: tuple = (
         'Haworth', 'Shoemaker', 'Faustini', 'Shackleton', 'Amundsen',
         'Sverdrup', 'Cabeus B', 'de Gerlache', "Idel'son L", 'Wiechert J')
 
@@ -111,7 +115,7 @@ class Cfg:
     # Impact ice module   
     mm_mass_rate: float = 1e6  # [kg/yr], lunar micrometeorite flux (grun et al. 2011)
     ctype_frac: float = 0.36  # 36% of impactors are c-type (jedicke et al., 2018)
-    ctype_hydrated: float = 2 / 3  # 2/3 of c-types are hydrated (rivkin, 2012)
+    ctype_hydrated: float = 2/3  # 2/3 of c-types are hydrated (rivkin, 2012)
     hydrated_wt_pct: float = 0.1  # impactors wt% H2O (cannon 2020)
     impactor_mass_retained: float = 0.165  # asteroid mass retained in impact (ong et al., 2011)
     impact_regimes: tuple = ('a', 'b', 'c', 'd', 'e')
@@ -121,8 +125,8 @@ class Cfg:
         'b': (0.01, 3, 1e-4),  # small impactors (1 mm - 3 m)
         'c': (100, 1.5e3, 1),  # simple craters, steep sfd (100 m - 1.5 km)
         'd': (1.5e3, 15e3, 1e2),  # simple craters, shallow sfd (1.5 km - 15 km)
-        # 'e': (15e3, 300e3, 1e3),  # complex craters, shallow sfd (15 km - 300 km)
-        'e': (15e3, 500e3, 1e3),  # complex craters, shallow sfd (15 km - 300 km)
+        'e': (15e3, 300e3, 1e3),  # complex craters, shallow sfd (15 km - 300 km)
+        # 'e': (15e3, 500e3, 1e3),  # complex craters, shallow sfd (15 km - 300 km)
     }))
     sfd_slopes: dict = field(default_factory = lambda: ({
         'b': -3.70,  # small impactors
@@ -147,7 +151,7 @@ class Cfg:
     volc_pole_pct: float = 0.1  # 10%
     volc_species: str = 'min_h2o'  # volcanic species, must be in volc_cols
     volc_cols: tuple = (
-        'age', 'tot_vol', 'sphere_mass', 'min_co', 'max_co', 'min_h2o', 
+        'time', 'tot_vol', 'sphere_mass', 'min_co', 'max_co', 'min_h2o', 
         'max_h2o', 'min_h', 'max_h','min_s', 'max_s', 'min_sum', 'max_sum',
         'min_psurf', 'max_psurf', 'min_atm_loss', 'max_atm_loss'
     )
@@ -159,100 +163,143 @@ class Cfg:
                          -0.444058, 0.019977, 0.086850, -0.005874, -0.006809, 
                          8.25e-4, 5.54e-5)
 
-    # Make arrays
-    _grdy, _grdx = np.meshgrid(
-        np.arange(grdysize, -grdysize, -grdstep, dtype=dtype), 
-        np.arange(-grdxsize, grdxsize, grdstep, dtype=dtype), 
-        sparse=True, indexing='ij'
-    )
-    _time_arr = np.linspace(timestart, timestep, int(timestart / timestep), dtype=dtype)
 
-    # length of arrays
-    _ny, _nx = _grdy.shape[0], _grdx.shape[1]
-    nt = len(_time_arr)
+    def to_dict(self):
+        """Return dict representation of dataclass."""
+        return asdict(self)
 
 
-    def to_dict_no_underscore(self):
-        """Return dict of dataclass, remove underscore fields."""
-        return {k: v for k, v in asdict(self).items() if k[0] != '_'}
+    def to_string(self, fdict={}):
+        """Return formatted output dict string."""
+        if not fdict:
+            fdict = self.to_dict()
+        s = pprint.pformat(fdict, compact=True, sort_dicts=False)
+        s = 'cfg={\n ' + s[1:]
+        return s
 
 
-    def enforce_dataclass_type(self, field):
-        """
-        Force set all dataclass types from their type hint, raise error if invalid.
-        
-        Since scientific notation is float in Python, this forces int specified in 
-        scientific notation to be int in the code.
-        """
-        value = getattr(self, field.name)
-        try:
-            setattr(self, field.name, field.type(value))
-        except ValueError:
-            msg = f'Type mismatch for {field.name} in config.py: ' 
-            msg += f'Expected: {field.type}. Got: {type(value)}.'
-            raise ValueError(msg)
+    def to_py(self, outpath, fstring=''):
+        """Write dataclass to dict at outpath."""
+        if not fstring:
+            fstring = self.to_string()
+        with open(outpath, 'w') as f:
+            f.write(fstring)
 
 
-    def make_paths_absolute(self, field, datapath, outpath):
-        """
-        Make all file paths absolute. 
-        
-        Prepend datapath to all fields ending with "_in".
-        Prepend outpath to all fields ending with "_out".
-        """
-        value = getattr(self, field.name)
-        if '_in' in field.name:
-            setattr(self, field.name, path.join(datapath, value))
-        elif '_out' in field.name:
-            setattr(self, field.name, path.join(outpath, value))
+    def to_default(self, outpath):
+        """Write defaults to my_config.py"""
+        ddict = self.to_dict()
+        del ddict['run_time']
+        del ddict['run_date']
+        for k, v in ddict.copy().items():
+            if 'path' in k:
+                ddict[k] = ''
+            elif '_in' in k or '_out' in k:
+                ddict[k] = path.basename(v)
+        self.to_py(outpath, self.to_string(ddict))
 
 
     def __post_init__(self):
         """Force set all cfg types, raise error if invalid type."""
-        if self.modelpath == '':
-            setattr(self, 'modelpath', get_model_path())
-        if self.datapath == '':
-            modelpath = getattr(self, 'modelpath')
-            datapath = path.abspath(path.join(modelpath, '..', 'data'))
-            setattr(self, 'datapath', datapath)
-        if self.outpath == '':
-            datapath = getattr(self, 'datapath')
-            run = getattr(self, 'run')
-            run_date = getattr(self, 'run_date')
-            seed = getattr(self, 'seed')
-            outpath = path.join(datapath, run_date, f'{run}_{seed}')
-            setattr(self, 'outpath', outpath)
+        setattr(self, 'modelpath', get_modelpath(self))
+        setattr(self, 'datapath', get_datapath(self))
+        setattr(self, 'outpath', get_outpath(self))
+        setattr(self, 'figspath', get_figspath(self))
         for field in fields(self):
-            self.make_paths_absolute(field, self.datapath, self.outpath)
-            self.enforce_dataclass_type(field)
+            make_paths_absolute(self, field, self.datapath, self.outpath)
+            enforce_dataclass_type(self, field)
 
 
 # Config helper functions
-def get_model_path():
+def get_modelpath(cfg):
     """
     Return path to directory containing mixing.py assuming following structure:
 
     /project
         /data
-        /essi21
+        /moonpies
             - config.py (this file)
             - mixing.py
         /figs
         /test
 
     """
-    # Try to import absolute path from installed essi21 module
+    if cfg.modelpath != '':
+        return cfg.modelpath
+    # Try to import absolute path from installed moonpies module
     try:  # Python > 3.7
         import importlib.resources as pkg_resources
     except ImportError:  # Python < 3.7
         import importlib_resources as pkg_resources
     try:
-        with pkg_resources.path('essi21', 'mixing.py') as fpath:
+        with pkg_resources.path('moonpies', 'moonpies.py') as fpath:
             modelpath = fpath.parent.as_posix()
-    except ModuleNotFoundError:
-        # If essi21 module not installed, get path from current file
+    except (TypeError, ModuleNotFoundError):
+        # If module not installed, get path from current file
         if "JPY_PARENT_PID" in environ:  # Jupyter (assume user used chdir)
-            modelpath = getcwd() + sep
+            modelpath = getcwd()
         else:  # Non-notebook - assume user is running the .py script directly
-            modelpath = path.abspath(path.dirname(__file__)) + sep
-    return modelpath
+            modelpath = path.abspath(path.dirname(__file__))
+    return modelpath + sep
+
+
+def get_datapath(cfg):
+    """Return default datapath if not specified in cfg."""
+    datapath = cfg.datapath
+    if datapath == '':
+        modelpath = getattr(cfg, 'modelpath')
+        datapath = path.abspath(path.join(modelpath, '..', 'data')) + sep
+    return datapath
+
+
+def get_figspath(cfg):
+    """Return default datapath if not specified in cfg."""
+    figspath = cfg.figspath
+    if figspath == '':
+        modelpath = getattr(cfg, 'modelpath')
+        figspath = path.abspath(path.join(modelpath, '..', 'figs')) + sep
+    return figspath
+
+
+def get_outpath(cfg):
+    """Return default outpath if not specified in cfg."""
+    outpath = cfg.outpath
+    if outpath == '':
+        datapath = cfg.datapath
+        run_date = cfg.run_date
+        run_seed = f'{cfg.run}_{cfg.seed:05d}'
+        outpath = path.join(datapath, run_date, run_seed) + sep
+    return outpath
+
+def enforce_dataclass_type(cfg, field):
+    """
+    Force set all dataclass types from their type hint, raise error if invalid.
+    
+    Since scientific notation is float in Python, this forces int specified in 
+    scientific notation to be int in the code.
+    """
+    value = getattr(cfg, field.name)
+    try:
+        setattr(cfg, field.name, field.type(value))
+    except ValueError:
+        msg = f'Type mismatch for {field.name} in config.py: ' 
+        msg += f'Expected: {field.type}. Got: {type(value)}.'
+        raise ValueError(msg)
+
+
+def make_paths_absolute(cfg, field, datapath, outpath):
+    """
+    Make all file paths absolute. 
+    
+    Prepend datapath to all fields ending with "_in".
+    Prepend outpath to all fields ending with "_out".
+    """
+    value = getattr(cfg, field.name)
+    if '_in' in field.name:
+        setattr(cfg, field.name, path.join(datapath, value))
+    elif '_out' in field.name:
+        setattr(cfg, field.name, path.join(outpath, value))
+
+if __name__ == '__main__':
+    Cfg().to_default('my_config.py')
+    print('Wrote my_config.py')

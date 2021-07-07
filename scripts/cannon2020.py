@@ -62,7 +62,7 @@ def ice_strat_model_cannon_2020(ejS, row, col, nxy=801, run_num=0):
     timesteps = np.arange(425)[::-1] * 0.01  # Gyr, each step is 10 Myr
     
     # Read in Cannon 2020 crater list
-    fcraters = '~/projects/ESSI_2021/data/cannon2020_crater_ages.csv'
+    fcraters = '~/projects/MoonPIES_2021/data/cannon2020_crater_ages.csv'
     cols = ('name', 'lat', 'lon', 'diam', 'age', 'age_low', 'age_upp')
     df = pd.read_csv(fcraters, names=cols, header=0)
 

@@ -1,7 +1,7 @@
 """Make strat column figure."""
 import pandas as pd
 import matplotlib.pyplot as plt
-from essi21 import mixing as mm
+from moonpies import mixing as mm
 import pandas as pd
 import numpy as np
 
@@ -9,8 +9,8 @@ import numpy as np
 coldtrap = "Haworth"
 
 # Set paths
-fdir = "/home/cjtu/projects/essi21/figs/"
-f_ice = "/home/cjtu/projects/essi21/data/210702/essi00000/ice_columns_essi00000.csv"
+fdir = "/home/cjtu/projects/moonpies/figs/"
+f_ice = "/home/cjtu/projects/moonpies/data/210702/essi00000/ice_columns_essi00000.csv"
 
 # Output plot names
 keypath = fdir + "strat_key.png"
@@ -214,7 +214,7 @@ def makeplot(strat, top_depth, bottom_depth, age_min, age_max, savepath):
     fig.subplots_adjust(wspace=0.15)
     plt.savefig(savepath, bbox_inches="tight", dpi=300)
 
-
+# TODO: update to use cfg
 if __name__ == "__main__":
     # Generate ejecta thicknesses
     ice_df = pd.read_csv(f_ice)

@@ -2,3 +2,4 @@
 data/
 refs/
 __pycache__/
+*.zip

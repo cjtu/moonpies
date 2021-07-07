@@ -1,5 +1,5 @@
 """Test mixing module."""
-from essi21 import mixing as mm
+from moonpies import mixing as mm
 import numpy as np
 
 
