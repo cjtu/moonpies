@@ -1,26 +1,30 @@
 """Script to find and compile ice_cols from mixing.py runs into one plot."""
+from dataclasses import dataclass
 import sys
 from pathlib import Path
 import pandas as pd
 import matplotlib.pyplot as plt
-import config
+import default_config
 
-cfg = config.Cfg()
-# Set these paths to match your system
-# DATA_DIR should be full path to run_dir from mixing.py
-if len(sys.argv) > 1:
-    DATA_DIR = sys.argv[1]  # 1st cmd-line arg is path to data
-else:
-    DATA_DIR = Path(cfg.outpath).parent
-MODE = 'moonpies'
-DATE = '210706'
-DATA_DIR = Path(DATA_DIR).resolve()
-FIGPATH = f'{cfg.figspath}ensemble_ice_{cfg.run}_{cfg.run_date}.png'
-ICE_COL = 2  # Column to use from ice_cols.csv (1 up to #cols)
+# Manually set datadir else try to read from cfg
+data_dir = ''
 
+# Set ice column
+col = 2  # Column to use from ice_cols.csv (1 up to #cols)
+
+# Get cfg
+cfg_dict = {}
+if len(sys.argv) > 1:   # 1st cmd-line arg is path to custom cfg
+    cfg_dict = default_config.read_custom_cfg(sys.argv[1]) 
+cfg = default_config.Cfg(**cfg_dict)
+if not data_dir:
+    data_dir = Path(cfg.outpath).parent
+figpath = f'{cfg.figspath}ensemble_ice_{cfg.run}_{cfg.run_date}.png'
+
+# Init plot
 plt.style.use('tableau-colorblind10')
 plt.rcParams.update({
-        'figure.figsize': (8, 8),
+        'figure.figsize': (10, 8),
         'figure.facecolor': 'white',
         'xtick.top': True,
         'xtick.direction': 'in',
@@ -29,15 +33,15 @@ plt.rcParams.update({
 })
 
 # Find all ice_columns csvs recursively
-csvs = DATA_DIR.rglob(f'ice_columns_*.csv')
+csvs = data_dir.rglob(f'ice_columns_*.csv')
 f, ax = plt.subplots()
 for i, csv in enumerate(csvs):
-        df = pd.read_csv(csv, usecols=[0, ICE_COL])
-        ax.plot(df.iloc[:, 0], df.iloc[:, 1])
+        time, ice_col = pd.read_csv(csv, usecols=[0, col]).values.T
+        ax.plot(time/1e9, ice_col)
         if i % 100 == 0:
             print(f'Starting csv {i}: {csv}', flush=True)
 if 'i' not in locals():
-    print(f'No ice_columns csvs found, check DATA_DIR: {DATA_DIR}')
+    print(f'No ice_columns csvs found, check DATA_DIR: {data_dir}')
     quit()
 else:
     print(f'Finished csv {i}: {csv}', flush=True)
@@ -45,7 +49,7 @@ else:
 # Configure and save figure
 ax.set_xlabel('Time (Ga)')
 ax.set_ylabel('Ice retained (m)')
-ax.set_ylim(-1, 250)
-ax.set_xlim(df.time.max(), 0)
-f.savefig(FIGPATH, bbox_inches='tight')
-print(f'Saved figure to {FIGPATH}')
+ax.set_ylim(0, 160)
+ax.set_xlim(max(time)/1e9, 0)
+f.savefig(figpath, bbox_inches='tight')
+print(f'Saved figure to {figpath}')

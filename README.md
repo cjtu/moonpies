@@ -39,8 +39,8 @@ The model is packaged as a `.zip` file which can be downloaded from *public repo
 moonpies_package/
 |- data/
 |  |- costello_etal_2018_t1.csv
-|  |- needham_kring_2017.csv
 |  |- crater_list.csv
+|  |- needham_kring_2017.csv
 |- figs/
 |- moonpies/
 |  |- config.py
@@ -63,19 +63,19 @@ Now you can run the model in its default configuration using the following comma
 
 `python moonpies.py`
 
-The model will run and write outputs to a new folder in the `data/` directory. Ouputs are saved by today's date and random seed (e.g. `data/yymmdd/mpies_#####`, where `#####` is the 5-digit random seed used. The full directory structure will now look like:
+The model will run and write outputs to a new folder in the `data/` directory. Ouputs are saved by today's date, the run name, and the random seed (e.g. `data/yymmdd_run/#####`, where `#####` is the 5-digit random seed used. The full directory structure will now look like:
 
 ```bash
 moonpies_package/
 |- data/
-|  |- 210706/
-|  |  |- mpies_85637/
-|  |  |  |- run_metadata_mpies.csv
-|  |  |  |- run_metadata_mpies.csv
-|  |  |  |- crater_list.csv
+|  |- 210706_mpies/
+|  |  |- 85637/
+|  |  |  |- config_mpies.py
+|  |  |  |- ej_columns_mpies.csv
+|  |  |  |- ice_columns_mpies.csv
 |  |- costello_etal_2018_t1.csv
-|  |- needham_kring_2017.csv
 |  |- crater_list.csv
+|  |- needham_kring_2017.csv
 ...
 ```
 
@@ -126,6 +126,22 @@ This example will start 1000 runs of `moonpies.py`, each with a unique random se
 
 - The number of runs is given by the `seq N` parameter.
 - By default, `parallel` will use all available cores on your system but this can be configured with the `-P` flag. Ex. Use `-P2` to use 2 cores; use `-P-1` to use all cores except one.
+
+## Plotting outputs
+
+`MoonPIES` provides some functions to help visualize model outputs.
+
+### ensemble_plot.py
+
+Use `ensemble_plot.py` to visualize a collection of many model runs. It plots ice column thickness (i.e. ice retained) over time for all `ice_column*.csv` files located at the specified path (default: `data/yymmdd_run/`):
+
+`python ensemble_plot.py`
+
+By default the figure will be saved to `figs/` and should look like:
+
+
+
+To specify one collection of runs, you may specify a configuration file
 
 ## Model details
 

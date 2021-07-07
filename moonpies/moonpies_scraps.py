@@ -15,8 +15,8 @@ seq 10000 | parallel -P-1 python mixing.py
 
 # Code Profiling (pip install snakeviz)
 
-python -m cProfile -o mixing.prof mixing.py
-snakeviz mixing.prof
+python -m cProfile -o .model.prof moonpies.py 1
+snakeviz .model.prof
 """
 
 # Ballistic sedimentation module

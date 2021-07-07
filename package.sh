@@ -9,7 +9,7 @@ mkdir moonpies_package/figs
 cp README.pdf moonpies_package
 
 cp moonpies/__init__.py moonpies_package/moonpies
-cp moonpies/config.py moonpies_package/moonpies
+cp moonpies/default_config.py moonpies_package/moonpies
 cp moonpies/moonpies.py moonpies_package/moonpies
 cp moonpies/my_config.py moonpies_package/moonpies
 cp moonpies/ensemble_plot.py moonpies_package/moonpies

@@ -1,5 +1,5 @@
 """DO NOT EDIT. Default config for moonpies (see README for config guide)."""
-import pprint
+import ast, pprint
 from os import path, sep, environ, getcwd
 from dataclasses import dataclass, fields, field, asdict
 import numpy as np
@@ -126,7 +126,6 @@ class Cfg:
         'c': (100, 1.5e3, 1),  # simple craters, steep sfd (100 m - 1.5 km)
         'd': (1.5e3, 15e3, 1e2),  # simple craters, shallow sfd (1.5 km - 15 km)
         'e': (15e3, 300e3, 1e3),  # complex craters, shallow sfd (15 km - 300 km)
-        # 'e': (15e3, 500e3, 1e3),  # complex craters, shallow sfd (15 km - 300 km)
     }))
     sfd_slopes: dict = field(default_factory = lambda: ({
         'b': -3.70,  # small impactors
@@ -266,9 +265,9 @@ def get_outpath(cfg):
     outpath = cfg.outpath
     if outpath == '':
         datapath = cfg.datapath
-        run_date = cfg.run_date
-        run_seed = f'{cfg.run}_{cfg.seed:05d}'
-        outpath = path.join(datapath, run_date, run_seed) + sep
+        run_dir = f'{cfg.run_date}_{cfg.run}'
+        run_seed = f'{cfg.seed:05d}'
+        outpath = path.join(datapath, run_dir, run_seed) + sep
     return outpath
 
 
@@ -300,6 +299,16 @@ def make_paths_absolute(cfg, field, datapath, outpath):
         setattr(cfg, field.name, path.join(datapath, value))
     elif '_out' in field.name:
         setattr(cfg, field.name, path.join(outpath, value))
+
+
+def read_custom_cfg(cfg_path):
+    """
+    Return dictionary from custom config.py file.
+    """
+    with open(path.abspath(cfg_path), 'r') as f:
+        cfg_dict = ast.literal_eval(f.read())
+    return cfg_dict
+
 
 if __name__ == '__main__':
     Cfg().to_default('my_config.py')

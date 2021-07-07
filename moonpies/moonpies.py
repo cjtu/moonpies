@@ -1397,8 +1397,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     cfg_dict = {}
     if args.cfg:  # Read config options from args.cfg path
-        with open(os.path.abspath(args.cfg), 'r') as f:
-            cfg_dict = ast.literal_eval(f.read())
+        cfg_dict = default_config.read_custom_cfg(args.cfg)
     if args.seed:  # If seed given, it takes precedence
         cfg_dict['seed'] = args.seed    
     elif 'seed' not in cfg_dict: # If no seed given and no cfg seed, randomize
