@@ -110,9 +110,11 @@ def read_crater_list(crater_csv, columns, rp=1737e3):
     return df
 
 
-def read_volcanic_csv(volcanic_csv, columns):
+def read_volcanic_species(volcanic_csv, columns, species):
     df = pd.read_csv(volcanic_csv, names=columns, header=3)
+    df = df[["time", species]]
     df["time"] = df["time"] * 1e9  # [Gyr -> yr]
+    df[species] = df[species] * 1e-3  # [g -> kg]
     return df
 
 
@@ -286,10 +288,7 @@ def get_volcanic_ice(time_arr, cfg):
             time_arr,
             cfg.volc_csv_in,
             cfg.volc_cols,
-            cfg.volc_species,
-            cfg.volc_pole_pct,
-            cfg.coldtrap_area,
-            cfg.sa_moon,
+            cfg.volc_species
         )
     elif cfg.volc_mode == "Head":
         out = volcanic_ice_head(
@@ -313,31 +312,25 @@ def volcanic_ice_nk(
     time_arr,
     volc_csv,
     columns,
-    species,
-    pole_pct,
-    coldtrap_area,
-    moon_area,
+    species
 ):
     """
     Return ice [units] deposited in each timestep with Needham & Kring (2017).
     """
-    df_volc = read_volcanic_csv(volc_csv, columns)
+    df_volc = read_volcanic_species(volc_csv, columns, species)
 
     # Outer merge df_volc with time_arr to get df with all age timesteps
     time_df = pd.DataFrame(time_arr, columns=["time"])
     df = time_df.merge(df_volc, on="time", how="outer")
 
     # Fill missing timesteps in df with linear interpolation across age
+    # BUG: should actually be resampling these values to distribute across age
     df = df.sort_values("time", ascending=False).reset_index(drop=True)
     df_interp = df.set_index("time").interpolate()
 
     # Extract only relevant timesteps in time_arr and species column
-    out = df_interp.loc[time_arr, species].values
-
-    # Weight by fractional area of cold traps and ice transport pct
-    area_frac = coldtrap_area / moon_area
-    out *= area_frac * pole_pct
-    return out
+    volc_ice_mass = df_interp.values
+    return volc_ice_mass
 
 
 def volcanic_ice_head(

@@ -151,7 +151,7 @@ class Cfg:
     volc_species: str = 'min_h2o'  # volcanic species, must be in volc_cols
     volc_cols: tuple = (
         'time', 'tot_vol', 'sphere_mass', 'min_co', 'max_co', 'min_h2o', 
-        'max_h2o', 'min_h', 'max_h','min_s', 'max_s', 'min_sum', 'max_sum',
+        'max_h2o', 'min_h', 'max_h', 'min_s', 'max_s', 'min_sum', 'max_sum',
         'min_psurf', 'max_psurf', 'min_atm_loss', 'max_atm_loss'
     )
 
