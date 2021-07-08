@@ -1,7 +1,9 @@
-"""Test mixing module."""
-from moonpies import mixing as mm
+"""Test MoonPIES module."""
 import numpy as np
+from moonpies import default_config
+from moonpies import moonpies as mm
 
+CFG = default_config.Cfg()
 
 def test_impact_flux():
     """Test impact_flux ratios."""
@@ -64,7 +66,8 @@ def test_get_impactors_brown():
     """Test get_impactors_brown()."""
     mindiam = 0.01
     maxdiam = 3
-    actual = mm.get_impactors_brown(mindiam, maxdiam)
+    ts = 10e6
+    actual = mm.get_impactors_brown(mindiam, maxdiam, ts)
     # Cannon 2020 ds02 Regime B: small impactors
     c = 1.568
     d = 2.7
@@ -80,13 +83,13 @@ def test_get_impactors_brown():
 def test_ice_small_impactors():
     """Test ice_small_impactors."""
     t = 4.25e9
-    diams, ncraters = mm.get_impactor_pop(t, "b")
-    actual = mm.ice_small_impactors(diams, ncraters)
+    diams, ncraters = mm.get_impactor_pop(t, "b", CFG.timestep, CFG.diam_range, CFG.sfd_slopes)
+    actual = mm.ice_small_impactors(diams, ncraters, CFG)
 
     # Brown (tested above)
     mindiam = diams[0]
     maxdiam = diams[-1]
-    impactorNum = mm.get_impactors_brown(mindiam, maxdiam)
+    impactorNum = mm.get_impactors_brown(mindiam, maxdiam, CFG.timestep)
     impactorDiams = diams
 
     # Cannon 2020 ds02 Regime B: small impactors
@@ -106,13 +109,22 @@ def test_ice_small_impactors():
 def test_get_crater_pop_C():
     """Test get_crater_pop on regime C."""
     t = 4.25e9
-    diams, ncraters = mm.get_crater_pop(t, regime="c")
+    regime = "c"
+    rng = 0
+    diams, ncraters = mm.get_crater_pop(t, 
+                regime, 
+                CFG.timestep,
+                CFG.diam_range,
+                CFG.sfd_slopes,
+                CFG.sa_moon,
+                CFG.ivanov2000,
+                rng=rng)
 
     # Cannon regime C
     craterDiams = diams  # m
-    craterNum = mm.neukum(craterDiams[0]) - mm.neukum(craterDiams[-1])
+    craterNum = mm.neukum(craterDiams[0], CFG.ivanov2000) - mm.neukum(craterDiams[-1], CFG.ivanov2000)
     craterNum = craterNum * (1e7)
-    craterNum = craterNum * mm.CFG.sa_moon
+    craterNum = craterNum * CFG.sa_moon
     craterNum = craterNum * mm.impact_flux(t) / mm.impact_flux(0)
 
     sfd = craterDiams ** -3.82
@@ -124,12 +136,20 @@ def test_ice_small_craters():
     """Test ice_small_craters."""
     t = 4.25e9
     regime = "c"
-    diams, ncraters = mm.get_crater_pop(t, regime=regime)
-    actual = mm.ice_small_craters(diams, ncraters, regime)
+    rng = 0
+    diams, ncraters = mm.get_crater_pop(t, 
+                regime, 
+                CFG.timestep,
+                CFG.diam_range,
+                CFG.sfd_slopes,
+                CFG.sa_moon,
+                CFG.ivanov2000,
+                rng=rng)
+    actual = mm.ice_small_craters(diams, ncraters, regime, CFG)
 
     # Cannon regime C
     v = 20e3  # [m/s]
-    impactorDiams = mm.diam2len(diams, v, regime)
+    impactorDiams = mm.diam2len(diams, v, regime, CFG)
     # impactorDiams = dToL_C(craterDiams*1000,20)
     impactorMasses = 1300 * (4 / 3) * np.pi * (impactorDiams / 2) ** 3
     totalImpactorMass = sum(impactorMasses * ncraters)
@@ -143,11 +163,12 @@ def test_ice_small_craters():
 def test_ice_large_craters_D():
     """Test ice_large_craters regime D."""
     regime = "d"
+    rng = 0
 
     # Cannon 2020: Regime D
     def cannon_D(crater_diams, impactor_speeds):
         impactorSpeeds = impactor_speeds * 1e-3  # [km/s]
-        impactorDiams = mm.diam2len(crater_diams, impactor_speeds, regime)
+        impactorDiams = mm.diam2len(crater_diams, impactor_speeds, regime, CFG)
         impactorMasses = 1300 * (4 / 3) * np.pi * (impactorDiams / 2) ** 3
         waterRetained = np.zeros(len(impactorSpeeds))
         for s in range(len(waterRetained)):
@@ -165,19 +186,33 @@ def test_ice_large_craters_D():
 
     # Test 4.25 Ga
     t = 4.25e9
-    diams = mm.get_crater_pop(t, regime=regime)
+    diams = mm.get_crater_pop(t, 
+                regime,
+                CFG.timestep,
+                CFG.diam_range,
+                CFG.sfd_slopes,
+                CFG.sa_moon,
+                CFG.ivanov2000,
+                rng=rng)
     crater_diams = mm.get_random_hydrated_craters(diams)
     impactor_speeds = mm.get_random_impactor_speeds(len(crater_diams))
-    actual = mm.ice_large_craters(crater_diams, impactor_speeds, regime)
+    actual = mm.ice_large_craters(crater_diams, impactor_speeds, regime, CFG)
     expected = cannon_D(crater_diams, impactor_speeds)
     np.testing.assert_approx_equal(actual, expected)
 
     # Test 4.25 Ga
     t = 3e9
-    diams = mm.get_crater_pop(t, regime=regime)
+    diams = mm.get_crater_pop(t, 
+                regime,
+                CFG.timestep,
+                CFG.diam_range,
+                CFG.sfd_slopes,
+                CFG.sa_moon,
+                CFG.ivanov2000,
+                rng=rng)
     crater_diams = mm.get_random_hydrated_craters(diams)
     impactor_speeds = mm.get_random_impactor_speeds(len(crater_diams))
-    actual = mm.ice_large_craters(crater_diams, impactor_speeds, regime)
+    actual = mm.ice_large_craters(crater_diams, impactor_speeds, regime, CFG)
     expected = cannon_D(crater_diams, impactor_speeds)
     np.testing.assert_approx_equal(actual, expected)
 
@@ -185,11 +220,12 @@ def test_ice_large_craters_D():
 def test_ice_large_craters_E():
     """Test ice_large_craters regime E."""
     regime = "e"
+    rng = 0
 
     # Cannon 2020 Regime E
     def cannon_E(crater_diams, impactor_speeds):
         impactorSpeeds = impactor_speeds * 1e-3  # [km/s]
-        impactorDiams = mm.diam2len(crater_diams, impactor_speeds, regime)
+        impactorDiams = mm.diam2len(crater_diams, impactor_speeds, regime, CFG)
         impactorMasses = 1300 * (4 / 3) * np.pi * (impactorDiams / 2) ** 3
 
         waterRetained = np.zeros(len(impactorSpeeds))
@@ -209,19 +245,33 @@ def test_ice_large_craters_E():
 
     # Test 4.25 Ga
     t = 4.25e9
-    diams = mm.get_crater_pop(t, regime=regime)
+    diams = mm.get_crater_pop(t, 
+                regime,
+                CFG.timestep,
+                CFG.diam_range,
+                CFG.sfd_slopes,
+                CFG.sa_moon,
+                CFG.ivanov2000,
+                rng=rng)
     crater_diams = mm.get_random_hydrated_craters(diams)
     impactor_speeds = mm.get_random_impactor_speeds(len(crater_diams))
-    actual = mm.ice_large_craters(crater_diams, impactor_speeds, regime)
+    actual = mm.ice_large_craters(crater_diams, impactor_speeds, regime, CFG)
     expected = cannon_E(crater_diams, impactor_speeds)
     np.testing.assert_approx_equal(actual, expected)
 
     # Test 3 Ga
     t = 3
-    diams = mm.get_crater_pop(t, regime=regime)
+    diams = mm.get_crater_pop(t, 
+                regime,
+                CFG.timestep,
+                CFG.diam_range,
+                CFG.sfd_slopes,
+                CFG.sa_moon,
+                CFG.ivanov2000,
+                rng=rng)
     crater_diams = mm.get_random_hydrated_craters(diams)
     impactor_speeds = mm.get_random_impactor_speeds(len(crater_diams))
-    actual = mm.ice_large_craters(crater_diams, impactor_speeds, regime)
+    actual = mm.ice_large_craters(crater_diams, impactor_speeds, regime, CFG)
     expected = cannon_E(crater_diams, impactor_speeds)
     np.testing.assert_approx_equal(actual, expected)
 
@@ -229,8 +279,8 @@ def test_ice_large_craters_E():
 def test_get_diam_array():
     """Test get_diam_array"""
     for regime in ("b", "c", "d", "e"):
-        actual = mm.get_diam_array(regime)
-        low, upp, step = mm.CFG.diam_range[regime]
+        low, upp, step = CFG.diam_range[regime]
+        actual = mm.get_diam_array(low, upp, step)
         expected = np.linspace(low, upp, int((upp - low) / step) + 1)
         np.testing.assert_array_almost_equal(actual, expected)
 
@@ -262,26 +312,35 @@ def test_diam2len_johnson():
     """Test diam2len_johnson."""
     # Testing fig 6, Johnson et al. 2016
     diams = np.array([6.5e3, 20e3, 100e3])
-    actual = mm.diam2len_johnson(diams, 1300, 1300)
+    actual = mm.diam2len_johnson(
+            diams,
+            20e3,
+            1300, 
+            1300,            
+            CFG.grav_moon,
+            CFG.impact_angle,
+            CFG.simple2complex,)
     expected = (0.37e3, 1.4e3, 8.5e3)
     np.testing.assert_allclose(actual, expected, rtol=0.35)
 
 
 def test_garden_ice_column():
     """Test garden_ice_column."""
+
+    # First garden ice, then protect with ejecta TODO: check
     ice_col = np.array([10])
     ejecta_col = np.array([10])
     overturn_depth = 10
     new_ice_col = mm.garden_ice_column(ice_col, ejecta_col, overturn_depth)
-    expected = [10]
+    expected = [0]
     np.testing.assert_array_almost_equal(new_ice_col, expected)
 
 
     ice_col = np.array([10])
     ejecta_col = np.array([5])
-    overturn_depth = 10
+    overturn_depth = 3
     new_ice_col = mm.garden_ice_column(ice_col, ejecta_col, overturn_depth)
-    expected = [5]
+    expected = [7]
     np.testing.assert_array_almost_equal(new_ice_col, expected)
 
 
@@ -289,12 +348,12 @@ def test_garden_ice_column():
     ejecta_col = np.array([5, 0])
     overturn_depth = 15
     new_ice_col = mm.garden_ice_column(ice_col, ejecta_col, overturn_depth)
-    expected = [10, 0]
+    expected = [5, 0]
     np.testing.assert_array_almost_equal(new_ice_col, expected)
 
     ice_col = np.array([6, 4, 2])
     ejecta_col = np.array([0, 2, 1])
     overturn_depth = 10
     new_ice_col = mm.garden_ice_column(ice_col, ejecta_col, overturn_depth)
-    expected = [5, 0, 0]
+    expected = [0, 4, 0]
     np.testing.assert_array_almost_equal(new_ice_col, expected)

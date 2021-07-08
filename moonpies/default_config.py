@@ -10,7 +10,7 @@ import pandas as pd
 class Cfg:
     """Class to configure a mixing model run."""
     seed: int = 0  # Note: Should not be set here - set when model is run only
-    run: str = 'mpies'  # Name of the current run
+    run_name: str = 'mpies'  # Name of the current run
     verbose: bool = False  # Print info as model is running
     write: bool = True  # Write model outputs to a file (if False, just return)
     write_npy: bool = False  # Write large arrays to files - slow! (age_grid, ej_thickness)
@@ -31,11 +31,11 @@ class Cfg:
     costello_csv_in: str = 'costello_etal_2018_t1.csv'
 
     # Files to export to outpath (attr name must end with "_out")
-    ejcols_csv_out: str = f'ej_columns_{run}.csv'
-    icecols_csv_out: str = f'ice_columns_{run}.csv'
-    config_py_out: str = f'config_{run}.py'
-    agegrd_npy_out: str = f'age_grid_{run}.npy'
-    ejmatrix_npy_out: str = f'ejecta_matrix_{run}.npy'
+    ejcols_csv_out: str = f'ej_columns_{run_name}.csv'
+    icecols_csv_out: str = f'ice_columns_{run_name}.csv'
+    config_py_out: str = f'config_{run_name}.py'
+    agegrd_npy_out: str = f'age_grid_{run_name}.npy'
+    ejmatrix_npy_out: str = f'ejecta_matrix_{run_name}.npy'
 
     # Grid and time size and resolution
     dtype = np.float32  # np.float64 (32 should be good for most purposes)
@@ -169,10 +169,16 @@ class Cfg:
 
 
     def to_string(self, fdict={}):
-        """Return formatted output dict string."""
+        """Return representation of self as dict formatted python string."""
         if not fdict:
             fdict = self.to_dict()
-        s = pprint.pformat(fdict, compact=True, sort_dicts=False)
+        try:
+            s = pprint.pformat(fdict, compact=True, sort_dicts=False)
+        except TypeError:
+            # Cancel sorting on Python < 3.8
+            pprint._sorted = lambda x:x  # Python 3.6
+            pprint.sorted = lambda x, key=None: x  # Python 3.7
+            s = pprint.pformat(fdict, compact=True)
         return s
 
 
@@ -200,17 +206,26 @@ class Cfg:
 
     def __post_init__(self):
         """Force set all cfg types, raise error if invalid type."""
-        setattr(self, 'modelpath', get_modelpath(self))
-        setattr(self, 'datapath', get_datapath(self))
-        setattr(self, 'outpath', get_outpath(self))
-        setattr(self, 'figspath', get_figspath(self))
+        setattr(self, 'seed', _get_random_seed(self))
+        setattr(self, 'modelpath', _get_modelpath(self))
+        setattr(self, 'datapath', _get_datapath(self))
+        setattr(self, 'outpath', _get_outpath(self))
+        setattr(self, 'figspath', _get_figspath(self))
         for field in fields(self):
-            make_paths_absolute(self, field, self.datapath, self.outpath)
-            enforce_dataclass_type(self, field)
+            _make_paths_absolute(self, field, self.datapath, self.outpath)
+            _enforce_dataclass_type(self, field)
 
 
 # Config helper functions
-def get_modelpath(cfg):
+def _get_random_seed(cfg):
+    """Return random_seed in (1, 99999) if not set in cfg."""
+    seed = cfg.seed
+    if not seed:
+        seed = np.random.randint(1, 99999)
+    return seed
+
+
+def _get_modelpath(cfg):
     """
     Return path to directory containing mixing.py assuming following structure:
 
@@ -242,7 +257,7 @@ def get_modelpath(cfg):
     return modelpath + sep
 
 
-def get_datapath(cfg):
+def _get_datapath(cfg):
     """Return default datapath if not specified in cfg."""
     datapath = cfg.datapath
     if datapath == '':
@@ -251,7 +266,7 @@ def get_datapath(cfg):
     return datapath
 
 
-def get_figspath(cfg):
+def _get_figspath(cfg):
     """Return default datapath if not specified in cfg."""
     figspath = cfg.figspath
     if figspath == '':
@@ -260,18 +275,25 @@ def get_figspath(cfg):
     return figspath
 
 
-def get_outpath(cfg):
+def _get_outpath(cfg):
     """Return default outpath if not specified in cfg."""
     outpath = cfg.outpath
-    if outpath == '':
+    run_seed = f'{cfg.seed:05d}'
+    if outpath != '' and run_seed not in outpath:
+        # Prevent overwrites by appending run_seed/ dir to end of outpath
+        if path.basename(path.normpath(outpath)).isnumeric():
+            # Trim previous seed path if it exists
+            outpath = path.dirname(path.normpath(outpath))
+        outpath = path.join(outpath, run_seed)
+    elif outpath == '':
+        # Default outpath is datapath/yymmdd_runname/seed/
         datapath = cfg.datapath
-        run_dir = f'{cfg.run_date}_{cfg.run}'
-        run_seed = f'{cfg.seed:05d}'
-        outpath = path.join(datapath, run_dir, run_seed) + sep
-    return outpath
+        run_dir = f'{cfg.run_date}_{cfg.run_name}'
+        outpath = path.join(datapath, run_dir, run_seed)
+    return outpath + sep
 
 
-def enforce_dataclass_type(cfg, field):
+def _enforce_dataclass_type(cfg, field):
     """
     Force set all dataclass types from their type hint, raise error if invalid.
     
@@ -287,7 +309,7 @@ def enforce_dataclass_type(cfg, field):
         raise ValueError(msg)
 
 
-def make_paths_absolute(cfg, field, datapath, outpath):
+def _make_paths_absolute(cfg, field, datapath, outpath):
     """
     Make all file paths absolute. 
     
@@ -295,19 +317,33 @@ def make_paths_absolute(cfg, field, datapath, outpath):
     Prepend outpath to all fields ending with "_out".
     """
     value = getattr(cfg, field.name)
+    newpath = ''
     if '_in' in field.name:
-        setattr(cfg, field.name, path.join(datapath, value))
+        newpath = path.join(datapath, value)
     elif '_out' in field.name:
-        setattr(cfg, field.name, path.join(outpath, value))
+        # Recompute path to _out files in case outpath changed (e.g. appending seed dir)
+        newpath = path.join(outpath, path.basename(value))
+    elif 'path' in field.name:
+        newpath = value
+
+    if newpath:
+        setattr(cfg, field.name, path.abspath(path.expanduser(newpath)))
 
 
 def read_custom_cfg(cfg_path):
     """
     Return dictionary from custom config.py file.
     """
+    if cfg_path is None:
+        return {}
     with open(path.abspath(cfg_path), 'r') as f:
         cfg_dict = ast.literal_eval(f.read())
     return cfg_dict
+
+
+def from_dict(cdict):
+    """Return Cfg setting all provided values in cdict."""
+    return Cfg(**cdict)
 
 
 if __name__ == '__main__':

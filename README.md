@@ -1,4 +1,4 @@
-# ESSI21 Moon Polar Ice and Ejecta Stratigraphy (MoonPIES)
+# MoonPIES: Moon Polar Ice and Ejecta Stratigraphy
 
 Welcome to the `MoonPIES` model documentation. This document will outline how to install, configure, and run the model.
 
@@ -16,16 +16,17 @@ The model is intended to be easy to run,modify and extend as our understanding o
 
 ## Model prerequisites
 
-The model requires Python 3 and is tested on all main operating systems (Linux/Mac/Windows). We recommend installing python using [Anaconda](https://www.anaconda.com/products/individual) or [Miniconda](https://docs.conda.io/en/latest/miniconda.html).
+The model requires at least Python 3.6 and is tested on all main operating systems (Linux/Mac/Windows). We recommend installing python using [Anaconda](https://www.anaconda.com/products/individual) or [Miniconda](https://docs.conda.io/en/latest/miniconda.html).
 
 The model also requires the following python packages to be installed:
 
 - numpy
 - pandas
+- matplotlib
 
 These are installed by default with *Anaconda*, but can also be installed with:
 
-`conda install numpy pandas`
+`conda install numpy pandas matplotlib`
 
 For more advanced environment configuration with `conda`, refer to the following [conda environment tutorial](https://cjtu.github.io/spirl/anaconda_environments.html).
 
@@ -180,7 +181,7 @@ The Main Loop steps through model time from the past to the present and accumula
 
 The treatment of ice in the main loop depends on the mode of the model.
 
-**ESSI mode**: If `mode == 'essi'`, then `update_ice_cols()` will do the following:
+**MoonPIES mode**: If `mode == 'moonpies'`, then `update_ice_cols()` will do the following:
 
 1. *Coming soon*: If a crater was formed at this timestep, apply ballistic sedimentation effects to all ice columns based on their distances from the impact.
 2. Add new ice thickness to each strat column.

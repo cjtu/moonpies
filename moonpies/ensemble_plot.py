@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 import pandas as pd
 import matplotlib.pyplot as plt
-import default_config
+from moonpies import default_config
 
 # Manually set datadir else try to read from cfg
 data_dir = ''

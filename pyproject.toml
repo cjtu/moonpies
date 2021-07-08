@@ -1,28 +1,41 @@
 [tool.poetry]
 name = "moonpies"
-version = "0.1.1"
-description = ""
-authors = ["Your Name <you@example.com>"]
+version = "0.1.2"
+description = "Moon Polar Ice and Ejecta Stratigraphy model"
+authors = ["Christian Tai Udovicic <cj.taiudovicic@gmail.com>"]
+license = "MIT"
 
 [tool.poetry.dependencies]
-python = "^3.8,<3.10"
-numpy = "^1.20.3"
-pandas = "^1.2.4"
-rasterio = "^1.2.4"
-jupyter = "^1.0.0"
-matplotlib = "^3.4.2"
-imageio = "^2.9.0"
+python = "^3.6.2"
+numpy = "^1.15"
+pandas = "^1.0"
+matplotlib = "^3.3"
 
 [tool.poetry.dev-dependencies]
-snakeviz = "^2.1.0"
+jupyter = "^1.0.0"
 black = "^21.6b0"
-pylint = "^2.8.3"
+pylint = "^2.9.3"
 pytest = "^6.2.4"
 pandoc = "^1.1.0"
+snakeviz = "^2.1.0"
 
 [tool.black]
 line-length=79
-exclude="config.py"
+exclude = '''
+(
+  /(
+    | \.git          # root of the project
+    | \.venv
+    | _build
+    | build
+    | dist
+  )/
+  | moonpies/default_config.py
+)
+'''
+
+[tool.pylint.typecheck]
+generated-members=["pandas.*","pd.*"]
 
 [tool.pylint.reports]
 output-format="colorized"

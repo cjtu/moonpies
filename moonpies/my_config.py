@@ -1,4 +1,4 @@
-{'run': 'mpies',
+{'run_name': 'mpies',
  'verbose': False,
  'write': True,
  'write_npy': False,

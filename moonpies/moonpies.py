@@ -4,11 +4,15 @@ Date: 07/06/21
 Authors: CJ Tai Udovicic, K Frizzell, K Luchsinger, A Madera, T Paladino
 Acknowledgements: This model is largely updated from Cannon et al. (2020)
 """
-import argparse, ast, os
-from functools import lru_cache, wraps
+import argparse, os
+from functools import lru_cache
 import numpy as np
 import pandas as pd
-import default_config
+
+try:
+    import default_config
+except:
+    from moonpies import default_config
 
 
 def main(cfg):
@@ -33,11 +37,15 @@ def main(cfg):
     vprint("Starting main loop...")
     for t, time in enumerate(time_arr):
         # Global ice mass gained [kg] by all processes
-        global_ice = np.sum([
-            volcanic_ice_time[t],  # Volcanic outgassing ice [kg]
-            total_impact_ice(time, cfg, rng=rng)  # Impact delivered ice [kg]
-        ])
-        
+        global_ice = np.sum(
+            [
+                volcanic_ice_time[t],  # Volcanic outgassing ice [kg]
+                total_impact_ice(
+                    time, cfg, rng=rng
+                ),  # Impact delivered ice [kg]
+            ]
+        )
+
         # Convert global ice mass [kg] to polar ice thickness [m]
         polar_ice_thickness = get_ice_thickness(global_ice, cfg)
         strat_cols = update_ice_cols(
@@ -50,7 +58,9 @@ def main(cfg):
 
     # Format and save outputs
     vprint("Formatting outputs")
-    outputs = format_save_outputs(strat_cols, time_arr, df, grdx, grdy, ej_thickness_time, cfg, vprint)
+    outputs = format_save_outputs(
+        strat_cols, time_arr, df, grdx, grdy, ej_thickness_time, cfg, vprint
+    )
     return outputs
 
 
@@ -142,11 +152,13 @@ def format_csv_outputs(strat_cols, time_arr):
     return ej_cols_df, ice_cols_df
 
 
-def format_save_outputs(strat_cols, time_arr, df, grdx, grdy, ej_thickness, cfg, vprint=print):
+def format_save_outputs(
+    strat_cols, time_arr, df, grdx, grdy, ej_thickness, cfg, vprint=print
+):
     """
     Save outputs based on cfg.
     """
-    df_outputs = format_csv_outputs(strat_cols, time_arr)        
+    df_outputs = format_csv_outputs(strat_cols, time_arr)
     if cfg.write:
         # Save config file and dataframe outputs
         vprint(f"Saving outputs to {cfg.outpath}")
@@ -154,7 +166,7 @@ def format_save_outputs(strat_cols, time_arr, df, grdx, grdy, ej_thickness, cfg,
         fnames = (cfg.ejcols_csv_out, cfg.icecols_csv_out)
         save_outputs(df_outputs, fnames)
         print(f"Outputs saved to {cfg.outpath}")
-    
+
     if cfg.write_npy:
         # Note: Only compute these on demand (expensive to do every run)
         # Age grid is age of most recent impact (2D array: NX, NY)
@@ -239,9 +251,7 @@ def get_ejecta_thickness(
     return thickness
 
 
-def get_ejecta_thickness_matrix(
-    df, time_arr, cfg
-):
+def get_ejecta_thickness_matrix(df, time_arr, cfg):
     """
     Return ejecta_matrix of thickness [m] at each time in time_arr given
     triangular matrix of distances between craters in df.
@@ -255,7 +265,13 @@ def get_ejecta_thickness_matrix(
 
     # Ejecta thickness deposited in each crater from each crater (NC, NC)
     rad = df.rad.values[:, np.newaxis]  # need to pass column vector of radii
-    ej_thick = get_ejecta_thickness(ej_distances, rad, cfg.simple2complex, cfg.ejecta_thickness_order, cfg.dtype)
+    ej_thick = get_ejecta_thickness(
+        ej_distances,
+        rad,
+        cfg.simple2complex,
+        cfg.ejecta_thickness_order,
+        cfg.dtype,
+    )
 
     # Find indices of crater ages in time_arr
     # Note: searchsorted must be ascending, so do -time_arr (-4.3, 0) Ga
@@ -285,10 +301,7 @@ def get_volcanic_ice(time_arr, cfg):
     """
     if cfg.volc_mode == "NK":
         out = volcanic_ice_nk(
-            time_arr,
-            cfg.volc_csv_in,
-            cfg.volc_cols,
-            cfg.volc_species
+            time_arr, cfg.volc_csv_in, cfg.volc_cols, cfg.volc_species
         )
     elif cfg.volc_mode == "Head":
         out = volcanic_ice_head(
@@ -308,12 +321,7 @@ def get_volcanic_ice(time_arr, cfg):
     return out
 
 
-def volcanic_ice_nk(
-    time_arr,
-    volc_csv,
-    columns,
-    species
-):
+def volcanic_ice_nk(time_arr, volc_csv, columns, species):
     """
     Return ice [units] deposited in each timestep with Needham & Kring (2017).
     """
@@ -420,7 +428,7 @@ def update_ice_cols(t, strat_cols, new_ice_thickness, overturn_depth, mode):
 def get_ice_thickness(global_ice_mass, cfg):
     """
     Return ice thickness applied to all cold traps given total ice mass
-    produced globally, scaled by ice_hop_efficiency, density of ice and 
+    produced globally, scaled by ice_hop_efficiency, density of ice and
     total coldtrap_area.
     """
     polar_ice_mass = global_ice_mass * cfg.ice_hop_efficiency  # [kg]
@@ -439,7 +447,7 @@ def remove_ice_overturn(ice_col, ej_col, t, overturn_depth, mode="cannon"):
             ice_col[: t + 1], ej_col[: t + 1], overturn_depth
         )
     else:
-        raise ValueError(f'Invalid mode {mode} in remove_ice_overturn')
+        raise ValueError(f"Invalid mode {mode} in remove_ice_overturn")
     return ice_col
 
 
@@ -681,7 +689,12 @@ def total_impact_ice(time, cfg, rng=None):
         elif r == "b":
             # Small impactors
             impactor_diams, impactors = get_impactor_pop(
-                time, r, cfg.timestep, cfg.diam_range, cfg.sfd_slopes, cfg.dtype
+                time,
+                r,
+                cfg.timestep,
+                cfg.diam_range,
+                cfg.sfd_slopes,
+                cfg.dtype,
             )
             total_ice += ice_small_impactors(impactor_diams, impactors, cfg)
         elif r == "c":
@@ -719,7 +732,9 @@ def total_impact_ice(time, cfg, rng=None):
                 cfg.escape_vel,
                 rng=rng,
             )
-            total_ice += ice_large_craters(crater_diams, impactor_speeds, r, cfg)
+            total_ice += ice_large_craters(
+                crater_diams, impactor_speeds, r, cfg
+            )
     return total_ice
 
 
@@ -776,7 +791,7 @@ def ice_small_craters(
     """
     Return ice from simple craters, steep branch (Regime C, Cannon 2020).
     """
-    impactor_diams = diam2len(crater_diams, cfg.impact_speed, regime, cfg) 
+    impactor_diams = diam2len(crater_diams, cfg.impact_speed, regime, cfg)
     impactor_masses = diam2vol(impactor_diams) * cfg.impactor_density  # [kg]
     total_impactor_mass = np.sum(impactor_masses * ncraters)
     total_impactor_water = impactor_mass2water(
@@ -953,7 +968,9 @@ def get_crater_pop(
 
     Randomly resample large simple & complex crater diameters.
     """
-    crater_diams, sfd_prob = get_diams_probs(*diam_range[regime], sfd_slopes[regime], dtype)
+    crater_diams, sfd_prob = get_diams_probs(
+        *diam_range[regime], sfd_slopes[regime], dtype
+    )
     n_craters = neukum(crater_diams[0], csfd_coeffs) - neukum(
         crater_diams[-1], csfd_coeffs
     )
@@ -981,7 +998,9 @@ def get_impactor_pop(
 
     Use constants and eqn. 3 from Brown et al. (2002) to compute N craters.
     """
-    diams, sfd_prob = get_diams_probs(*diam_range[regime], sfd_slopes[regime], dtype)
+    diams, sfd_prob = get_diams_probs(
+        *diam_range[regime], sfd_slopes[regime], dtype
+    )
     n_impactors = get_impactors_brown(diams[0], diams[-1], timestep)
 
     # Scale for timestep, impact flux and size-frequency dist
@@ -1261,7 +1280,7 @@ def get_grid_arrays(cfg):
     Grid is centered on South pole with y in (ysize, -ysize) and c in
     (-xsize, xsize) therefore total gridsize is (2*xsize)*(2*ysize).
     """
-    ysize, ystep =  cfg.grdysize, cfg.grdstep
+    ysize, ystep = cfg.grdysize, cfg.grdstep
     xsize, xstep = cfg.grdxsize, cfg.grdstep
     grdy, grdx = np.meshgrid(
         np.arange(ysize, -ysize, -ystep, dtype=cfg.dtype),
@@ -1376,26 +1395,26 @@ def diam2vol(diameter):
 
 
 if __name__ == "__main__":
-    # Get optional random seed and cfg options from cmd-line args
+    # Get optional random seed and cfg file from cmd-line args
     parser = argparse.ArgumentParser()
-    parser.add_argument('seed', 
-                        type=int, 
-                        nargs='?', 
-                        # default=0, 
-                        help='random seed for this run - superceeds cfg.seed')
-    parser.add_argument('--cfg', '-c', 
-                        nargs='?', 
-                        type=str, 
-                        help='path to custom my_config.py')
+    parser.add_argument(
+        "seed",
+        type=int,
+        nargs="?",
+        help="random seed for this run - superceeds cfg.seed",
+    )
+    parser.add_argument(
+        "--cfg", "-c", nargs="?", type=str, help="path to custom my_config.py"
+    )
     args = parser.parse_args()
-    cfg_dict = {}
-    if args.cfg:  # Read config options from args.cfg path
-        cfg_dict = default_config.read_custom_cfg(args.cfg)
-    if args.seed:  # If seed given, it takes precedence
-        cfg_dict['seed'] = args.seed    
-    elif 'seed' not in cfg_dict: # If no seed given and no cfg seed, randomize
-        cfg_dict['seed'] = np.random.randint(1, 99999)
-    
-    # Configure run (populates blank fields with defaults in default_config.py)
-    cfg = default_config.Cfg(**cfg_dict)
-    _ = main(cfg)
+
+    # Use custom cfg from file if provided, else return default_config.Cfg
+    cfg_dict = default_config.read_custom_cfg(args.cfg)
+
+    # If seed given, it takes precedence over seed set in custom cfg
+    if args.seed is not None:
+        cfg_dict["seed"] = args.seed
+    custom_cfg = default_config.from_dict(cfg_dict)
+
+    # Run model:
+    _ = main(custom_cfg)
