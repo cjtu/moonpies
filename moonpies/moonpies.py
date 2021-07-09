@@ -4,18 +4,19 @@ Date: 07/06/21
 Authors: CJ Tai Udovicic, K Frizzell, K Luchsinger, A Madera, T Paladino
 Acknowledgements: This model is largely updated from Cannon et al. (2020)
 """
-import argparse, os
+import argparse 
+import os
 from functools import lru_cache
 import numpy as np
 import pandas as pd
 
 try:
     import default_config
-except:
+except ModuleNotFoundError:
     from moonpies import default_config
 
 
-def main(cfg):
+def main(cfg=default_config.Cfg()):
     """Run mixing model with options in cfg (see default_config.py)."""
     # Setup phase
     vprint = print if cfg.verbose else lambda *a, **k: None
@@ -25,13 +26,13 @@ def main(cfg):
     time_arr = get_time_array(cfg)
     df = read_crater_list(cfg.crater_csv_in, cfg.crater_cols)  # len: NC
     df = randomize_crater_ages(df, cfg.timestep, cfg.dtype, rng)  # len: NC
-    ej_thickness_time = get_ejecta_thickness_matrix(df, time_arr, cfg)  # [m]
+    ej_cols, ej_names = get_ejecta_thickness_matrix(df, time_arr, cfg)  # [m]
     volcanic_ice_time = get_volcanic_ice(time_arr, cfg)  # [kg] len: NT
     overturn_depth_time = total_overturn_depth(time_arr, cfg)  # [m] len: NT
     # ballistic_sed_matrix = get_ballistic_sed(df, mode=cfg.mode)
 
     # Init strat columns dict based for all cfg.coldtrap_craters
-    strat_cols = init_strat_columns(df, time_arr, ej_thickness_time, cfg)
+    strat_cols = init_strat_columns(df, ej_cols, cfg)
 
     # Main loop over time
     vprint("Starting main loop...")
@@ -57,9 +58,8 @@ def main(cfg):
         )
 
     # Format and save outputs
-    vprint("Formatting outputs")
     outputs = format_save_outputs(
-        strat_cols, time_arr, df, grdx, grdy, ej_thickness_time, cfg, vprint
+        strat_cols, time_arr, df, grdx, grdy, ej_names, cfg, vprint
     )
     return outputs
 
@@ -121,6 +121,7 @@ def read_crater_list(crater_csv, columns, rp=1737e3):
 
 
 def read_volcanic_species(volcanic_csv, columns, species):
+    """Return DataFrame with volcanic_csv with species columns only."""
     df = pd.read_csv(volcanic_csv, names=columns, header=3)
     df = df[["time", species]]
     df["time"] = df["time"] * 1e9  # [Gyr -> yr]
@@ -136,11 +137,12 @@ def read_lambda_table(costello_csv):
 
 
 # Format and export model results
-def format_csv_outputs(strat_cols, time_arr):
+def format_csv_outputs(strat_cols, time_arr, ej_names):
     """
     Return all formatted model outputs and write to outpath, if specified.
     """
-    ej_dict = {"time": time_arr}
+    ej_names = [n.rstrip(',') for n in ej_names]
+    ej_dict = {"time": time_arr, 'ejecta_source': ej_names}
     ice_dict = {"time": time_arr}
     for cname, (ice_col, ej_col) in strat_cols.items():
         ej_dict[cname] = ej_col
@@ -153,12 +155,13 @@ def format_csv_outputs(strat_cols, time_arr):
 
 
 def format_save_outputs(
-    strat_cols, time_arr, df, grdx, grdy, ej_thickness, cfg, vprint=print
+    strat_cols, time_arr, df, grdx, grdy, ej_names, cfg, vprint=print
 ):
     """
-    Save outputs based on cfg.
+    Format dataframes and save outputs based on write / write_npy in cfg.
     """
-    df_outputs = format_csv_outputs(strat_cols, time_arr)
+    vprint("Formatting outputs")
+    df_outputs = format_csv_outputs(strat_cols, time_arr, ej_names)
     if cfg.write:
         # Save config file and dataframe outputs
         vprint(f"Saving outputs to {cfg.outpath}")
@@ -172,6 +175,7 @@ def format_save_outputs(
         # Age grid is age of most recent impact (2D array: NX, NY)
         vprint("Computing age grid...")
         age_grid = get_age_grid(df, grdx, grdy, cfg.timestart, cfg.dtype)
+        ej_thickness = get_ejecta_thickness_grid(time_arr)
         npy_fnames = (cfg.agegrd_npy_out, cfg.ejmatrix_npy_out)
         npy_outputs = [age_grid, ej_thickness]
         vprint(f"Saving npy outputs to {cfg.outpath}")
@@ -235,6 +239,7 @@ def get_ejecta_thickness(
     ds2c=18e3,
     order=-3,
     dtype=None,
+    mode='cannon'
 ):
     """
     Return ejecta thickness as a function of distance given crater radius.
@@ -246,8 +251,10 @@ def get_ejecta_thickness(
     exp[radius * 2 > ds2c] = exp_complex
     thickness = 0.14 * radius ** exp * (distance / radius) ** order
     thickness[np.isnan(thickness)] = 0
-    # TODO: make this only cannon mode?
-    thickness[distance < 4 * radius] = 0  # Cannon cuts off at 4 crater radii
+    if mode == 'cannon':
+        # TODO: should moonpies also do 4 crater radii?
+        # Cannon cuts off at 4 crater radii 
+        thickness[distance > 4 * radius] = 0 
     return thickness
 
 
@@ -282,10 +289,49 @@ def get_ejecta_thickness_matrix(df, time_arr, cfg):
 
     # Fill ejecta thickness vs time matrix (rows: time, cols:craters)
     ej_thick_time = np.zeros((len(time_arr), len(time_idx)), dtype=cfg.dtype)
+    ej_names = [''] * len(time_arr)
     for i, t_idx in enumerate(time_idx):
         # Sum here in case more than one crater formed at t_idx
         ej_thick_time[t_idx, :] += ej_thick[:, i]
-    return ej_thick_time
+        ej_names[t_idx] += df.cname.iloc[i] + ','
+    return ej_thick_time, ej_names
+
+
+def get_ejecta_thickness_grid(rad, dist_grd, cfg):
+    """
+    Return ejecta thickness at each point on the grid.
+    """
+    ej_thick = get_ejecta_thickness(
+        dist_grd,
+        rad,
+        cfg.simple2complex,
+        cfg.ejecta_thickness_order,
+        cfg.dtype,
+    )
+    return ej_thick
+
+
+def get_gc_dist_grid(df, grdx, grdy):
+    """
+    Return 3D array of great circle dist between all craters in df and every 
+    point on the grid.
+
+    Parameters
+    ----------
+    df (DataFrame):
+    grdx (arr):
+    grdy (arr):
+
+    Return
+    ------
+    grd_dist (3D arr: NX, NY, Ndf):
+    """
+    ny, nx = grdy.shape[0], grdx.shape[1]
+    lat, lon = xy2latlon(grdx, grdy)
+    grd_dist = np.zeros((nx, ny, len(df)))
+    for i in range(len(df)):
+        grd_dist[:, :, i] = gc_dist(*df.iloc[i][['lon', 'lat']], lon, lat)
+    return grd_dist
 
 
 # Volcanic ice delivery module
@@ -383,7 +429,7 @@ def get_ballistic_sed(df):
 
 
 # Strat column functions
-def init_strat_columns(df, time_arr, ej_cols, cfg):
+def init_strat_columns(df, ej_cols, cfg):
     """
     Return dict of ice and ejecta columns for cold trap craters in df.
 
@@ -395,12 +441,14 @@ def init_strat_columns(df, time_arr, ej_cols, cfg):
     ------
     strat_columns_dict[cname] = [ice_col, ej_col]
     """
-    craters = cfg.coldtrap_craters
-    strat_columns = {}
-    idxs = np.where(df.cname.isin(craters).values)[0]
-    ice_col = np.zeros(len(time_arr), cfg.dtype)
+    # Get cold trap crater names and their locations in df
+    ctraps = cfg.coldtrap_craters
+    idxs = np.where(df.cname.isin(ctraps).values)[0]
+
+    # Build strat columns with cname: ccol, ice_col, ej_col
+    ice_cols = np.zeros(ej_cols.shape, cfg.dtype)  # shape: NT, Ncoldtrap
     strat_columns = {
-        c: [ice_col.copy(), ej_cols[:, i]] for c, i in zip(craters, idxs)
+        c: [ice_cols[:, i], ej_cols[:, i]] for c, i in zip(ctraps, idxs)
     }
     return strat_columns
 
@@ -506,7 +554,7 @@ def garden_ice_column(ice_column, ejecta_column, overturn_depth):
 
 
 # Impact gardening module (Costello et al. 2018, 2020)
-def overturn_depth(
+def get_overturn_depth(
     u,
     v,
     costello_csv,
@@ -619,7 +667,7 @@ def total_overturn_depth(time_arr, cfg):
             cfg.grav_moon,
             cfg.impact_angle,
         )
-        overturn = overturn_depth(
+        overturn = get_overturn_depth(
             u,
             b,
             cfg.costello_csv_in,
@@ -673,7 +721,7 @@ def overturn_depth_speyerer(time):
 
 
 # Impact-delivered ice module
-def total_impact_ice(time, cfg, rng=None):
+def total_impact_ice(time, ice_basins, cfg, rng=None):
     """Return total impact ice from regimes and sfd_slopes (Cannon 2020)."""
     total_ice = 0  # [kg]
     for r in cfg.impact_regimes:
@@ -710,7 +758,7 @@ def total_impact_ice(time, cfg, rng=None):
                 rng=rng,
             )
             total_ice += ice_small_craters(crater_diams, craters, r, cfg)
-        else:
+        elif r in ("d", "e"):
             # Large simple & complex craters (stochastic)
             crater_diams = get_crater_pop(
                 time,
@@ -735,6 +783,9 @@ def total_impact_ice(time, cfg, rng=None):
             total_ice += ice_large_craters(
                 crater_diams, impactor_speeds, r, cfg
             )
+        elif r == "f":
+            # Basins
+            total_ice += ice_basins[time]
     return total_ice
 
 
@@ -816,6 +867,11 @@ def ice_large_craters(crater_diams, impactor_speeds, regime, cfg):
     ice_retention = ice_retention_factor(impactor_speeds, cfg.dtype)
     ice_masses = impactor_masses * cfg.hydrated_wt_pct * ice_retention
     return np.sum(ice_masses)
+
+
+def ice_basins(df, time_arr):
+    """Return ice mass from basin impacts vs time."""
+    return 0
 
 
 def ice_retention_factor(speeds, dtype=None):
@@ -1064,7 +1120,7 @@ def diam2len(
     ------
     lengths (arr): Impactor diameters [m].
     """
-    t_diams = final2transient(diams, cfg.grav_moon, cfg.simple2complex)
+    t_diams = final2transient(diams, cfg.simple2complex)
     if regime == "c":
         impactor_length = diam2len_prieur(
             tuple(t_diams),
@@ -1098,7 +1154,7 @@ def diam2len(
     return impactor_length
 
 
-def final2transient(diams, g=1.62, ds2c=18e3, gamma=1.25, eta=0.13):
+def final2transient(diams, ds2c=18e3, gamma=1.25, eta=0.13):
     """
     Return transient crater diameters from final crater diams (Melosh 1989).
 
@@ -1357,8 +1413,8 @@ def gc_dist(lon1, lat1, lon2, lat2, rp=1737e3):
     sin2_dlat = np.sin((lat2 - lat1) / 2) ** 2
     a = sin2_dlat + np.cos(lat1) * np.cos(lat2) * sin2_dlon
     c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
-    gc_dist = rp * c
-    return gc_dist
+    dist = rp * c
+    return dist
 
 
 # General helpers

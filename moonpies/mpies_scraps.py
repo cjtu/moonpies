@@ -17,6 +17,9 @@ seq 10000 | parallel -P-1 python mixing.py
 
 python -m cProfile -o .model.prof moonpies.py 1
 snakeviz .model.prof
+
+time poetry run python -m cProfile -o mst_210709.prof make_shade_table.py
+snakeviz mst_210709.prof
 """
 
 # Ballistic sedimentation module
