@@ -156,6 +156,7 @@ def read_volcanic_species(volcanic_csv, columns, species):
     df = df[["time", species]]
     df["time"] = df["time"] * 1e9  # [Gyr -> yr]
     df[species] = df[species] * 1e-3  # [g -> kg]
+    df = df.sort_values('time', ascending=False).reset_index(drop=True)
     return df
 
 
@@ -373,7 +374,12 @@ def get_volcanic_ice(time_arr, cfg):
     """
     if cfg.volc_mode == "NK":
         out = volcanic_ice_nk(
-            time_arr, cfg.volc_csv_in, cfg.volc_cols, cfg.volc_species
+            time_arr, 
+            cfg.timestep, 
+            cfg.volc_csv_in, 
+            cfg.volc_cols, 
+            cfg.volc_species,
+            cfg.dtype,
         )
     elif cfg.volc_mode == "Head":
         out = volcanic_ice_head(
@@ -391,25 +397,28 @@ def get_volcanic_ice(time_arr, cfg):
     else:
         raise ValueError(f"Invalid mode {cfg.mode}.")
     return out
+    
 
-
-def volcanic_ice_nk(time_arr, volc_csv, columns, species):
+def volcanic_ice_nk(time_arr, timestep, volc_csv, columns, species, dtype=None):
     """
     Return ice [units] deposited in each timestep with Needham & Kring (2017).
     """
     df_volc = read_volcanic_species(volc_csv, columns, species)
+    df_volc = df_volc[df_volc.time < time_arr.max()]
 
-    # Outer merge df_volc with time_arr to get df with all age timesteps
-    time_df = pd.DataFrame(time_arr, columns=["time"])
-    df = time_df.merge(df_volc, on="time", how="outer")
+    rounded_time = np.rint(time_arr / timestep)
+    rounded_ages = np.rint(df_volc.time.values / timestep)
+    time_idx = np.searchsorted(-rounded_time, -rounded_ages)
 
-    # Fill missing timesteps in df with linear interpolation across age
-    # BUG: should actually be resampling these values to distribute across age
-    df = df.sort_values("time", ascending=False).reset_index(drop=True)
-    df_interp = df.set_index("time").interpolate()
-
-    # Extract only relevant timesteps in time_arr and species column
-    volc_ice_mass = df_interp.values
+    # Compute volc ice mass at each time in time_arr
+    #   Divide each ice mass by time between timesteps in df_volc
+    volc_ice_mass = np.zeros(len(time_arr), dtype=dtype)
+    for i, t_idx in enumerate(time_idx[:-1]):
+        # Sum here in case more than one crater formed at t_idx
+        next_idx = time_idx[i+1]
+        time_diff = (time_arr[t_idx] - time_arr[next_idx]) / timestep
+        volc_ice_mass[t_idx:next_idx+1] = df_volc.iloc[i][species] / time_diff
+    
     return volc_ice_mass
 
 
@@ -1368,7 +1377,7 @@ def diam2len_potter(
     t_diam, v=20e3, rho_i=1300, rho_t=1500, g=1.62, dtype=None
 ):
     """
-    Return impactor length from final crater diam using Potter et al. (20XX)
+    Return impactor length from final crater diam using Potter et al. (2015)
     method.
 
     Note: Interpolates impactor lengths from the forward Potter impactor length

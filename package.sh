@@ -2,7 +2,7 @@
 
 date=$(date '+%y%m%d')
 pkg=dist/moonpies_package_${date}.zip
-rm pkg
+rm $pkg
 
 mkdir moonpies_package
 mkdir moonpies_package/moonpies
