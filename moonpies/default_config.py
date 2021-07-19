@@ -56,7 +56,7 @@ class Cfg:
         'Cabeus', 'Sverdrup', 'de Gerlache', "Idel'son L", 'Wiechert J')
 
     # Lunar constants
-    rad_moon: float = 1737e3  # [m], lunar radius
+    rad_moon: float = 1737.4e3  # [m], lunar radius
     grav_moon: float = 1.62  # [m s^-2], gravitational acceleration
     sa_moon: float = 4 * np.pi * rad_moon ** 2  # [m^2]
     simple2complex: float = 18e3  # [m], lunar s2c transition diameter (melosh 1989)

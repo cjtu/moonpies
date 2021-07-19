@@ -4,7 +4,7 @@ Date: 07/06/21
 Authors: CJ Tai Udovicic, K Frizzell, K Luchsinger, A Madera, T Paladino
 Acknowledgements: This model is largely updated from Cannon et al. (2020)
 """
-import argparse 
+import argparse
 import os
 from functools import lru_cache
 import numpy as np
@@ -27,8 +27,10 @@ def main(cfg=default_config.Cfg()):
     df = read_crater_list(cfg.crater_csv_in, cfg.crater_cols)  # len: NC
     df = randomize_crater_ages(df, cfg.timestep, cfg.dtype, rng)  # len: NC
     df_basins = read_basin_list(cfg.basin_csv_in, cfg.basin_cols)
-    df_basins = randomize_crater_ages(df_basins, cfg.timestep, cfg.dtype, rng)  # len: NC
-    
+    df_basins = randomize_crater_ages(
+        df_basins, cfg.timestep, cfg.dtype, rng
+    )  # len: NC
+
     # Pre compute time-independent quantities
     ej_cols, ej_names = get_ejecta_thickness_matrix(df, time_arr, cfg)  # [m]
     volcanic_ice_time = get_volcanic_ice(time_arr, cfg)  # [kg] len: NT
@@ -65,7 +67,7 @@ def main(cfg=default_config.Cfg()):
 
 
 # Import data
-def read_crater_list(crater_csv, columns, rp=1737e3):
+def read_crater_list(crater_csv, columns, rp=1737.4e3):
     """
     Return dataframe of craters from crater_csv path with columns names.
 
@@ -169,8 +171,8 @@ def format_csv_outputs(strat_cols, time_arr, ej_names):
     """
     Return all formatted model outputs and write to outpath, if specified.
     """
-    ej_names = [n.rstrip(',') for n in ej_names]
-    ej_dict = {"time": time_arr, 'ejecta_source': ej_names}
+    ej_names = [n.rstrip(",") for n in ej_names]
+    ej_dict = {"time": time_arr, "ejecta_source": ej_names}
     ice_dict = {"time": time_arr}
     for cname, (ice_col, ej_col) in strat_cols.items():
         ej_dict[cname] = ej_col
@@ -262,12 +264,7 @@ def get_crater_distances(df, symmetric=True, dtype=None):
 
 
 def get_ejecta_thickness(
-    distance,
-    radius,
-    ds2c=18e3,
-    order=-3,
-    dtype=None,
-    mode='cannon'
+    distance, radius, ds2c=18e3, order=-3, dtype=None, mode="cannon"
 ):
     """
     Return ejecta thickness as a function of distance given crater radius.
@@ -280,10 +277,10 @@ def get_ejecta_thickness(
     thickness = 0.14 * radius ** exp * (distance / radius) ** order
     thickness[np.isnan(thickness)] = 0
     distance[np.isnan(distance)] = 0
-    if mode == 'cannon':
+    if mode == "cannon":
         # TODO: should moonpies also do 4 crater radii?
-        # Cannon cuts off at 4 crater radii 
-        thickness[distance > 4 * radius] = 0 
+        # Cannon cuts off at 4 crater radii
+        thickness[distance > 4 * radius] = 0
     return thickness
 
 
@@ -318,11 +315,11 @@ def get_ejecta_thickness_matrix(df, time_arr, cfg):
 
     # Fill ejecta thickness vs time matrix (rows: time, cols:craters)
     ej_thick_time = np.zeros((len(time_arr), len(time_idx)), dtype=cfg.dtype)
-    ej_names = [''] * len(time_arr)
+    ej_names = [""] * len(time_arr)
     for i, t_idx in enumerate(time_idx):
         # Sum here in case more than one crater formed at t_idx
-        ej_thick_time[t_idx, :] += ej_thick[:, i]
-        ej_names[t_idx] += df.cname.iloc[i] + ','
+        ej_thick_time[t_idx, :] += ej_thick[i, :]
+        ej_names[t_idx] += df.cname.iloc[i] + ","
     return ej_thick_time, ej_names
 
 
@@ -342,7 +339,7 @@ def get_ejecta_thickness_grid(rad, dist_grd, cfg):
 
 def get_gc_dist_grid(df, grdx, grdy):
     """
-    Return 3D array of great circle dist between all craters in df and every 
+    Return 3D array of great circle dist between all craters in df and every
     point on the grid.
 
     Parameters
@@ -359,7 +356,7 @@ def get_gc_dist_grid(df, grdx, grdy):
     lat, lon = xy2latlon(grdx, grdy)
     grd_dist = np.zeros((nx, ny, len(df)))
     for i in range(len(df)):
-        grd_dist[:, :, i] = gc_dist(*df.iloc[i][['lon', 'lat']], lon, lat)
+        grd_dist[:, :, i] = gc_dist(*df.iloc[i][["lon", "lat"]], lon, lat)
     return grd_dist
 
 
@@ -456,15 +453,16 @@ def get_ballistic_sed(df):
     # TODO: add Kristen code
     return 0
 
+
 def ballistic_sed_depth(teqs):
     """Return ballistic sedimentation depth."""
     depth = np.empty((np.shape(teqs)))
-    for i in range(0,24):
-        for j in range(0,24):
-            if teqs.iloc[i,j] >= 120.:
-                depth[i,j] = 1.
-            else: 
-                depth[i,j] = 0.
+    for i in range(0, 24):
+        for j in range(0, 24):
+            if teqs.iloc[i, j] >= 120.0:
+                depth[i, j] = 1.0
+            else:
+                depth[i, j] = 0.0
     return depth
 
 
@@ -912,16 +910,18 @@ def ice_large_craters(crater_diams, impactor_speeds, regime, cfg):
 def get_basin_ice(df_basins, time_arr, cfg):
     """Return ice mass from basin impacts vs time."""
     crater_diams = 2 * df_basins.rad.values
-    impactor_speeds = np.ones(len(df_basins)) * cfg.impact_speed  # TODO: speeds of basins?
+    impactor_speeds = (
+        np.ones(len(df_basins)) * cfg.impact_speed
+    )  # TODO: speeds of basins?
     impactor_masses = np.zeros(len(crater_diams), dtype=cfg.dtype)
     for i, (diam, speed) in enumerate(zip(crater_diams, impactor_speeds)):
-        impactor_diam = diam2len(diam, speed, 'f', cfg)
+        impactor_diam = diam2len(diam, speed, "f", cfg)
         impactor_masses[i] = diam2vol(impactor_diam) * cfg.impactor_density
 
     # Find ice mass assuming hydration wt% and retention based on speed
     ice_retention = ice_retention_factor(impactor_speeds, cfg.dtype)
     ice_masses = impactor_masses * cfg.hydrated_wt_pct * ice_retention
-    
+
     # Insert each basin ice mass to its position in time_arr
     # TODO: Duplicated from get_ej_thickness matrix, make into own function
     rounded_time = np.rint(time_arr / cfg.timestep)
@@ -1218,7 +1218,7 @@ def diam2len(
             cfg.impactor_density,
             cfg.target_density,
             cfg.grav_moon,
-            cfg.dtype
+            cfg.dtype,
         )
     else:
         raise ValueError(f"Invalid regime {regime} in diam2len")
@@ -1365,12 +1365,7 @@ def diam2len_johnson(
 
 
 def diam2len_potter(
-    t_diam,
-    v=20e3,
-    rho_i=1300,
-    rho_t=1500,
-    g=1.62,
-    dtype=None
+    t_diam, v=20e3, rho_i=1300, rho_t=1500, g=1.62, dtype=None
 ):
     """
     Return impactor length from final crater diam using Potter et al. (20XX)
@@ -1392,12 +1387,15 @@ def diam2len_potter(
     impactor_length (num): impactor diameter [m]
     """
     i_lengths = np.linspace(100, 1e6, 1000, dtype=dtype)
-    pi2 = 3.22 * g * (i_lengths / 2) / v**2
-    piD = 1.6 * pi2**-0.22
-    t_diams = piD * ((rho_i * (4 / 3) * np.pi * (i_lengths / 2)**3) / rho_t)**0.33
+    pi2 = 3.22 * g * (i_lengths / 2) / v ** 2
+    piD = 1.6 * pi2 ** -0.22
+    t_diams = (
+        piD
+        * ((rho_i * (4 / 3) * np.pi * (i_lengths / 2) ** 3) / rho_t) ** 0.33
+    )
     impactor_length = np.interp(t_diam, t_diams, i_lengths)
     return impactor_length
-    
+
 
 # Surface age module
 def get_age_grid(
@@ -1452,7 +1450,7 @@ def get_grid_arrays(cfg):
     return grdy, grdx
 
 
-def latlon2xy(lat, lon, rp=1737e3):
+def latlon2xy(lat, lon, rp=1737.4e3):
     """
     Return (x, y) [m] South Polar stereo coords from (lat, lon) [deg].
 
@@ -1473,7 +1471,7 @@ def latlon2xy(lat, lon, rp=1737e3):
     return x, y
 
 
-def xy2latlon(x, y, rp=1737e3):
+def xy2latlon(x, y, rp=1737.4e3):
     """
     Return (lat, lon) [deg] from South Polar stereo coords (x, y) [m].
 
@@ -1494,7 +1492,7 @@ def xy2latlon(x, y, rp=1737e3):
     return lat, lon
 
 
-def gc_dist(lon1, lat1, lon2, lat2, rp=1737e3):
+def gc_dist(lon1, lat1, lon2, lat2, rp=1737.4e3):
     """
     Return great circle distance [m] from (lon1, lat1) - (lon2, lat2) [deg].
 
