@@ -27,6 +27,7 @@ class Cfg:
     
     # Files to import from datapath (attr name must end with "_in")
     crater_csv_in: str = 'crater_list.csv'
+    basin_csv_in: str = 'basin_list.csv'
     volc_csv_in: str = 'needham_kring_2017.csv'
     costello_csv_in: str = 'costello_etal_2018_t1.csv'
 
@@ -51,8 +52,8 @@ class Cfg:
     coldtrap_area: float = 1.3e4 * 1e6  # [m^2], (williams 2019, via text s1, cannon 2020)
     ice_hop_efficiency: float = 0.054  # 5.4% gets to the s. pole (text s1, cannon 2020)
     coldtrap_craters: tuple = (
-        'Haworth', 'Shoemaker', 'Faustini', 'Shackleton', 'Amundsen',
-        'Sverdrup', 'Cabeus B', 'de Gerlache', "Idel'son L", 'Wiechert J')
+        'Haworth', 'Shoemaker', 'Faustini', 'Shackleton', 'Slater', 'Amundsen', 
+        'Cabeus', 'Sverdrup', 'de Gerlache', "Idel'son L", 'Wiechert J')
 
     # Lunar constants
     rad_moon: float = 1737e3  # [m], lunar radius
@@ -83,6 +84,11 @@ class Cfg:
     crater_cols: tuple = ('cname', 'lat', 'lon', 'diam', 'age', 'age_low',
                           'age_upp', 'psr_area', 'age_ref', 'prio', 'notes')
     ejecta_thickness_order: float = -3  # min: -3.5, avg: -3, max: -2.5 (kring 1995)
+
+    # Basin ice module
+    basin_cols: tuple = ('cname', 'lat', 'lon', 'diam', 'inner_ring_diam', 
+                         'bouger_diam', 'age', 'age_low', 'age_upp', 'ref')
+    basin_impact_speed = 20e3  # [km/s]
 
     # Ballistic sedimentation module
     ice_frac: float = 0.056  # fraction ice vs regolith (5.6% colaprete 2010)
@@ -118,11 +124,12 @@ class Cfg:
     ctype_hydrated: float = 2/3  # 2/3 of c-types are hydrated (rivkin, 2012)
     hydrated_wt_pct: float = 0.1  # impactors wt% H2O (cannon 2020)
     impactor_mass_retained: float = 0.165  # asteroid mass retained in impact (ong et al., 2011)
-    impact_regimes: tuple = ('a', 'b', 'c', 'd', 'e')
+    # impact_regimes: tuple = ('a', 'b', 'c', 'd', 'e')  # TODO: how to handle modes + regimes?
+    impact_regimes: tuple = ('a', 'b', 'c', 'd', 'e', 'f')
     diam_range: dict = field(default_factory = lambda: ({
         # regime: (rad_min, rad_max, step)
         'a': (0, 0.01, None),  # micrometeorites (<1 mm)
-        'b': (0.01, 3, 1e-4),  # small impactors (1 mm - 3 m)
+        'b': (0.01, 3, 1e-4),  # small impactors (10 mm - 3 m)
         'c': (100, 1.5e3, 1),  # simple craters, steep sfd (100 m - 1.5 km)
         'd': (1.5e3, 15e3, 1e2),  # simple craters, shallow sfd (1.5 km - 15 km)
         'e': (15e3, 300e3, 1e3),  # complex craters, shallow sfd (15 km - 300 km)

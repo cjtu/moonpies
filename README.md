@@ -34,7 +34,7 @@ For more advanced environment configuration with `conda`, refer to the following
 
 ## Model Installation
 
-The model is packaged as a `.zip` file which can be downloaded from *public repository link*. Once downloaded, extracting all contents of the `.zip` to a directory of your choice. The unzipped package has the following structure:
+The model is packaged as a `.zip` file which can be downloaded from *public repository link*. Once downloaded, extracting all contents of the `.zip` to a directory of your choice (e.g. by right-clicking the .zip and choosing "extract here"). The unzipped package has the following structure:
 
 ```bash
 moonpies_package/
