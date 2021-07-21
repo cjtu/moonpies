@@ -28,8 +28,9 @@ class Cfg:
     # Files to import from datapath (attr name must end with "_in")
     crater_csv_in: str = 'crater_list.csv'
     basin_csv_in: str = 'basin_list.csv'
-    volc_csv_in: str = 'needham_kring_2017.csv'
+    nk_csv_in: str = 'needham_kring_2017_s3.csv'
     costello_csv_in: str = 'costello_etal_2018_t1.csv'
+    bahcall_csv_in: str = 'bahcall_etal_2001_t2.csv'
 
     # Files to export to outpath (attr name must end with "_out")
     ejcols_csv_out: str = f'ej_columns_{run_name}.csv'
@@ -155,12 +156,21 @@ class Cfg:
 
     # volc_mode == 'NK': Needham & Kring (2017)
     volc_pole_pct: float = 0.1  # 10%
-    volc_species: str = 'min_h2o'  # volcanic species, must be in volc_cols
+    nk_species: str = 'min_h2o'  # volcanic species, must be in volc_cols
+    nk_cols: tuple = (
+        'time', 'tot_vol', 'sphere_mass', 'min_co', 'max_co', 'min_h2o', 
+        'max_h2o', 'min_h', 'max_h', 'min_s', 'max_s', 'min_sum', 'max_sum',
+        'min_psurf', 'max_psurf', 'min_atm_loss', 'max_atm_loss'
+    )
     volc_cols: tuple = (
         'time', 'tot_vol', 'sphere_mass', 'min_co', 'max_co', 'min_h2o', 
         'max_h2o', 'min_h', 'max_h', 'min_s', 'max_s', 'min_sum', 'max_sum',
         'min_psurf', 'max_psurf', 'min_atm_loss', 'max_atm_loss'
     )
+
+    # Solar Wind module
+    solar_wind_mode: str = 'Benna'  # ['Benna', 'Lucey-Hurley']
+    faint_young_sun: bool = True  # use faint young sun (Bahcall et al., 2001)
 
     # lunar production function a_values (neukum 2001)
     neukum1983: tuple = (-3.0768, -3.6269, 0.4366, 0.7935, 0.0865, -0.2649, 

@@ -24,15 +24,16 @@ def main(cfg=default_config.Cfg()):
     rng = get_rng(cfg.seed)
     grdy, grdx = get_grid_arrays(cfg)
     time_arr = get_time_array(cfg)
-    df = read_crater_list(cfg.crater_csv_in, cfg.crater_cols)  # len: NC
-    df = randomize_crater_ages(df, cfg.timestep, cfg.dtype, rng)  # len: NC
+
+    # Get crater and basin DataFrames (len: Ncraters / Nbasins)
+    df = read_crater_list(cfg.crater_csv_in, cfg.crater_cols)
+    df = randomize_crater_ages(df, cfg.timestep, cfg.dtype, rng)
     df_basins = read_basin_list(cfg.basin_csv_in, cfg.basin_cols)
-    df_basins = randomize_crater_ages(
-        df_basins, cfg.timestep, cfg.dtype, rng
-    )  # len: NC
+    df_basins = randomize_crater_ages(df_basins, cfg.timestep, cfg.dtype, rng)
 
     # Pre compute time-independent quantities
     ej_cols, ej_names = get_ejecta_thickness_matrix(df, time_arr, cfg)  # [m]
+    solar_wind_ice_time = get_solar_wind_ice(time_arr, cfg) # [kg] len: NT
     volcanic_ice_time = get_volcanic_ice(time_arr, cfg)  # [kg] len: NT
     basin_ice_time = get_basin_ice(df_basins, time_arr, cfg)
     overturn_depth_time = total_overturn_depth(time_arr, cfg)  # [m] len: NT
@@ -45,9 +46,10 @@ def main(cfg=default_config.Cfg()):
     vprint("Starting main loop...")
     for t, time in enumerate(time_arr):
         # Global ice mass gained [kg] by all processes
+        sw_ice = solar_wind_ice_time[t]
         volc_ice = volcanic_ice_time[t]
         impact_ice = total_impact_ice(time, basin_ice_time[t], cfg, rng=rng)
-        global_ice = volc_ice + impact_ice
+        global_ice = sw_ice + volc_ice + impact_ice
 
         # Convert global ice mass [kg] to polar ice thickness [m]
         polar_ice_thickness = get_ice_thickness(global_ice, cfg)
@@ -67,7 +69,7 @@ def main(cfg=default_config.Cfg()):
 
 
 # Import data
-def read_crater_list(crater_csv, columns, rp=1737.4e3):
+def read_crater_list(crater_csv, crater_cols, rp=1737.4e3):
     """
     Return dataframe of craters from crater_csv path with columns names.
 
@@ -96,7 +98,7 @@ def read_crater_list(crater_csv, columns, rp=1737.4e3):
     -------
     df (DataFrame): Crater DataFrame read and updated from crater_csv
     """
-    df = pd.read_csv(crater_csv, names=columns, header=0)
+    df = pd.read_csv(crater_csv, names=crater_cols, header=0)
 
     # Convert units, mandatory columns
     df["diam"] = df["diam"] * 1000  # [km -> m]
@@ -118,7 +120,7 @@ def read_crater_list(crater_csv, columns, rp=1737.4e3):
     return df
 
 
-def read_basin_list(basin_csv, columns):
+def read_basin_list(basin_csv, basin_cols):
     """
     Return dataframe of craters from basin_csv path with columns names.
 
@@ -139,7 +141,7 @@ def read_basin_list(basin_csv, columns):
     -------
     df (DataFrame): Crater DataFrame read and updated from basin_csv
     """
-    df = pd.read_csv(basin_csv, names=columns, header=0)
+    df = pd.read_csv(basin_csv, names=basin_cols, header=0)
 
     # Convert units, mandatory columns
     df["diam"] = df["diam"] * 1000  # [km -> m]
@@ -150,9 +152,11 @@ def read_basin_list(basin_csv, columns):
     return df
 
 
-def read_volcanic_species(volcanic_csv, columns, species):
-    """Return DataFrame with volcanic_csv with species columns only."""
-    df = pd.read_csv(volcanic_csv, names=columns, header=3)
+def read_volcanic_species(nk_csv, nk_cols, species):
+    """
+    Return DataFrame of time, species mass (Table S3, Needham & Kring 2017).
+    """
+    df = pd.read_csv(nk_csv, names=nk_cols, header=4)
     df = df[["time", species]]
     df["time"] = df["time"] * 1e9  # [Gyr -> yr]
     df[species] = df[species] * 1e-3  # [g -> kg]
@@ -162,8 +166,19 @@ def read_volcanic_species(volcanic_csv, columns, species):
 
 @lru_cache(1)
 def read_lambda_table(costello_csv):
-    """Read lambda table (Table 1, Costello et al. 2018)."""
-    df = pd.read_csv(costello_csv)
+    """
+    Return DataFrame of lambda, probabilities (Table 1, Costello et al. 2018).
+    """
+    df = pd.read_csv(costello_csv, header=1)
+    return df
+
+
+def read_solar_luminosity(bahcall_csv):
+    """
+    Return DataFrame of time, solar luminosity (Table 2, Bahcall et al. 2001).
+    """
+    df = pd.read_csv(bahcall_csv, names=('age', 'luminosity'), header=1)
+    df.loc[:, 'age'] = (4.57 - df.loc[:, 'age']) * 1e9 # [Gyr -> yr]
     return df
 
 
@@ -204,13 +219,11 @@ def format_save_outputs(
     if cfg.write_npy:
         # Note: Only compute these on demand (expensive to do every run)
         # Age grid is age of most recent impact (2D array: NX, NY)
-        vprint("Computing age grid...")
-        age_grid = get_age_grid(df, grdx, grdy, cfg.timestart, cfg.dtype)
-        ej_thickness = get_ejecta_thickness_grid(time_arr)
+        vprint("Computing gridded outputs...")
+        grd_outputs = get_grid_outputs(df, grdx, grdy, cfg)
         npy_fnames = (cfg.agegrd_npy_out, cfg.ejmatrix_npy_out)
-        npy_outputs = [age_grid, ej_thickness]
         vprint(f"Saving npy outputs to {cfg.outpath}")
-        save_outputs(npy_outputs, npy_fnames)
+        save_outputs(grd_outputs, npy_fnames)
     return df_outputs
 
 
@@ -324,18 +337,26 @@ def get_ejecta_thickness_matrix(df, time_arr, cfg):
     return ej_thick_time, ej_names
 
 
-def get_ejecta_thickness_grid(rad, dist_grd, cfg):
+def get_grid_outputs(df, grdx, grdy, cfg):
     """
-    Return ejecta thickness at each point on the grid.
+    Return matrices of interest computed on the grid of shape: (NY, NX, (NC)).
     """
-    ej_thick = get_ejecta_thickness(
-        dist_grd,
-        rad,
+    # Age of most recent impact (2D array: NX, NY)
+    age_grid = get_age_grid(df, grdx, grdy, cfg.timestart, cfg.dtype)
+
+    # Great circle distance from each crater to grid (3D array: NX, NY, NC)
+    dist_grid = get_gc_dist_grid(df, grdx, grdy)
+
+    # Ejecta thickness produced by each crater on grid (3D array: NX, NY, NC)
+    ej_thick_grid = get_ejecta_thickness(
+        dist_grid, 
+        df.rad.values, 
         cfg.simple2complex,
         cfg.ejecta_thickness_order,
         cfg.dtype,
     )
-    return ej_thick
+    # TODO: ballistic sed depth, kinetic energy, etc
+    return age_grid, ej_thick_grid
 
 
 def get_gc_dist_grid(df, grdx, grdy):
@@ -361,6 +382,64 @@ def get_gc_dist_grid(df, grdx, grdy):
     return grd_dist
 
 
+# Solar wind module
+def get_solar_wind_ice(time_arr, cfg):
+    """
+    Return solar wind ice over time if mode is mpies.
+    """
+    sw_ice_mass = np.zeros(len(time_arr))
+    if cfg.mode == 'mpies':
+        sw_ice_mass = solar_wind_ice(time_arr, cfg)
+    return sw_ice_mass
+
+
+def solar_wind_ice(time_arr, cfg):
+    """
+    Return ice mass [kg] deposited by solar wind at each time in time_arr.
+
+    Does not account for movement of ice, only deposition given a supply rate.
+
+    cfg.solar_wind_mode determines the H2O supply rate:
+      "Benna": H2O supply rate 2 g/s (Benna et al. 2019; Arnold, 1979; 
+        Housley et al. 1973)
+      "Lucey-Hurley": H2 supply rate 30 g/s, converted to water assuming 1 part 
+        per thousand (Lucey et al. 2020)
+
+    Parameters
+    ----------
+    time_arr (array): Model time array.
+    cfg (Cfg): Config object, must contain:
+      - solar_wind_mode (str): Solar wind mode to use.
+      - faint_young_sun (bool): Scale by luminosity of faint young sun
+      - cfg.bahcall_csv_in (str): Path to solar wind data.
+
+    Return
+    ------
+    sw_ice_mass (1D array): Ice mass deposited by solar wind at each time
+    """
+    if cfg.solar_wind_mode == "Benna":
+        volatile_supply_rate = 2 * 1e-3 # [g/s -> kg/s] 
+    elif cfg.solar_wind_mode == "Lucey-Hurley":
+        volatile_supply_rate = 30 * 1e-3 * 1e-3 # [g/s] * [kg/g] * [1/1000] [ppt] = [kg/s] |  Lucey et al. 2020, Hurley et al. 2017
+    else:
+        msg = 'Solar wind mode not recognized. Accepts "Benna", "Lucey-Hurley"'
+        raise ValueError(msg)
+    supply_rate_ts = volatile_supply_rate * 60 * 60 * 24 * 365 * ts # convert to kg per timestep
+
+    
+    sw_ice_mass = np.ones(len(time_arr)) * supply_rate_ts
+    if cfg.faint_young_sun: 
+        # Import historical solar luminosity (Bahcall et al. 2001)
+        df_lum = read_solar_luminosity(cfg.bahcall_csv_in)
+
+        # Interpolate to time_arr, scale by solar luminosity at each time
+        lum_time = np.interp(-time_arr, -df_lum['age'], df_lum['luminosity'])
+        sw_ice_mass *= lum_time
+        
+    return sw_ice_mass
+    
+
+
 # Volcanic ice delivery module
 def get_volcanic_ice(time_arr, cfg):
     """
@@ -373,14 +452,8 @@ def get_volcanic_ice(time_arr, cfg):
     @author: tylerpaladino
     """
     if cfg.volc_mode == "NK":
-        out = volcanic_ice_nk(
-            time_arr, 
-            cfg.timestep, 
-            cfg.volc_csv_in, 
-            cfg.volc_cols, 
-            cfg.volc_species,
-            cfg.dtype,
-        )
+        out = volcanic_ice_nk(time_arr, cfg)
+
     elif cfg.volc_mode == "Head":
         out = volcanic_ice_head(
             time_arr,
@@ -399,25 +472,25 @@ def get_volcanic_ice(time_arr, cfg):
     return out
     
 
-def volcanic_ice_nk(time_arr, timestep, volc_csv, columns, species, dtype=None):
+def volcanic_ice_nk(time_arr, cfg):
     """
     Return ice [units] deposited in each timestep with Needham & Kring (2017).
     """
-    df_volc = read_volcanic_species(volc_csv, columns, species)
+    df_volc = read_volcanic_species(cfg.nk_csv_in, cfg.nk_cols, cfg.nk_species)
     df_volc = df_volc[df_volc.time < time_arr.max()]
 
-    rounded_time = np.rint(time_arr / timestep)
-    rounded_ages = np.rint(df_volc.time.values / timestep)
+    rounded_time = np.rint(time_arr / cfg.timestep)
+    rounded_ages = np.rint(df_volc.time.values / cfg.timestep)
     time_idx = np.searchsorted(-rounded_time, -rounded_ages)
 
     # Compute volc ice mass at each time in time_arr
     #   Divide each ice mass by time between timesteps in df_volc
-    volc_ice_mass = np.zeros(len(time_arr), dtype=dtype)
+    volc_ice_mass = np.zeros(len(time_arr), dtype=cfg.dtype)
     for i, t_idx in enumerate(time_idx[:-1]):
         # Sum here in case more than one crater formed at t_idx
         next_idx = time_idx[i+1]
-        time_diff = (time_arr[t_idx] - time_arr[next_idx]) / timestep
-        volc_ice_mass[t_idx:next_idx+1] = df_volc.iloc[i][species] / time_diff
+        time_diff = (time_arr[t_idx] - time_arr[next_idx]) / cfg.timestep
+        volc_ice_mass[t_idx:next_idx+1] = df_volc.iloc[i][cfg.nk_species] / time_diff
     
     return volc_ice_mass
 
