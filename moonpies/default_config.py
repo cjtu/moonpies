@@ -15,7 +15,7 @@ class Cfg:
     write: bool = True  # Write model outputs to a file (if False, just return)
     write_npy: bool = False  # Write large arrays to files - slow! (age_grid, ej_thickness)
     plot: bool = False  # Save strat column plots - slow!
-    mode: str = 'moonpies'  # 'moonpies' or 'cannon'
+    mode: str = 'moonpies'  # 'moonpies' or 'Cannon'
     run_date: str = pd.Timestamp.now().strftime("%y%m%d")
     run_time: str = pd.Timestamp.now().strftime("%H:%M:%S")
 
@@ -29,7 +29,7 @@ class Cfg:
     crater_csv_in: str = 'crater_list.csv'
     basin_csv_in: str = 'basin_list.csv'
     nk_csv_in: str = 'needham_kring_2017_s3.csv'
-    costello_csv_in: str = 'costello_etal_2018_t1.csv'
+    Costello_csv_in: str = 'Costello_etal_2018_t1.csv'
     bahcall_csv_in: str = 'bahcall_etal_2001_t2.csv'
 
     # Files to export to outpath (attr name must end with "_out")
@@ -50,8 +50,8 @@ class Cfg:
 
     # Cannon model params
     coldtrap_max_temp: float = 120  # [k]
-    coldtrap_area: float = 1.3e4 * 1e6  # [m^2], (williams 2019, via text s1, cannon 2020)
-    ice_hop_efficiency: float = 0.054  # 5.4% gets to the s. pole (text s1, cannon 2020)
+    coldtrap_area: float = 1.3e4 * 1e6  # [m^2], (Williams 2019, via text s1, Cannon 2020)
+    ice_hop_efficiency: float = 0.054  # 5.4% gets to the s. pole (text s1, Cannon 2020)
     coldtrap_craters: tuple = (
         'Haworth', 'Shoemaker', 'Faustini', 'Shackleton', 'Slater', 'Amundsen', 
         'Cabeus', 'Sverdrup', 'de Gerlache', "Idel'son L", 'Wiechert J')
@@ -60,24 +60,24 @@ class Cfg:
     rad_moon: float = 1737.4e3  # [m], lunar radius
     grav_moon: float = 1.62  # [m s^-2], gravitational acceleration
     sa_moon: float = 4 * np.pi * rad_moon ** 2  # [m^2]
-    simple2complex: float = 18e3  # [m], lunar s2c transition diameter (melosh 1989)
-    complex2peakring: float = 1.4e5  # [m], lunar c2pr transition diameter (melosh 1989)
+    simple2complex: float = 18e3  # [m], lunar s2c transition diameter (Melosh 1989)
+    complex2peakring: float = 1.4e5  # [m], lunar c2pr transition diameter (Melosh 1989)
 
     # Impact cratering constants
-    impactor_density: float = 1300  # [kg m^-3], cannon 2020
-    impactor_density_avg: float = 2780  # [kg m^-3] costello 2018
-    # impactor_density = 3000  # [kg m^-3] ordinary chondrite (melosh scaling)
-    # impact_speed = 17e3  # [m/s] average impact speed (melosh scaling)
-    impact_speed: float = 20e3  # [m/s] mean impact speed (cannon 2020)
-    impact_sd: float = 6e3  # [m/s] standard deviation impact speed (cannon 2020)
+    impactor_density: float = 1300  # [kg m^-3], Cannon 2020
+    impactor_density_avg: float = 2780  # [kg m^-3] Costello 2018
+    # impactor_density = 3000  # [kg m^-3] ordinary chondrite (Melosh scaling)
+    # impact_speed = 17e3  # [m/s] average impact speed (Melosh scaling)
+    impact_speed: float = 20e3  # [m/s] mean impact speed (Cannon 2020)
+    impact_sd: float = 6e3  # [m/s] standard deviation impact speed (Cannon 2020)
     escape_vel: float = 2.38e3  # [m/s] lunar escape velocity
     impact_angle: float = 45  # [deg]  average impact velocity
-    target_density: float = 1500  # [kg m^-3] (cannon 2020)
-    bulk_density: float = 2700  # [kg m^-3] simple to complex (melosh)
-    ice_erosion_rate: float = 0.1 * (timestep / 10e6)  # [m], 10 cm / 10 ma (cannon 2020)
+    target_density: float = 1500  # [kg m^-3] (Cannon 2020)
+    bulk_density: float = 2700  # [kg m^-3] simple to complex (Melosh)
+    ice_erosion_rate: float = 0.1 * (timestep / 10e6)  # [m], 10 cm / 10 ma (Cannon 2020)
 
     # Ice constants
-    ice_density: float = 934  # [kg m^-3], (cannon 2020)
+    ice_density: float = 934  # [kg m^-3], (Cannon 2020)
     ice_melt_temp: float = 273  # [k]
     ice_latent_heat: float = 334e3  # [j/kg] latent heat of h2o ice
 
@@ -98,17 +98,17 @@ class Cfg:
     regolith_cp: float = 4.3e3  # heat capacity [j kg^-1 k^-1] (0.7-4.2 kj/kg/k for h2o)
 
     # Impact gardening module (Costello 2020)
-    overturn_prob_pct: str = '99%'  # poisson probability ['10%', '50%', '99%'] (table 1, costello 2018)
+    overturn_prob_pct: str = '99%'  # poisson probability ['10%', '50%', '99%'] (table 1, Costello 2018)
     n_overturn: int = 100  # number of overturns needed for ice loss
     crater_proximity: float = 0.41  # crater proximity scaling parameter
     depth_overturn: float = 0.04  # fractional depth overturned
-    target_kr: float = 0.6  # costello 2018, for lunar regolith
-    target_k1: float = 0.132  # costello 2018, for lunar regolith
-    target_k2: float = 0.26  # costello 2018, for lunar regolith
-    target_mu: float = 0.41  # costello 2018, for lunar regolith
-    target_yield_str: float = 0.01*1e6  # [pa] costello 2018, for lunar regolith
+    target_kr: float = 0.6  # Costello 2018, for lunar regolith
+    target_k1: float = 0.132  # Costello 2018, for lunar regolith
+    target_k2: float = 0.26  # Costello 2018, for lunar regolith
+    target_mu: float = 0.41  # Costello 2018, for lunar regolith
+    target_yield_str: float = 0.01*1e6  # [pa] Costello 2018, for lunar regolith
     overturn_regimes: tuple = ('primary', 'secondary', 'micrometeorite')
-    overturn_ab: dict = field(default_factory = lambda: ({  # overturn sfd params aD^b (table 2, costello et al. 2018)
+    overturn_ab: dict = field(default_factory = lambda: ({  # overturn sfd params aD^b (table 2, Costello et al. 2018)
         'primary': (6.3e-11, -2.7), 
         'secondary': (7.25e-9, -4), # 1e5 secondaries, -4 slope from mcewen 2005
         'micrometeorite': (1.53e-12, -2.64)
@@ -123,7 +123,7 @@ class Cfg:
     mm_mass_rate: float = 1e6  # [kg/yr], lunar micrometeorite flux (grun et al. 2011)
     ctype_frac: float = 0.36  # 36% of impactors are c-type (jedicke et al., 2018)
     ctype_hydrated: float = 2/3  # 2/3 of c-types are hydrated (rivkin, 2012)
-    hydrated_wt_pct: float = 0.1  # impactors wt% H2O (cannon 2020)
+    hydrated_wt_pct: float = 0.1  # impactors wt% H2O (Cannon 2020)
     impactor_mass_retained: float = 0.165  # asteroid mass retained in impact (ong et al., 2011)
     # impact_regimes: tuple = ('a', 'b', 'c', 'd', 'e')  # TODO: how to handle modes + regimes?
     impact_regimes: tuple = ('a', 'b', 'c', 'd', 'e', 'f')
