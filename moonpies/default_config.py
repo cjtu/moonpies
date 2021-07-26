@@ -15,7 +15,7 @@ class Cfg:
     write: bool = True  # Write model outputs to a file (if False, just return)
     write_npy: bool = False  # Write large arrays to files - slow! (age_grid, ej_thickness)
     plot: bool = False  # Save strat column plots - slow!
-    mode: str = 'moonpies'  # 'moonpies' or 'Cannon'
+    mode: str = 'cannon'  # 'moonpies' or 'cannon'
     run_date: str = pd.Timestamp.now().strftime("%y%m%d")
     run_time: str = pd.Timestamp.now().strftime("%H:%M:%S")
 
@@ -29,7 +29,7 @@ class Cfg:
     crater_csv_in: str = 'crater_list.csv'
     basin_csv_in: str = 'basin_list.csv'
     nk_csv_in: str = 'needham_kring_2017_s3.csv'
-    Costello_csv_in: str = 'Costello_etal_2018_t1.csv'
+    costello_csv_in: str = 'costello_etal_2018_t1.csv'
     bahcall_csv_in: str = 'bahcall_etal_2001_t2.csv'
 
     # Files to export to outpath (attr name must end with "_out")
@@ -150,7 +150,7 @@ class Cfg:
     volc_late: tuple = (3e9, 2e9)  # [yrs]
     volc_early_pct: float = 0.75  # 75%
     volc_late_pct: float = 0.25  # 25%
-    volc_total_vol: float = 1e7 * 1e9  # [m^3] basalt
+    volc_total_vol: float = 1e7 * 1e9 * 1e-9 # [m^3 yr^-1] basalt
     volc_h2o_ppm: float = 10  # [ppm]
     volc_magma_density: float = 3000  # [kg/m^3]
 

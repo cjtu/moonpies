@@ -457,6 +457,7 @@ def get_volcanic_ice(time_arr, cfg):
     elif cfg.volc_mode == "Head":
         out = volcanic_ice_head(
             time_arr,
+            cfg.timestep,
             cfg.volc_early,
             cfg.volc_late,
             cfg.volc_early_pct,
@@ -464,7 +465,6 @@ def get_volcanic_ice(time_arr, cfg):
             cfg.volc_total_vol,
             cfg.volc_h2o_ppm,
             cfg.volc_magma_density,
-            cfg.ice_density,
             cfg.dtype,
         )
     else:
@@ -497,29 +497,29 @@ def volcanic_ice_nk(time_arr, cfg):
 
 def volcanic_ice_head(
     time_arr,
+    timestep,
     early=(4e9, 3e9),
     late=(3e9, 2e9),
     early_pct=0.75,
     late_pct=0.25,
-    magma_vol=1e16,
+    magma_vol=1e7,
     outgassed_h2o=10,
     magma_rho=3000,
-    ice_rho=934,
     dtype=None,
 ):
     """
     Return ice [units] deposited in each timestep with Head et al. (2020).
     """
     # Global estimated H2O deposition
-    tot_H2O_dep = magma_rho * magma_vol * ice_rho * outgassed_h2o / 1e6
+    tot_H2O_dep = magma_rho * magma_vol * outgassed_h2o / 1e6
 
     # Define periods of volcanism
-    early_idx = (early[0] < time_arr) & (time_arr < early[1])
-    late_idx = (late[0] < time_arr) & (time_arr < late[1])
+    early_idx = (time_arr <= early[0]) & (time_arr > early[1])
+    late_idx = (time_arr <= late[0]) & (time_arr > late[1])
 
     # H2O deposited per timestep
-    H2O_early = tot_H2O_dep * early_pct / len(early_idx)
-    H2O_late = tot_H2O_dep * late_pct / len(late_idx)
+    H2O_early = tot_H2O_dep * early_pct * timestep
+    H2O_late = tot_H2O_dep * late_pct * timestep
 
     out = np.zeros(len(time_arr), dtype=dtype)
     out[early_idx] = H2O_early
@@ -625,26 +625,31 @@ def erode_ice_cannon(ice_col, ej_col, t, overturn_depth=0.1, ej_shield=0.4):
     """
     # BUG in Cannon ds01: erosion base not updated for adjacent ejecta layers
     # Erosion base is most recent time when ejecta column was > ejecta_shield
-    erosion_base = np.argmax(ej_col[: t + 1] > ej_shield)
+    erosion_base = -1
+    erosion_base_idx = np.where(ej_col[: t + 1] > ej_shield)[0]
+    if len(erosion_base_idx) > 0:
+        erosion_base = erosion_base_idx[-1]
 
     # Garden from top of ice column until ice_to_erode amount is removed
     # BUG in Cannon ds01: doesn't account for partial shielding by small ej
     layer = t
     while overturn_depth > 0 and layer >= 0:
-        if t < erosion_base:
+        if t > erosion_base:
+            ice_in_layer = ice_col[layer]
+            # print(layer, ice_col.shape, ej_col.shape, ice_in_layer.shape)
+            if ice_in_layer >= overturn_depth:
+                ice_col[layer] -= overturn_depth
+            else:
+                ice_col[layer] = 0
+            overturn_depth -= ice_in_layer
+            layer -= 1
+        else:
             # if layer < erosion_base:
             # End loop if we reach erosion base
             # BUG in Cannon ds01: t should be layer
             # - loop doesn't end if we reach erosion base while eroding
             # - loop only ends here if we started at erosion_base
             break
-        ice_in_layer = ice_col[layer]
-        if ice_in_layer >= overturn_depth:
-            ice_col[layer] -= overturn_depth
-        else:
-            ice_col[layer] = 0
-        overturn_depth -= ice_in_layer
-        layer -= 1
     return ice_col
 
 
