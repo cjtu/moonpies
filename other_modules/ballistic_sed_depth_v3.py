@@ -1,3 +1,4 @@
+from moonpies.moonpies import n_cumulative
 import numpy as np
 
 G_MOON = 1.624  # [m s^-2]
@@ -6,9 +7,10 @@ R_MOON = 1737 * 1e3  # [m]
 # R_MOON = 6356 * 1e3
 M = 1.96 # ± 0.15
 C = 0.022
-E = 0.00 # ± 0.09
+E = 0.00 # ± 0.09 
 N = -0.14 # ± 0.03
 
+# Secondaries: aR^-b, where a = CD^m and -b = nln(D) - E
 
 def m2km(x):
     '''
@@ -38,7 +40,13 @@ def sec_final_diam(d, range, M=1.96, C=0.022, E=0.00, N=-0.14):
     b = E - (np.log(d) * N)
     return ((a * (range**-b)) * 1000)
 
-def sec_final_diam_copern(range, d, d_copern=93000, M = 1.96, a = 1.2e2, b = -.68):
+def secondary_diam(diam, dist, cfg):
+    # Small complex craters (Kepler-like, Singer et al...)
+    if diam < 60:
+        return n_cumulative(diam, cfg.kepler_a, cfg.kepler_b)
+
+
+def sec_final_diam_copern(dist, diam, d_copern=93000, M = 1.96, a = 1.2e2, b = -.68):
     '''
     Returns secondary crater diameter given diameter of the primary crater and range away from the crater center. This function uses the Copernius derived equation from Singer et al. 2020
     The equation is then scaled by the primary crater. 
@@ -46,41 +54,42 @@ def sec_final_diam_copern(range, d, d_copern=93000, M = 1.96, a = 1.2e2, b = -.6
     Parameters
     ----------
     d (num or array): diameter of primary crater [m]
-    range (num or array): distance away from primary crater center[m]
+    dist (num or array): distance away from primary crater center[m]
 
     Returns
     -------
     sec_final_diam [m]: final secondary crater diameter
     
     '''
-    range = m2km(range)
-    d = m2km(d)
-    d_copern = m2km(d_copern)
-    return ((a * (d/d_copern)**M * (range**(b*(-np.log(d/d_copern))))) * 1000)
+    dist_km = m2km(dist)
+    d_ratio = m2km(diam) / m2km(d_copern)
+    secondary_diam = a * d_ratio**M * dist_km**(-b * np.log(d_ratio))
+    secondary_diam_m = secondary_diam * 1000  # [m]
+    return secondary_diam_m
 
-def final2transient(diams, g=G_MOON, ds2c=18e3, gamma=1.25, eta=0.13):
-    """
-    Return transient crater diameters from final crater diams (Melosh 1989).
+# def final2transient(diams, g=G_MOON, ds2c=18e3, gamma=1.25, eta=0.13):
+#     """
+#     Return transient crater diameters from final crater diams (Melosh 1989).
 
-    Parameters
-    ----------
-    diams (num or array): final crater diameters [m]
-    g (num): gravitational force of the target body [m s^-2]
-    rho_t (num): target density (kg m^-3)
+#     Parameters
+#     ----------
+#     diams (num or array): final crater diameters [m]
+#     g (num): gravitational force of the target body [m s^-2]
+#     rho_t (num): target density (kg m^-3)
 
-    Returns
-    -------
-    transient_diams (num or array): transient crater diameters [m]
-    """
-    # Scale simple to complex diameter (only if target is not Moon)
-    # ds2c = simple2complex_diam(g)  # [m]
-    diams = np.atleast_1d(diams)
-    # diams < simple2complex == diam/gamma, else use complex scaling
-    t_diams = np.copy(diams) / gamma
-    t_diams[diams > ds2c] = (1 / gamma) * (
-        diams[diams > ds2c] * ds2c ** eta
-    ) ** (1 / (1 + eta))
-    return t_diams
+#     Returns
+#     -------
+#     transient_diams (num or array): transient crater diameters [m]
+#     """
+#     # Scale simple to complex diameter (only if target is not Moon)
+#     # ds2c = simple2complex_diam(g)  # [m]
+#     diams = np.atleast_1d(diams)
+#     # diams < simple2complex == diam/gamma, else use complex scaling
+#     t_diams = np.copy(diams) / gamma
+#     t_diams[diams > ds2c] = (1 / gamma) * (
+#         diams[diams > ds2c] * ds2c ** eta
+#     ) ** (1 / (1 + eta))
+#     return t_diams
 
 def ballistic_spherical(theta, d, g=G_MOON, rp=R_MOON):
     """

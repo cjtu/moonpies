@@ -32,7 +32,7 @@ def main(cfg=default_config.Cfg()):
     df_basins = randomize_crater_ages(df_basins, cfg.timestep, cfg.dtype, rng)
 
     # Pre compute time-independent quantities
-    ej_cols, ej_names = get_ejecta_thickness_matrix(df, time_arr, cfg)  # [m]
+    ej_cols, ej_names, bal_sed_time  = get_ejecta_thickness_matrix(df, time_arr, cfg)  # [m]
     solar_wind_ice_time = get_solar_wind_ice(time_arr, cfg) # [kg] len: NT
     volcanic_ice_time = get_volcanic_ice(time_arr, cfg)  # [kg] len: NT
     basin_ice_time = get_basin_ice(df_basins, time_arr, cfg)
@@ -58,6 +58,7 @@ def main(cfg=default_config.Cfg()):
             strat_cols,
             polar_ice_thickness,
             overturn_depth_time[t],
+            bal_sed_time[t,:],
             cfg.mode,
         )
 
@@ -161,6 +162,16 @@ def read_volcanic_species(nk_csv, nk_cols, species):
     df["time"] = df["time"] * 1e9  # [Gyr -> yr]
     df[species] = df[species] * 1e-3  # [g -> kg]
     df = df.sort_values('time', ascending=False).reset_index(drop=True)
+    return df
+
+
+def read_teqs(teq_csv):
+    """
+    Read equilibrium temperatures for ballistic sed module.
+
+    See thermal_eq.py.
+    """
+    df = pd.read_csv(teq_csv, header=None, index_col=False)
     return df
 
 
@@ -320,6 +331,13 @@ def get_ejecta_thickness_matrix(df, time_arr, cfg):
         cfg.dtype,
     )
 
+    # Get Ballistic sedimentation depth for each ejecta event to each coldtrap
+    # Uses equilibrium temperatures and depths for each event
+    bsed_depths = np.zeros((len(cfg.coldtrap_craters), len(df)), dtype=cfg.dtype)
+    if cfg.mode == 'moonpies':
+        teq_df = read_teqs(cfg.teq_csv_in)
+        bsed_depths = ballistic_sed_depth(teq_df, cfg)
+
     # Find indices of crater ages in time_arr
     # Note: searchsorted must be ascending, so do -time_arr (-4.3, 0) Ga
     # BUG: python rounding issue - (only shoemaker index off by one)
@@ -329,12 +347,14 @@ def get_ejecta_thickness_matrix(df, time_arr, cfg):
 
     # Fill ejecta thickness vs time matrix (rows: time, cols:craters)
     ej_thick_time = np.zeros((len(time_arr), len(time_idx)), dtype=cfg.dtype)
+    bal_sed_time = np.zeros((len(time_arr), len(time_idx)), dtype=cfg.dtype)
     ej_names = [""] * len(time_arr)
     for i, t_idx in enumerate(time_idx):
         # Sum here in case more than one crater formed at t_idx
         ej_thick_time[t_idx, :] += ej_thick[i, :]
         ej_names[t_idx] += df.cname.iloc[i] + ","
-    return ej_thick_time, ej_names
+        bal_sed_time[t_idx, :] = np.max(bal_sed_time[t_idx, :], bsed_depths[:,i])
+    return ej_thick_time, ej_names, bal_sed_time
 
 
 def get_grid_outputs(df, grdx, grdy, cfg):
@@ -536,15 +556,102 @@ def get_ballistic_sed(df):
     return 0
 
 
-def ballistic_sed_depth(teqs):
-    """Return ballistic sedimentation depth."""
-    depth = np.empty((np.shape(teqs)))
-    for i in range(0, 24):
-        for j in range(0, 24):
-            if teqs.iloc[i, j] >= 120.0:
+def check_teq_ballistic_sed(teq_df, cfg):
+    """
+    Return ballistic sedimentation depth.
+
+    """
+
+    depth = np.empty(np.shape(teq_df))
+    for i, row in teq_df.iterrows():
+        for j in range(len(row)):
+            if teq_df.iloc[i, j] >= cfg.coldtrap_max_temp:
+                # Get depth from d_eff secondary
                 depth[i, j] = 1.0
             else:
+                # If teq < coldtrap temp, no ice loss due to ballistic sed
                 depth[i, j] = 0.0
+    return depth
+
+
+def ballistic_sed_depth(diam, dist, theta, cfg):
+    """
+    Returns the excavation depth of secondary craters being ballistically scoured 
+
+    Parameters
+    ----------
+    diam (num or array): diameter of primary crater [m]
+    dist (num or array): distance away from primary crater center [m]
+    theta (num): angle of impact [radians]
+
+    """
+    # Calcualte final secondary crater diameter:
+    d_sec_final = secondary_diam(diam, dist, cfg)
+
+    # Convert final diameter to transient
+    transient_radius = final2transient(d_sec_final) / 2
+    speed = ballistic_speed(np.deg2rad(theta), dist)
+    depth = secondary_excavation_depth(transient_radius, speed)
+    return depth
+
+
+def secondary_diam(diam, dist, cfg):
+    """
+    Return 99th percentile secondary crater diameter at dist for crater of size diam.
+    
+    Uses scaling laws of Singer et al. (2020):
+
+    Small Complex craters modeled as Kepler-like
+    Large Complex craters modeled as Copernicus-like
+    Basins modeled as Orientale-like
+
+    """
+    pass
+
+
+def ballistic_speed(dist, theta=45, grav=1.62, rp=1737.4e3):
+    """
+    Return ballistic speed at given dist, angle of impact theta gravity and 
+    radius of planet.
+
+    Assumes planet is spherical (Vickery, 1986).
+    
+    Parameters
+    ----------
+    dist (num or array): ballistic range [m]
+    theta (num): angle of impact [degrees]
+    g (num): gravitational force of the target body [m s^-2]
+    rp (num): radius of the target body [m]
+    
+    Returns
+    -------
+    speed (num or array): ballistic speed [m s^-1]   
+    """
+    theta = np.deg2rad(theta)
+    tan_phi = np.tan(dist / (2 * rp))
+    numer = grav * rp * tan_phi
+    denom = (np.sin(theta) * np.cos(theta)) + (np.cos(theta)**2 * tan_phi)
+    return np.sqrt(numer / denom)
+
+
+def secondary_excavation_depth(t_rad, speed, d_eff=False):
+    """
+    Returns the excavation depth of a secondary crater (Xie et al. 2020).
+
+    Parameters
+    ----------
+    t_rad (num): secondary transient apparent crater radius [m]
+    speed (num): incoming impactor velocity [m/s]
+
+    Returns
+    -------
+    excav_depth (num): Excavation depth of a secondary crater [m]
+    """
+    # TODO: get rid of hard coded values
+    depth = .0134 * t_rad * (speed**0.38)
+    if d_eff:
+        # TODO: if we're always passing in r=0, d_eff is always C_ex==3.5 * depth
+        depth = 3.5 * depth
     return depth
 
 
@@ -573,14 +680,18 @@ def init_strat_columns(df, ej_cols, cfg):
     return strat_columns
 
 
-def update_ice_cols(t, strat_cols, new_ice_thickness, overturn_depth, mode):
+def update_ice_cols(t, strat_cols, new_ice_thickness, overturn_depth, bal_sed_depths, mode):
     """
     Update ice_cols new ice added and ice eroded.
     """
     # Update all tracked ice columns
+    i = 0
+    print(bal_sed_depths[0])
     for cname, (ice_col, ej_col) in strat_cols.items():
-        # TODO: Ballistic sed first, if crater was formed
-        # ice_col = ballistic_sed_ice_column()
+        # Ballistic sed gardens first, if crater was formed
+        ice_col[: t + 1] = garden_ice_column(
+            ice_col[: t + 1], ej_col[: t + 1], bal_sed_depths[i]
+        )
 
         # Ice gained by column
         ice_col[t] = new_ice_thickness
@@ -590,6 +701,7 @@ def update_ice_cols(t, strat_cols, new_ice_thickness, overturn_depth, mode):
 
         # Save ice column back to strat_cols dict
         strat_cols[cname][0] = ice_col
+        i += 1
     return strat_cols
 
 

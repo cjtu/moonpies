@@ -15,7 +15,7 @@ class Cfg:
     write: bool = True  # Write model outputs to a file (if False, just return)
     write_npy: bool = False  # Write large arrays to files - slow! (age_grid, ej_thickness)
     plot: bool = False  # Save strat column plots - slow!
-    mode: str = 'cannon'  # 'moonpies' or 'cannon'
+    mode: str = 'moonpies'  # 'moonpies' or 'cannon'
     run_date: str = pd.Timestamp.now().strftime("%y%m%d")
     run_time: str = pd.Timestamp.now().strftime("%H:%M:%S")
 
@@ -31,6 +31,7 @@ class Cfg:
     nk_csv_in: str = 'needham_kring_2017_s3.csv'
     costello_csv_in: str = 'costello_etal_2018_t1.csv'
     bahcall_csv_in: str = 'bahcall_etal_2001_t2.csv'
+    teq_csv_in: str = 'teq_table.csv'
 
     # Files to export to outpath (attr name must end with "_out")
     ejcols_csv_out: str = f'ej_columns_{run_name}.csv'
@@ -49,8 +50,14 @@ class Cfg:
     timestep: int = 10e6  # [yr]
 
     # Cannon model params
-    coldtrap_max_temp: float = 120  # [k]
-    coldtrap_area: float = 1.3e4 * 1e6  # [m^2], (Williams 2019, via text s1, Cannon 2020)
+    coldtrap_species = 'H2O'  # ['H2O', 'CO2']
+    if coldtrap_species == 'H2O':
+        coldtrap_max_temp: float = 110  # [K] (citation)
+        coldtrap_area: float = 1.3e4 * 1e6  # [m^2], (Williams 2019, via text s1, Cannon 2020)
+    elif coldtrap_species == 'CO2':
+        coldtrap_max_temp: float = 90  # [K] (citation)
+        coldtrap_area: float = 0 # TODO: what is the CO2 cold trapping area? [m^2], (Williams 2019, via text s1, Cannon 2020)
+        # TODO: is ice_hop dependent on species?
     ice_hop_efficiency: float = 0.054  # 5.4% gets to the s. pole (text s1, Cannon 2020)
     coldtrap_craters: tuple = (
         'Haworth', 'Shoemaker', 'Faustini', 'Shackleton', 'Slater', 'Amundsen', 
@@ -96,6 +103,9 @@ class Cfg:
     heat_frac: float = 0.5  # fraction of ballistic ke used in heating vs mixing
     heat_retained: float = 0.1  # fraction of heat retained (10-30%; stopar 2018)
     regolith_cp: float = 4.3e3  # heat capacity [j kg^-1 k^-1] (0.7-4.2 kj/kg/k for h2o)
+
+    # Secondar crater scaling
+    kepler_a: float = 123123  # 123123 +/- 0.02, Singer et al. (2020)
 
     # Impact gardening module (Costello 2020)
     overturn_prob_pct: str = '99%'  # poisson probability ['10%', '50%', '99%'] (table 1, Costello 2018)

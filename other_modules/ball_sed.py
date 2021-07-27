@@ -274,7 +274,7 @@ def get_ejecta_thickness_matrix(
     for i, t_idx in enumerate(time_idx):
         # Sum here in case more than one crater formed at t_idx
         ej_thick_time[t_idx, :] += ej_thick[:, i]
-        bal_sed_time[t_idx, :] += depths[:,i] 
+        bal_sed_time[t_idx, :] = np.max(bal_sed_time[t_idx, :], depths[:,i])
     return ej_thick_time, bal_sed_time
 
 
@@ -454,13 +454,13 @@ def update_ice_cols(t, strat_cols, new_ice_thickness, overturn_depth, bal_sed_ti
     """
     Update ice_cols new ice added and ice eroded.
     """
-    i=0
     # Update all tracked ice columns
+    i = 0
     for cname, (ice_col, ej_col) in strat_cols.items():
         # TODO: Ballistic sed first, if crater was formed
         #ice_col = ballistic_sed_ice_column()
         # Ice gained by column
-        ice_col[: t] = ballistic_remove_ice(
+        ice_col[: t] = garden_ice_column(
             ice_col[: t + 1], ej_col[: t + 1], bal_sed_time[i]
         )
         ice_col[t] = new_ice_thickness
@@ -470,7 +470,7 @@ def update_ice_cols(t, strat_cols, new_ice_thickness, overturn_depth, bal_sed_ti
 
         # Save ice column back to strat_cols dict
         strat_cols[cname][0] = ice_col
-        i+=1
+        i += 1
     return strat_cols
 
 

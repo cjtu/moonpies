@@ -603,11 +603,12 @@ def test_cannon_ds01(mock_total_impact_ice, mock_ej_thick_matrix):
 
     # Mock ejecta thickness the same way as in Cannon
     ej_thickness = np.zeros((ntime, ncraters))
+    bsed_time = np.zeros((ntime, len(cfg.coldtrap_craters)))
     ej_thickness[5] = 0.05
     ej_thickness[10] = 0.3
     ej_thickness[15] = 0.4
     ej_thickness[20] = 0.5
-    mock_ej_thick_matrix.return_value = (ej_thickness, ['']*ntime)
+    mock_ej_thick_matrix.return_value = (ej_thickness, ['']*ntime, bsed_time)
 
     # Mock total_impact_ice same way as in Cannon (1e15 at every timestep)
     mock_total_impact_ice.return_value = 1e15
