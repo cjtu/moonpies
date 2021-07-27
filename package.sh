@@ -22,6 +22,7 @@ cp data/basin_list.csv moonpies_package/data
 cp data/needham_kring_2017_s3.csv moonpies_package/data
 cp data/costello_etal_2018_t1.csv moonpies_package/data
 cp data/bahcall_etal_2001_t2.csv moonpies_package/data
+cp data/bal_sed_cold_traps.csv moonpies_package/data
 
 zip -r $pkg moonpies_package
 

@@ -31,7 +31,7 @@ class Cfg:
     nk_csv_in: str = 'needham_kring_2017_s3.csv'
     costello_csv_in: str = 'costello_etal_2018_t1.csv'
     bahcall_csv_in: str = 'bahcall_etal_2001_t2.csv'
-    teq_csv_in: str = 'teq_table.csv'
+    teq_csv_in: str = 'ballistic_sed_teq.csv'
 
     # Files to export to outpath (attr name must end with "_out")
     ejcols_csv_out: str = f'ej_columns_{run_name}.csv'
@@ -82,11 +82,20 @@ class Cfg:
     target_density: float = 1500  # [kg m^-3] (Cannon 2020)
     bulk_density: float = 2700  # [kg m^-3] simple to complex (Melosh)
     ice_erosion_rate: float = 0.1 * (timestep / 10e6)  # [m], 10 cm / 10 ma (Cannon 2020)
+    ejecta_threshold: float = 4  # [crater radii] Radius of influence of a crater (ejecta deposit and ballistic sed)
 
     # Ice constants
     ice_density: float = 934  # [kg m^-3], (Cannon 2020)
     ice_melt_temp: float = 273  # [k]
     ice_latent_heat: float = 334e3  # [j/kg] latent heat of h2o ice
+
+    # Comet constants
+    halley_to_oort_ratio: float = 3  # N_Halley / N_Oort
+    halley_mean_speed: float = 23
+    halley_sd_speed: float = 5
+    oort_mean_speed: float = 55
+    oort_sd_speed: float = 5
+    
 
     # Ejecta shielding module
     crater_cols: tuple = ('cname', 'lat', 'lon', 'diam', 'age', 'age_low',
@@ -99,13 +108,39 @@ class Cfg:
     basin_impact_speed = 20e3  # [km/s]
 
     # Ballistic sedimentation module
+    ballistic_teq: bool = True  # Do ballistic sed only if teq > coldtrap_max_temp
     ice_frac: float = 0.056  # fraction ice vs regolith (5.6% colaprete 2010)
     heat_frac: float = 0.5  # fraction of ballistic ke used in heating vs mixing
     heat_retained: float = 0.1  # fraction of heat retained (10-30%; stopar 2018)
     regolith_cp: float = 4.3e3  # heat capacity [j kg^-1 k^-1] (0.7-4.2 kj/kg/k for h2o)
 
-    # Secondar crater scaling
-    kepler_a: float = 123123  # 123123 +/- 0.02, Singer et al. (2020)
+    # Secondary crater scaling (Singer et al, 2020)
+    ## Regression values from Table 2 (Singer et al., 2020)
+    kepler_regime: tuple = (18e3, 60e3)  # [m] diameter
+    kepler_diam: float = 31e3  # [m]
+    kepler_a: float = 5.1 # Kepler a value for secondary scaling law from Singer et al. 2020 [km]
+    kepler_b: float = -0.33 # ± 0.10 Kepler b value for secondary scaling law from Singer et al. 2020 [km]
+    copernicus_regime: tuple = (60e3, 300e3)  # [m] diameter
+    copernicus_diam: float = 93e3  # [m]
+    copernicus_a: float = 1.2e2 # Copernicus a value for secondary scaling law from Singer et al. 2020 [km]
+    copernicus_b: float = -0.68 # ± 0.05 Copernicus b value for secondary scaling law from Singer et al. 2020 [km]
+    orientale_regime: tuple = (300e3, 2500e3)  # [m] diameter
+    orientale_diam: float = 660e3  # [m]
+    orientale_a: float = 1.8e4 # Orientale a value for secondary scaling law from Singer et al. 2020 [km]
+    orientale_b: float = -0.95 # ± 0.17 Orientale b value for secondary scaling law from Singer et al. 2020 [km]
+    
+    # Compute depths of secondary craters using singer or xie
+    secondary_depth_mode = 'singer'  # ['singer', 'xie']
+    ## Singer mode - compute secondary crater diam from observed secondaries
+    depth_to_diam_sec = 0.125  # Value used in Singer et al. (2020)
+
+    ## Xie mode - compute secondary crater depth from ballistic velocity
+    ## Equations from (Xie et al., 2020)
+    xie_depth_rad: float = 0.0134  # pre-exponential term, Equation 16  
+    xie_vel_exp: float = 0.38  # velocity exponential, Equation 14
+    xie_depth_eff: float = False  # Convert to effective depth Equation 17
+    xie_sec_radial_frac: float = 0 # Equation 17
+    xie_c_ex: float = 3.5  # Equation 17
 
     # Impact gardening module (Costello 2020)
     overturn_prob_pct: str = '99%'  # poisson probability ['10%', '50%', '99%'] (table 1, Costello 2018)
