@@ -40,14 +40,11 @@ def main(cfg=default_config.Cfg()):
     overturn_depth_time = total_overturn_depth(time_arr, cfg)  # [m] len: NT
 
     # Init strat columns dict based for all cfg.coldtrap_craters
-    strat_cols = init_strat_columns(df, ej_cols, cfg)
+    strat_cols = init_strat_columns(df, ej_cols, ej_names, cfg)
 
     # Main loop over time
     vprint("Starting main loop...")
     for t, time in enumerate(time_arr):
-        ballistic_sed(t, cfg)
-        add_new_ice(t, cfg)
-        impact_garden(t, cfg)
 
         # Global ice mass gained [kg] by all processes
         sw_ice = solar_wind_ice_time[t]
@@ -68,9 +65,10 @@ def main(cfg=default_config.Cfg()):
 
     # Format and save outputs
     outputs = format_save_outputs(
-        strat_cols, time_arr, df, grdx, grdy, ej_names, cfg, vprint
+        strat_cols, time_arr, df, grdx, grdy, cfg, vprint
     )
     return outputs
+
 
 
 # Import data
@@ -175,7 +173,7 @@ def read_teqs(teq_csv):
 
     See thermal_eq.py.
     """
-    df = pd.read_csv(teq_csv, header=0, index_col=0)
+    df = pd.read_csv(teq_csv, header=0, index_col=0).T
     return df
 
 
@@ -198,37 +196,95 @@ def read_solar_luminosity(bahcall_csv):
 
 
 # Format and export model results
-def format_csv_outputs(strat_cols, time_arr, ej_names):
+def make_strat_col(time, ice, ice_sources, ejecta, ejecta_sources, thresh=1e-6):
+    """Return stratigraphy column of ice and ejecta"""
+    # Label rows by ice (no ejecta) or ejecta_source
+    label = np.empty(len(time), dtype=object)
+    label[ice > thresh] = 'Ice'
+    label[ejecta > thresh] = ejecta_sources[ejecta > thresh]
+    
+
+    
+    # Make stratigraphy DataFrame
+    data = [time, ice, ejecta]
+    cols = ['time', 'ice', 'ejecta']
+    for k, v in ice_sources.items():
+        data.append(v)
+        cols.append(k)
+    sdf = pd.DataFrame(np.array(data).T, columns=cols, dtype=time.dtype)
+
+    # Remove empty rows from strat col
+    sdf['label'] = label
+    sdf = sdf.dropna(subset=['label'])
+
+    # Combine adjacent rows with same label into layers
+    isadj = (sdf.label != sdf.label.shift()).cumsum()
+    agg = {k: 'sum' for k in ('ice', 'ejecta', *ice_sources.keys())}
+    agg = {
+        'label': 'last',
+        'time': 'last',
+        **agg,
+    }
+    strat = sdf.groupby(['label', isadj], as_index=False, sort=False).agg(agg)
+
+    # Add depth and ice vs ejecta % of each layer
+    # Add depth (reverse cumulative sum)
+    strat['depth'] = np.cumsum(strat.ice[::-1] + strat.ejecta[::-1])[::-1]
+
+    # Add ice / ejecta percentage of each layer
+    strat['icepct'] = np.round(100 * strat.ice / (strat.ice + strat.ejecta), 4)
+    return strat
+
+
+def format_csv_outputs(strat_cols, time_arr):
     """
     Return all formatted model outputs and write to outpath, if specified.
     """
-    ej_names = [n.rstrip(",") for n in ej_names]
-    ej_dict = {"time": time_arr, "ejecta_source": ej_names}
+    ej_source = strat_cols.pop('ejecta_source')
+    ice_sources = {}  # TODO: implement
+    ej_dict = {
+        "time": time_arr, 
+        "ejecta_source": ej_source,
+    }
     ice_dict = {"time": time_arr}
+    strat_dfs = {}
+    
     for cname, (ice_col, ej_col) in strat_cols.items():
         ej_dict[cname] = ej_col
         ice_dict[cname] = ice_col
+        strat_dfs[cname] = make_strat_col(time_arr, ice_col, ice_sources, ej_col, ej_source)
 
     # Convert to DataFrames
     ej_cols_df = pd.DataFrame(ej_dict)
     ice_cols_df = pd.DataFrame(ice_dict)
-    return ej_cols_df, ice_cols_df
+    
+    return ej_cols_df, ice_cols_df, strat_dfs
+
 
 
 def format_save_outputs(
-    strat_cols, time_arr, df, grdx, grdy, ej_names, cfg, vprint=print
+    strat_cols, time_arr, df, grdx, grdy, cfg, vprint=print
 ):
     """
     Format dataframes and save outputs based on write / write_npy in cfg.
     """
     vprint("Formatting outputs")
-    df_outputs = format_csv_outputs(strat_cols, time_arr, ej_names)
+    ej_df, ice_df, strat_dfs = format_csv_outputs(strat_cols, time_arr)
     if cfg.write:
-        # Save config file and dataframe outputs
+        # Save config file
         vprint(f"Saving outputs to {cfg.outpath}")
         save_outputs([cfg], [cfg.config_py_out])
-        fnames = (cfg.ejcols_csv_out, cfg.icecols_csv_out)
-        save_outputs(df_outputs, fnames)
+
+        # Save coldtrap strat column dataframes
+        fnames = []
+        dfs = []
+        for coldtrap, strat in strat_dfs.items():
+            fnames.append(f'{os.path.join(cfg.outpath, coldtrap)}_strat.csv')
+            dfs.append(strat)
+        save_outputs(dfs, fnames)
+
+        # Save raw ice and ejecta column vs time dataframes
+        save_outputs([ej_df, ice_df], [cfg.ejcols_csv_out, cfg.icecols_csv_out])
         print(f"Outputs saved to {cfg.outpath}")
 
     if cfg.write_npy:
@@ -239,7 +295,7 @@ def format_save_outputs(
         npy_fnames = (cfg.agegrd_npy_out, cfg.ejmatrix_npy_out)
         vprint(f"Saving npy outputs to {cfg.outpath}")
         save_outputs(grd_outputs, npy_fnames)
-    return df_outputs
+    return ej_df, ice_df, strat_dfs
 
 
 def save_outputs(outputs, fnames):
@@ -260,10 +316,10 @@ def save_outputs(outputs, fnames):
 
 
 # Pre-compute grid functions
-def get_crater_distances(df, threshold=4, symmetric=True, dtype=None):
+def get_crater_distances(df, coldtraps, ej_threshold=4, dtype=None):
     """
     Return 2D array of great circle dist between all craters in df. Distance
-    from a crater to itself (or repeat distances if symmetric=False) are nan.
+    from a crater to itself or outside ejecta_threshold set to nan.
 
     Mandatory
         - df : Read in crater_list.csv as a DataFrame with defined columns
@@ -273,31 +329,31 @@ def get_crater_distances(df, threshold=4, symmetric=True, dtype=None):
     Parameters
     ----------
     df (DataFrame): Crater DataFrame, e.g., read by read_crater_list
-    TODO: Symmetric :
 
     Returns
     -------
     dist (2D array): great circle distances between all craters in df
     """
-    dist = np.zeros((len(df), len(df)), dtype=dtype)
-    for i in range(len(df)):
-        for j in range(i):
-            d = gc_dist(
-                *df.iloc[i][["lon", "lat"]], *df.iloc[j][["lon", "lat"]]
-            )
-            dist[i, j] = d
-            # Cut off distances > threshold crater radii
-            if dist[i, j] > threshold * df.iloc[i].rad:
+    dist = np.zeros((len(df), len(coldtraps)), dtype=dtype)
+    for i, row in df.iterrows():  # TODO: src crater (center lat, lon) all craters in df
+        src_lon = row.lon
+        src_lat = row.lat
+        for j, cname in enumerate(coldtraps):  # TODO: dst PSR (psr_lat, psr_lon) from coldtraps in df
+            if row.cname == cname:
                 dist[i, j] = np.nan
-    if symmetric:
-        dist += dist.T
+                continue
+            dst_lon = df[df.cname == cname].psr_lon.values
+            dst_lat = df[df.cname == cname].psr_lat.values
+            d = gc_dist(src_lon, src_lat, dst_lon, dst_lat)
+            dist[i, j] = d
+            # Cut off distances > ej_threshold crater radii
+            if ej_threshold and dist[i, j] > (ej_threshold * df.iloc[i].rad):
+                dist[i, j] = np.nan
     dist[dist <= 0] = np.nan
     return dist
 
 
-def get_ejecta_thickness(
-    distance, radius, ds2c=18e3, order=-3, dtype=None, mode="cannon"
-):
+def get_ejecta_thickness(distance, radius, ds2c=18e3, order=-3, dtype=None):
     """
     Return ejecta thickness as a function of distance given crater radius.
 
@@ -321,7 +377,7 @@ def get_ejecta_thickness_matrix(df, time_arr, cfg):
     ejecta_thick_time (3D array): Ejecta thicknesses (shape: NY, NX, NT)
     """
     # Symmetric matrix of distance from all craters to each other (NC, NC)
-    ej_distances = get_crater_distances(df, cfg.ejecta_threshold, dtype=cfg.dtype)
+    ej_distances = get_crater_distances(df, cfg.coldtrap_craters, cfg.ejecta_threshold, dtype=cfg.dtype)
 
     # Ejecta thickness deposited in each crater from each crater (NC, NC)
     rad = df.rad.values[:, np.newaxis]  # need to pass column vector of radii
@@ -330,8 +386,7 @@ def get_ejecta_thickness_matrix(df, time_arr, cfg):
         rad,
         cfg.simple2complex,
         cfg.ejecta_thickness_order,
-        cfg.dtype,
-        cfg.mode
+        cfg.dtype
     )
 
     # Get Ballistic sedimentation depth for each ejecta event to each coldtrap
@@ -341,7 +396,7 @@ def get_ejecta_thickness_matrix(df, time_arr, cfg):
         bsed_depths = get_ballistic_sed_depth(ej_distances, rad*2, cfg)
         if cfg.ballistic_teq:
             teq_df = read_teqs(cfg.teq_csv_in)
-            bsed_depths = check_teq_ballistic_sed(bsed_depths, df.cname.values, teq_df, cfg)
+            bsed_depths = check_teq_ballistic_sed(bsed_depths, teq_df, cfg.coldtrap_craters, cfg.coldtrap_max_temp)
 
     # Find indices of crater ages in time_arr
     # Note: searchsorted must be ascending, so do -time_arr (-4.3, 0) Ga
@@ -351,17 +406,18 @@ def get_ejecta_thickness_matrix(df, time_arr, cfg):
     time_idx = np.searchsorted(-rounded_time, -rounded_ages)
 
     # Fill ejecta thickness vs time matrix (rows: time, cols:craters)
-    ej_thick_time = np.zeros((len(time_arr), len(time_idx)), dtype=cfg.dtype)
-    bal_sed_time = np.zeros((len(time_arr), len(time_idx)), dtype=cfg.dtype)
+    ej_thick_time = np.zeros((len(time_arr), len(cfg.coldtrap_craters)), dtype=cfg.dtype)
+    bal_sed_time = np.zeros((len(time_arr), len(cfg.coldtrap_craters)), dtype=cfg.dtype)
     ej_names = [""] * len(time_arr)
 
     for i, t_idx in enumerate(time_idx):
         # Sum here in case more than one crater formed at t_idx
-        ej_thick_time[t_idx, :] += ej_thick[i, :]
+        ej_thick_time[t_idx] += ej_thick[i]
         ej_names[t_idx] += df.cname.iloc[i] + ","
         # TODO: if we do sublimation / ice_loss_efficiency, need to model 
         # bsed as independent events not max depth of ice lost
-        bal_sed_time[t_idx, :] = np.max((bal_sed_time[t_idx, :], bsed_depths[i, :]), axis=0)
+        bal_sed_time[t_idx] = np.max((bal_sed_time[t_idx], bsed_depths[i]), axis=0)
+    ej_names = np.array([n.rstrip(",") for n in ej_names])
     return ej_thick_time, ej_names, bal_sed_time
 
 
@@ -576,17 +632,17 @@ def get_ballistic_sed_depth(dist, diam, cfg):
     return depth
 
 
-def check_teq_ballistic_sed(ballistic_depths, cnames, teq_df, cfg):
+def check_teq_ballistic_sed(ballistic_depths, teq_df, cnames, max_temp):
     """
     Check whether ballistic sedimentation has energy to melt local ice.
 
     See thermal_eq.py for more details.
     """
     # Find all craters with final eq temp high enough to melt local ice
-    for i, cname_dst in enumerate(cnames):
-        for j, cname_src in enumerate(cnames):
+    for i, cname_src in enumerate(teq_df.index):
+        for j, cname_dst in enumerate(cnames):
             try:
-                if teq_df.loc[cname_dst, cname_src] < cfg.coldtrap_max_temp:
+                if teq_df.loc[cname_src, cname_dst] < max_temp:
                     ballistic_depths[i, j] = 0
             except KeyError:
                 ballistic_depths[i, j] = 0
@@ -748,7 +804,7 @@ def secondary_excavation_depth_eff(depth, t_rad, cfg):
     
 
 # Strat column functions
-def init_strat_columns(df, ej_cols, cfg):
+def init_strat_columns(df, ej_cols, ej_names, cfg):
     """
     Return dict of ice and ejecta columns for cold trap craters in df.
 
@@ -762,13 +818,15 @@ def init_strat_columns(df, ej_cols, cfg):
     """
     # Get cold trap crater names and their locations in df
     ctraps = cfg.coldtrap_craters
-    idxs = np.where(df.cname.isin(ctraps).values)[0]
+    # idxs = np.where(df.cname.isin(ctraps).values)[0]
 
     # Build strat columns with cname: ccol, ice_col, ej_col
-    ice_cols = np.zeros(ej_cols.shape, cfg.dtype)  # shape: NT, Ncoldtrap
-    strat_columns = {
-        c: [ice_cols[:, i], ej_cols[:, i]] for c, i in zip(ctraps, idxs)
+    ice_cols = np.zeros_like(ej_cols)  # shape: NT, Ncoldtrap
+    strat_columns = {coldtrap: [
+        ice_cols[:, i], 
+        ej_cols[:, i]] for i, coldtrap in enumerate(ctraps)
     }
+    strat_columns['ejecta_source'] = ej_names
     return strat_columns
 
 
@@ -778,7 +836,10 @@ def update_ice_cols(t, strat_cols, new_ice_thickness, overturn_depth, bal_sed_de
     """
     # Update all tracked ice columns
     i = 0
-    for cname, (ice_col, ej_col) in strat_cols.items():
+    for coldtrap, cols in strat_cols.items():
+        if coldtrap == 'ejecta_source':
+            continue
+        ice_col, ej_col = cols
         # Ballistic sed gardens first, if crater was formed
         ice_col[: t + 1] = garden_ice_column(
             ice_col[: t + 1], ej_col[: t + 1], bal_sed_depths[i]
@@ -791,7 +852,7 @@ def update_ice_cols(t, strat_cols, new_ice_thickness, overturn_depth, bal_sed_de
         ice_col = remove_ice_overturn(ice_col, ej_col, t, overturn_depth, mode)
 
         # Save ice column back to strat_cols dict
-        strat_cols[cname][0] = ice_col
+        strat_cols[coldtrap][0] = ice_col
         i += 1
     return strat_cols
 
@@ -1116,14 +1177,7 @@ def total_impact_ice(time, basin_ice_t, cfg, rng=None):
             total_ice += basin_ice_t
     return total_ice
 
-def add_ice_thickness(t):
-    ice_mm_t = get_ice_micrometeorites()
-    ice_mm_t = get_ice_volc()
-    ice_mm_t = get_ice_small_craters()
-    ice_mm_t = get_ice_micrometeorites()
-    global_ice = ice_mm_t[t] + 
 
-@lru_cache
 def ice_micrometeorites(
     time=0,
     timestep=10e6,
@@ -1364,6 +1418,9 @@ def get_impactors_brown(mindiam, maxdiam, timestep, c0=1.568, d0=2.7):
     n_impactors_moon = n_impactors_earth_yr * timestep / 22.5
     return n_impactors_moon
 
+
+def get_crater_pop_continuous():
+    """Return """
 
 def get_crater_pop(
     time,

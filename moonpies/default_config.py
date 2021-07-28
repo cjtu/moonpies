@@ -11,6 +11,7 @@ class Cfg:
     """Class to configure a mixing model run."""
     seed: int = 0  # Note: Should not be set here - set when model is run only
     run_name: str = 'mpies'  # Name of the current run
+    pole: str = 's'  # ['s', 'n'] TODO: only s is currently supported
     verbose: bool = False  # Print info as model is running
     write: bool = True  # Write model outputs to a file (if False, just return)
     write_npy: bool = False  # Write large arrays to files - slow! (age_grid, ej_thickness)
@@ -56,7 +57,7 @@ class Cfg:
         coldtrap_area: float = 1.3e4 * 1e6  # [m^2], (Williams 2019, via text s1, Cannon 2020)
     elif coldtrap_species == 'CO2':
         coldtrap_max_temp: float = 90  # [K] (citation)
-        coldtrap_area: float = 0 # TODO: what is the CO2 cold trapping area? [m^2], (Williams 2019, via text s1, Cannon 2020)
+        coldtrap_area: float = 204e3 * 1e6  # [m^2], (Schorghofer and Williams, 2021)
         # TODO: is ice_hop dependent on species?
     ice_hop_efficiency: float = 0.054  # 5.4% gets to the s. pole (text s1, Cannon 2020)
     coldtrap_craters: tuple = (
@@ -98,8 +99,9 @@ class Cfg:
     
 
     # Ejecta shielding module
-    crater_cols: tuple = ('cname', 'lat', 'lon', 'diam', 'age', 'age_low',
-                          'age_upp', 'psr_area', 'age_ref', 'prio', 'notes')
+    crater_cols: tuple = ('cname', 'lat', 'lon', 'psr_lat', 'psr_lon', 'diam', 
+                          'age', 'age_low','age_upp', 'psr_area', 'age_ref', 
+                          'prio', 'notes')
     ejecta_thickness_order: float = -3  # min: -3.5, avg: -3, max: -2.5 (kring 1995)
 
     # Basin ice module
@@ -189,6 +191,7 @@ class Cfg:
 
     # Volcanic ice module
     volc_mode: str = 'Head'  # ['Head', 'NK']
+    volc_efficiency: float = 0.26  # Npole: 3-13%, Spole: 6-26% (Wilcowski et al. 2021)
 
     # volc_mode == 'Head': Head et al. (2020)
     volc_early: tuple = (4e9, 3e9)  # [yrs]
@@ -200,7 +203,6 @@ class Cfg:
     volc_magma_density: float = 3000  # [kg/m^3]
 
     # volc_mode == 'NK': Needham & Kring (2017)
-    volc_pole_pct: float = 0.1  # 10%
     nk_species: str = 'min_h2o'  # volcanic species, must be in volc_cols
     nk_cols: tuple = (
         'time', 'tot_vol', 'sphere_mass', 'min_co', 'max_co', 'min_h2o', 
@@ -281,7 +283,10 @@ class Cfg:
 # Config helper functions
 def _get_random_seed(cfg):
     """Return random_seed in (1, 99999) if not set in cfg."""
-    seed = cfg.seed
+    try:
+        seed = int(cfg.seed)
+    except (TypeError, ValueError):
+        seed = 0
     if not seed:
         seed = np.random.randint(1, 99999)
     return seed

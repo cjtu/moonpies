@@ -15,8 +15,9 @@ hatches = [ '-\\', '||', '\\|', '//','--','++', 'x','O','.','/','\\','|',
             '-','+', 'O|','O.','\\\\','xx','OO','..','**','*', '|*','x*','*-']
 
 # Make ice% colormap (first color is gray, last is blue)
-colors = np.array([(60, 60, 60), (173, 216, 230)]) / 255
-ICE_CM = mpl.colors.LinearSegmentedColormap.from_list("Custom", colors, N=100)
+# colors = np.array([(60, 60, 60), (173, 216, 230)]) / 255
+# ICE_CM = mpl.colors.LinearSegmentedColormap.from_list("Custom", colors, N=100)
+ICE_CM = mpl.colors.viridis
 
 def get_lith_key(strat_df, cmap=ICE_CM):
     strat_df = strat_df.drop_duplicates('label')

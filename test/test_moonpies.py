@@ -608,7 +608,7 @@ def test_cannon_ds01(mock_total_impact_ice, mock_ej_thick_matrix):
     ej_thickness[10] = 0.3
     ej_thickness[15] = 0.4
     ej_thickness[20] = 0.5
-    mock_ej_thick_matrix.return_value = (ej_thickness, ['']*ntime, bsed_time)
+    mock_ej_thick_matrix.return_value = (ej_thickness, np.array(['']*ntime), bsed_time)
 
     # Mock total_impact_ice same way as in Cannon (1e15 at every timestep)
     mock_total_impact_ice.return_value = 1e15
