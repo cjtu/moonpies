@@ -40,7 +40,7 @@ def main(cfg=default_config.Cfg()):
     overturn_depth_time = total_overturn_depth(time_arr, cfg)  # [m] len: NT
 
     # Init strat columns dict based for all cfg.coldtrap_craters
-    strat_cols = init_strat_columns(df, ej_cols, ej_names, cfg)
+    strat_cols = init_strat_columns(ej_cols, ej_names, cfg)
 
     # Main loop over time
     vprint("Starting main loop...")
@@ -203,8 +203,6 @@ def make_strat_col(time, ice, ice_sources, ejecta, ejecta_sources, thresh=1e-6):
     label[ice > thresh] = 'Ice'
     label[ejecta > thresh] = ejecta_sources[ejecta > thresh]
     
-
-    
     # Make stratigraphy DataFrame
     data = [time, ice, ejecta]
     cols = ['time', 'ice', 'ejecta']
@@ -240,26 +238,34 @@ def format_csv_outputs(strat_cols, time_arr):
     """
     Return all formatted model outputs and write to outpath, if specified.
     """
-    ej_source = strat_cols.pop('ejecta_source')
     ice_sources = {}  # TODO: implement
-    ej_dict = {
-        "time": time_arr, 
-        "ejecta_source": ej_source,
-    }
+    ej_dict = {"time": time_arr}
     ice_dict = {"time": time_arr}
     strat_dfs = {}
-    
-    for cname, (ice_col, ej_col) in strat_cols.items():
+    ej_source_all = []
+    for cname, (ice_col, ej_col, ej_sources) in strat_cols.items():
         ej_dict[cname] = ej_col
         ice_dict[cname] = ice_col
-        strat_dfs[cname] = make_strat_col(time_arr, ice_col, ice_sources, ej_col, ej_source)
-
+        strat_dfs[cname] = make_strat_col(time_arr, ice_col, ice_sources, ej_col, ej_sources)
+        ej_source_all.append(ej_sources)
+    
     # Convert to DataFrames
     ej_cols_df = pd.DataFrame(ej_dict)
+    ejecta_labels = get_all_labels(np.stack(ej_source_all, axis=1))
+    ej_cols_df.insert(1, 'ej_sources', ejecta_labels)
     ice_cols_df = pd.DataFrame(ice_dict)
     
     return ej_cols_df, ice_cols_df, strat_dfs
 
+
+def get_all_labels(label_array):
+    """Return all unique labels from label_array."""
+    all_labels = []
+    for label_col in label_array:
+        all_labels_str = ','.join([s for s in label_col])
+        unique_labels = set(all_labels_str.split(','))
+        all_labels.append(','.join(unique_labels).strip(','))
+    return all_labels
 
 
 def format_save_outputs(
@@ -363,6 +369,8 @@ def get_ejecta_thickness(distance, radius, ds2c=18e3, order=-3, dtype=None):
     exp = np.ones(radius.shape, dtype=dtype)
     exp[radius * 2 > ds2c] = exp_complex
     thickness = 0.14 * radius ** exp * (distance / radius) ** order
+    
+    
     thickness[np.isnan(thickness)] = 0
     return thickness
 
@@ -408,17 +416,19 @@ def get_ejecta_thickness_matrix(df, time_arr, cfg):
     # Fill ejecta thickness vs time matrix (rows: time, cols:craters)
     ej_thick_time = np.zeros((len(time_arr), len(cfg.coldtrap_craters)), dtype=cfg.dtype)
     bal_sed_time = np.zeros((len(time_arr), len(cfg.coldtrap_craters)), dtype=cfg.dtype)
-    ej_names = [""] * len(time_arr)
+    ej_sources = np.full(ej_thick_time.shape, '', dtype=object)
 
     for i, t_idx in enumerate(time_idx):
         # Sum here in case more than one crater formed at t_idx
         ej_thick_time[t_idx] += ej_thick[i]
-        ej_names[t_idx] += df.cname.iloc[i] + ","
+        ejnonzero = ej_thick[i] > 1e-6
+        ej_sources[t_idx, ejnonzero] += df.cname.iloc[i] + ','
         # TODO: if we do sublimation / ice_loss_efficiency, need to model 
         # bsed as independent events not max depth of ice lost
         bal_sed_time[t_idx] = np.max((bal_sed_time[t_idx], bsed_depths[i]), axis=0)
-    ej_names = np.array([n.rstrip(",") for n in ej_names])
-    return ej_thick_time, ej_names, bal_sed_time
+    ej_sources = ej_sources.astype(str)
+    ej_sources = np.char.rstrip(ej_sources, ',')
+    return ej_thick_time, ej_sources, bal_sed_time
 
 
 def get_grid_outputs(df, grdx, grdy, cfg):
@@ -804,7 +814,7 @@ def secondary_excavation_depth_eff(depth, t_rad, cfg):
     
 
 # Strat column functions
-def init_strat_columns(df, ej_cols, ej_names, cfg):
+def init_strat_columns(ej_cols, ej_sources, cfg):
     """
     Return dict of ice and ejecta columns for cold trap craters in df.
 
@@ -818,15 +828,14 @@ def init_strat_columns(df, ej_cols, ej_names, cfg):
     """
     # Get cold trap crater names and their locations in df
     ctraps = cfg.coldtrap_craters
-    # idxs = np.where(df.cname.isin(ctraps).values)[0]
 
     # Build strat columns with cname: ccol, ice_col, ej_col
     ice_cols = np.zeros_like(ej_cols)  # shape: NT, Ncoldtrap
     strat_columns = {coldtrap: [
         ice_cols[:, i], 
-        ej_cols[:, i]] for i, coldtrap in enumerate(ctraps)
+        ej_cols[:, i],
+        ej_sources[:, i]] for i, coldtrap in enumerate(ctraps)
     }
-    strat_columns['ejecta_source'] = ej_names
     return strat_columns
 
 
@@ -836,10 +845,7 @@ def update_ice_cols(t, strat_cols, new_ice_thickness, overturn_depth, bal_sed_de
     """
     # Update all tracked ice columns
     i = 0
-    for coldtrap, cols in strat_cols.items():
-        if coldtrap == 'ejecta_source':
-            continue
-        ice_col, ej_col = cols
+    for coldtrap, (ice_col, ej_col, _) in strat_cols.items():
         # Ballistic sed gardens first, if crater was formed
         ice_col[: t + 1] = garden_ice_column(
             ice_col[: t + 1], ej_col[: t + 1], bal_sed_depths[i]
@@ -1337,7 +1343,7 @@ def randomize_crater_ages(df, timestep, dtype=None, rng=None):
     for i, (age, low, upp) in enumerate(zip(ages, agelow, ageupp)):
         new_ages[i] = round_to_ts(rng.uniform(age - low, age + upp), timestep)
     df["age"] = new_ages
-    df = df.sort_values("age", ascending=False)
+    df = df.sort_values("age", ascending=False).reset_index(drop=True)
     return df
 
 

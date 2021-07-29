@@ -1,15 +1,11 @@
 """Test MoonPIES module."""
-import sys
-from pathlib import Path
-sys.path.insert(0, Path(__file__).parents[1].joinpath('moonpies').as_posix())
-
-import unittest
-from unittest.mock import patch
 import numpy as np
-import default_config
-import moonpies as mp
+from unittest.mock import patch
+from moonpies import default_config
+from moonpies import moonpies as mp
 
 CFG = default_config.Cfg()
+
 
 def test_volcanic_ice_head():
     """Test volcanic_ice_head()."""
@@ -352,7 +348,7 @@ def test_get_ice_thickness_cannon():
 
 # Test Cannon impact gardening
 def cannon2020_ds01_ice_erosion(totalIceS,t,ej_col):
-    """Test values consistent with Cannon ds01 impact gardening module"""
+    """Cannon ds01 impact gardening module"""
     erosionBase = 0
     for time_idx in range(0,t+1): #set erosionBase which could be set on previous timestep
         if ej_col[time_idx]>0.4:
@@ -371,7 +367,6 @@ def cannon2020_ds01_ice_erosion(totalIceS,t,ej_col):
         else:
             break
     return totalIceS
-
 
 def test_erode_ice_cannon_zero_ejecta():
     """Testing for no ejecta deposited"""
@@ -579,8 +574,8 @@ def test_garden_ice_column():
 
 
 # Acceptance test for Cannon ds01
-@patch('moonpies.get_ejecta_thickness_matrix')
-@patch('moonpies.total_impact_ice')
+@patch('moonpies.moonpies.get_ejecta_thickness_matrix')
+@patch('moonpies.moonpies.total_impact_ice')
 def test_cannon_ds01(mock_total_impact_ice, mock_ej_thick_matrix):
     """
     Test Cannon mode produces same ice cols as main Cannon model.
@@ -613,7 +608,7 @@ def test_cannon_ds01(mock_total_impact_ice, mock_ej_thick_matrix):
     ej_thickness[10] = 0.3
     ej_thickness[15] = 0.4
     ej_thickness[20] = 0.5
-    mock_ej_thick_matrix.return_value = (ej_thickness, np.full(ej_thickness.shape, '', dtype=object), bsed_time)
+    mock_ej_thick_matrix.return_value = (ej_thickness, np.array(['']*ntime), bsed_time)
 
     # Mock total_impact_ice same way as in Cannon (1e15 at every timestep)
     mock_total_impact_ice.return_value = 1e15
@@ -661,13 +656,11 @@ def test_cannon_ds01(mock_total_impact_ice, mock_ej_thick_matrix):
 
     # Test final timestep
     np.testing.assert_approx_equal(expected[0], 4.3474, 4)
-
-
-@patch('moonpies.diam2len')    
+    
+@patch('moonpies.moonpies.diam2len')    
 def test_cannon_ds02(mock_diam2len):
-    """
-    Test Cannon mode produces same impact ice as main Cannon model regimes.
-    """
+    '''
+    '''
     cfg = default_config.Cfg()
     cfg.mode = 'cannon'
     rng = mp.get_rng(92855)
@@ -676,7 +669,6 @@ def test_cannon_ds02(mock_diam2len):
     smallice = np.empty(len(time_array))
     regimecice = np.empty(len(time_array))
 
-    # Test regimes a, b, c
     for t in range(0,len(time_array)):
         microice[t] = mp.ice_micrometeorites(time_array[t])
         impactor_diams, impactors = mp.get_impactor_pop(time_array[t], "b", cfg.timestep, cfg.diam_range, cfg.sfd_slopes, cfg.dtype)
@@ -685,41 +677,39 @@ def test_cannon_ds02(mock_diam2len):
         mock_diam2len.return_value = (0.03*crater_diams)
         regimecice[t] = mp.ice_small_craters(crater_diams, craters, "c", cfg)
     
-    # Test regime a: micrometeorite ice
+    crater_diams = np.array([1500., 2000., 5000., 10000., 15000.])
+    impactor_speeds = np.array([22176.53597619, 25760.7263435, 22667.87287329, 18794.59971986, 25669.44174102])
+    mock_diam2len.return_value = np.array([0.060157,0.08340,0.23617,0.51912,0.82291])
+    regimedice = mp.ice_large_craters(crater_diams, impactor_speeds, "d", cfg)
+    
+    crater_diams = np.array([15000., 20000., 50000., 100000., 300000.])
+    impactor_speeds = np.array([22176.53597619, 25760.7263435, 22667.87287329, 18794.59971986, 25669.44174102])
+    mock_diam2len.return_value = np.array([0.8229,1.1411,3.2323,7.1054,24.7516])
+    regimeeice = mp.ice_large_craters(crater_diams, impactor_speeds, "e", cfg)
+        
+    #test micrometeorite ice
     np.testing.assert_approx_equal(microice[0], 4.5897e+14, 4)
     np.testing.assert_approx_equal(microice[1], 8.1301e+13, 4)
     np.testing.assert_approx_equal(microice[2], 2.7024e+12, 4)
     np.testing.assert_approx_equal(microice[3], 1.6508e+11, 4)    
     np.testing.assert_approx_equal(microice[4], 1.6500e+11, 4)
     
-    # Test regime b: small impactor ice
+    #test small impactor ice
     np.testing.assert_approx_equal(smallice[0], 1.2471e+12, 4)
     np.testing.assert_approx_equal(smallice[1], 2.2090e+11, 4)
     np.testing.assert_approx_equal(smallice[2], 7.3425e+09, 4)
     np.testing.assert_approx_equal(smallice[3], 4.4853e+08, 4)
     np.testing.assert_approx_equal(smallice[4], 4.4832e+08, 4)
     
-    # Test regime c: simple craters (continuous) ice
+    #test regime c ice
     np.testing.assert_approx_equal(regimecice[0], 2.1137e+12, 3)
     np.testing.assert_approx_equal(regimecice[1], 3.7442e+11, 3)
     np.testing.assert_approx_equal(regimecice[2], 1.2445e+10, 3)
     np.testing.assert_approx_equal(regimecice[3], 7.6023e+08, 3)
     np.testing.assert_approx_equal(regimecice[4], 7.5988e+08, 3)
-
-    # Test regime d: simple craters (stochastic) ice
-    crater_diams = np.array([1500, 2000, 5000, 10000, 15000.])
-    impactor_speeds = np.array([22176.53597619, 25760.7263435, 22667.87287329, 18794.59971986, 25669.44174102])
-    mock_diam2len.return_value = np.array([0.060157,0.08340,0.23617,0.51912,0.82291])
-    regimedice = mp.ice_large_craters(crater_diams, impactor_speeds, "d", cfg)
-    np.testing.assert_approx_equal(regimedice, 0.7159, 4)    
     
-    # Test regime e: complex craters (stochastic) ice
-    crater_diams = np.array([15000, 20000, 50000, 100000, 300000.])
-    impactor_speeds = np.array([22176.53597619, 25760.7263435, 22667.87287329, 18794.59971986, 25669.44174102])
-    mock_diam2len.return_value = np.array([0.8229,1.1411,3.2323,7.1054,24.7516])
-    regimeeice = mp.ice_large_craters(crater_diams, impactor_speeds, "e", cfg)
-    np.testing.assert_approx_equal(regimeeice, 6.4969e+03, 4)
-
-if __name__ == '__main__':
-    import pytest
-    pytest.main([Path(__file__).as_posix()])
+    #test regime e ice
+    np.testing.assert_approx_equal(regimedice, 0.7159, 3)    
+    
+    #test regime e ice
+    np.testing.assert_approx_equal(regimeeice, 6.4969e+03, 3)
