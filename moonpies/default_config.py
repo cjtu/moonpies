@@ -11,16 +11,64 @@ class Cfg:
     """Class to configure a mixing model run."""
     seed: int = 0  # Note: Should not be set here - set when model is run only
     run_name: str = 'mpies'  # Name of the current run
-    pole: str = 's'  # ['s', 'n'] TODO: only s is currently supported
+    run_date: str = pd.Timestamp.now().strftime("%y%m%d")
+    run_time: str = pd.Timestamp.now().strftime("%H:%M:%S")
+
+    # Model output behavior
     verbose: bool = False  # Print info as model is running
     write: bool = True  # Write model outputs to a file (if False, just return)
     write_npy: bool = False  # Write large arrays to files - slow! (age_grid, ej_thickness)
     plot: bool = False  # Save strat column plots - slow!
+    
+    # Setup Cannon vs MoonPIES config modes
     mode: str = 'moonpies'  # 'moonpies' or 'cannon'
-    run_date: str = pd.Timestamp.now().strftime("%y%m%d")
-    run_time: str = pd.Timestamp.now().strftime("%H:%M:%S")
+    if mode == 'cannon':
+        solar_wind_ice: bool = False
+        impact_ice_basins: bool = False
+        impact_ice_comets: bool = False
+        volc_ballistic: bool = True  # Use ballistic_hop efficiency rather than volc_dep_efficiency
+        ballistic_sed: bool = False
+        impact_gardening_costello: bool = False
+    if mode == 'moonpies':
+        solar_wind_ice: bool = True
+        impact_ice_basins: bool = True
+        impact_ice_comets: bool = True
+        volc_ballistic: bool = False
+        ballistic_sed: bool = True
+        impact_gardening_costello: bool = True
 
-    # Paths set in post_init if not specified here
+    # Desired lunar pole
+    pole: str = 's'  # ['s', 'n'] TODO: only s is currently supported
+    if pole.lower() in ('s', 'south'):
+        ballistic_hop_efficiency: float = 0.054  # Cannon et al. (2020)
+        volc_dep_efficiency: float = 0.26  # 6-26% (Wilcowski et al., 2021)
+        coldtrap_craters: tuple = (
+            'Haworth', 'Shoemaker', 'Faustini', 'Shackleton', 'Slater', 
+            'Amundsen', 'Cabeus', 'Sverdrup', 'de Gerlache', "Idel'son L", 
+            'Wiechert J')
+    elif pole.lower() in ('n', 'north'):
+        ballistic_hop_efficiency: float = 0.027  # Cannon et al. (2020)
+        volc_dep_efficiency: float = 0.13  # 3-13% (Wilcowski et al., 2021)
+        coldtrap_craters: tuple = (
+            'Fibiger', 'Hermite', 'Hermite A', 'Hevesy', 'Lovelace', 'Nansen A', 
+            'Nansen F', 'Rozhdestvenskiy U', 'Rozhdestvenskiy W', 'Sylvester')
+    
+    # Coldtrap species
+    ice_species = 'H2O'  # ['H2O', 'CO2']
+    if ice_species == 'H2O':
+        coldtrap_max_temp: float = 110  # [K] TODO: cite
+    elif ice_species == 'CO2':
+        coldtrap_max_temp: float = 90  # [K] TODO: cite
+    coldtrap_areas: dict = field(default_factory = lambda: ({
+        's': {
+            'H2O': 1.3e4 * 1e6,  # [m^2], (Williams et al., 2019)
+            'CO2': 204e3 * 1e6}, # [m^2], (Schorghofer and Williams, 2021)
+        'n': {
+            'H2O': 5.3e3 * 1e6,  # [m^2], (Williams et al., 2019)
+            'CO2': 0}  # [m^2], TODO: compute
+    }))
+
+    # Paths set in post_init if not specified in custom config
     modelpath: str = ''  # path to mixing.py
     datapath: str = ''  # path to import data
     outpath: str = ''  # path to save outputs
@@ -49,20 +97,6 @@ class Cfg:
     timestart: int = 4.25e9  # [yr]
     timeend: int = 0  # [yr]
     timestep: int = 10e6  # [yr]
-
-    # Cannon model params
-    coldtrap_species = 'H2O'  # ['H2O', 'CO2']
-    if coldtrap_species == 'H2O':
-        coldtrap_max_temp: float = 110  # [K] (citation)
-        coldtrap_area: float = 1.3e4 * 1e6  # [m^2], (Williams 2019, via text s1, Cannon 2020)
-    elif coldtrap_species == 'CO2':
-        coldtrap_max_temp: float = 90  # [K] (citation)
-        coldtrap_area: float = 204e3 * 1e6  # [m^2], (Schorghofer and Williams, 2021)
-        # TODO: is ice_hop dependent on species?
-    ice_hop_efficiency: float = 0.054  # 5.4% gets to the s. pole (text s1, Cannon 2020)
-    coldtrap_craters: tuple = (
-        'Haworth', 'Shoemaker', 'Faustini', 'Shackleton', 'Slater', 'Amundsen', 
-        'Cabeus', 'Sverdrup', 'de Gerlache', "Idel'son L", 'Wiechert J')
 
     # Lunar constants
     rad_moon: float = 1737.4e3  # [m], lunar radius
@@ -172,8 +206,6 @@ class Cfg:
     ctype_hydrated: float = 2/3  # 2/3 of c-types are hydrated (rivkin, 2012)
     hydrated_wt_pct: float = 0.1  # impactors wt% H2O (Cannon 2020)
     impactor_mass_retained: float = 0.165  # asteroid mass retained in impact (ong et al., 2011)
-    # impact_regimes: tuple = ('a', 'b', 'c', 'd', 'e')  # TODO: how to handle modes + regimes?
-    impact_regimes: tuple = ('a', 'b', 'c', 'd', 'e', 'f')
     diam_range: dict = field(default_factory = lambda: ({
         # regime: (rad_min, rad_max, step)
         'a': (0, 0.01, None),  # micrometeorites (<1 mm)
@@ -191,25 +223,26 @@ class Cfg:
 
     # Volcanic ice module
     volc_mode: str = 'Head'  # ['Head', 'NK']
-    volc_efficiency: float = 0.26  # Npole: 3-13%, Spole: 6-26% (Wilcowski et al. 2021)
+    if mode == 'cannon':
+        # Volcanic ice migrates ballistically
+        volc_efficiency: float = ice_hop_efficiency
+    else:
+        # Volcanic ice deposited in global transient atmosphere
+        # Spole: 6-26%, Npole: 3-13% (Wilcowski et al. 2021)
+        volc_efficiency: float = 0.26 
 
-    # volc_mode == 'Head': Head et al. (2020)
+    # Head et al. (2020) mode (volc_mode == 'Head')
     volc_early: tuple = (4e9, 3e9)  # [yrs]
     volc_late: tuple = (3e9, 2e9)  # [yrs]
     volc_early_pct: float = 0.75  # 75%
     volc_late_pct: float = 0.25  # 25%
     volc_total_vol: float = 1e7 * 1e9 * 1e-9 # [m^3 yr^-1] basalt
-    volc_h2o_ppm: float = 10  # [ppm]
+    volc_ice_ppm: float = 10  # [ppm] 10 ppm H2O
     volc_magma_density: float = 3000  # [kg/m^3]
 
-    # volc_mode == 'NK': Needham & Kring (2017)
+    # Needham & Kring (2017) mode (volc_mode == 'NK')
     nk_species: str = 'min_h2o'  # volcanic species, must be in volc_cols
     nk_cols: tuple = (
-        'time', 'tot_vol', 'sphere_mass', 'min_co', 'max_co', 'min_h2o', 
-        'max_h2o', 'min_h', 'max_h', 'min_s', 'max_s', 'min_sum', 'max_sum',
-        'min_psurf', 'max_psurf', 'min_atm_loss', 'max_atm_loss'
-    )
-    volc_cols: tuple = (
         'time', 'tot_vol', 'sphere_mass', 'min_co', 'max_co', 'min_h2o', 
         'max_h2o', 'min_h', 'max_h', 'min_s', 'max_s', 'min_sum', 'max_sum',
         'min_psurf', 'max_psurf', 'min_atm_loss', 'max_atm_loss'

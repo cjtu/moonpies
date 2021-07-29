@@ -15,6 +15,7 @@ try:
 except ModuleNotFoundError:
     from moonpies import default_config
 
+CACHE = {}
 
 def main(cfg=default_config.Cfg()):
     """Run mixing model with options in cfg (see default_config.py)."""
@@ -23,20 +24,14 @@ def main(cfg=default_config.Cfg()):
     vprint("Initializing run...")
 
     rng = get_rng(cfg.seed)
-    grdy, grdx = get_grid_arrays(cfg)
     time_arr = get_time_array(cfg)
 
     # Get crater and basin DataFrames (len: Ncraters / Nbasins)
     df = read_crater_list(cfg.crater_csv_in, cfg.crater_cols)
     df = randomize_crater_ages(df, cfg.timestep, cfg.dtype, rng)
-    df_basins = read_basin_list(cfg.basin_csv_in, cfg.basin_cols)
-    df_basins = randomize_crater_ages(df_basins, cfg.timestep, cfg.dtype, rng)
 
     # Pre compute time-independent quantities
     ej_cols, ej_names, bal_sed_time  = get_ejecta_thickness_matrix(df, time_arr, cfg)  # [m]
-    solar_wind_ice_time = get_solar_wind_ice(time_arr, cfg) # [kg] len: NT
-    volcanic_ice_time = get_volcanic_ice(time_arr, cfg)  # [kg] len: NT
-    basin_ice_time = get_basin_ice(df_basins, time_arr, cfg)
     overturn_depth_time = total_overturn_depth(time_arr, cfg)  # [m] len: NT
 
     # Init strat columns dict based for all cfg.coldtrap_craters
@@ -45,30 +40,23 @@ def main(cfg=default_config.Cfg()):
     # Main loop over time
     vprint("Starting main loop...")
     for t, time in enumerate(time_arr):
-
-        # Global ice mass gained [kg] by all processes
-        sw_ice = solar_wind_ice_time[t]
-        volc_ice = volcanic_ice_time[t]
-        impact_ice = total_impact_ice(time, basin_ice_time[t], cfg, rng=rng)
-        global_ice = sw_ice + volc_ice + impact_ice
-
-        # Convert global ice mass [kg] to polar ice thickness [m]
-        polar_ice_thickness = get_ice_thickness(global_ice, cfg)
+        bsed_d = get_ballistic_sed_depth(time_arr, t, cfg)
+        polar_ice = get_polar_ice(time_arr, t, cfg, rng)
+        overturn_d = get_overturn_depth(time_arr, t, cfg)
         strat_cols = update_ice_cols(
             t,
             strat_cols,
-            polar_ice_thickness,
-            overturn_depth_time[t],
-            bal_sed_time[t,:],
-            cfg.mode,
+            polar_ice,
+            overturn_d,
+            bsed_d,  # priginally bal_sed_time[t,:]
+            cfg,
         )
 
     # Format and save outputs
     outputs = format_save_outputs(
-        strat_cols, time_arr, df, grdx, grdy, cfg, vprint
+        strat_cols, time_arr, df, cfg, vprint
     )
     return outputs
-
 
 
 # Import data
@@ -269,7 +257,7 @@ def get_all_labels(label_array):
 
 
 def format_save_outputs(
-    strat_cols, time_arr, df, grdx, grdy, cfg, vprint=print
+    strat_cols, time_arr, df, cfg, vprint=print
 ):
     """
     Format dataframes and save outputs based on write / write_npy in cfg.
@@ -297,6 +285,7 @@ def format_save_outputs(
         # Note: Only compute these on demand (expensive to do every run)
         # Age grid is age of most recent impact (2D array: NX, NY)
         vprint("Computing gridded outputs...")
+        grdy, grdx = get_grid_arrays(cfg)
         grd_outputs = get_grid_outputs(df, grdx, grdy, cfg)
         npy_fnames = (cfg.agegrd_npy_out, cfg.ejmatrix_npy_out)
         vprint(f"Saving npy outputs to {cfg.outpath}")
@@ -366,11 +355,9 @@ def get_ejecta_thickness(distance, radius, ds2c=18e3, order=-3, dtype=None):
     Complex craters McGetchin 1973
     """
     exp_complex = 0.74  # McGetchin 1973, simple craters exp=1
-    exp = np.ones(radius.shape, dtype=dtype)
+    exp = np.ones_like(radius)
     exp[radius * 2 > ds2c] = exp_complex
     thickness = 0.14 * radius ** exp * (distance / radius) ** order
-    
-    
     thickness[np.isnan(thickness)] = 0
     return thickness
 
@@ -399,9 +386,9 @@ def get_ejecta_thickness_matrix(df, time_arr, cfg):
 
     # Get Ballistic sedimentation depth for each ejecta event to each coldtrap
     # Uses equilibrium temperatures and depths for each event
-    bsed_depths = np.zeros(ej_thick.shape, dtype=cfg.dtype)
+    bsed_depths = np.zeros_like(ej_thick)
     if cfg.mode == 'moonpies':
-        bsed_depths = get_ballistic_sed_depth(ej_distances, rad*2, cfg)
+        bsed_depths = get_ballistic_sed_depth(ej_distances, rad*2, cfg)  # TODO: fix get_ballistic_sed-depthh
         if cfg.ballistic_teq:
             teq_df = read_teqs(cfg.teq_csv_in)
             bsed_depths = check_teq_ballistic_sed(bsed_depths, teq_df, cfg.coldtrap_craters, cfg.coldtrap_max_temp)
@@ -423,7 +410,7 @@ def get_ejecta_thickness_matrix(df, time_arr, cfg):
         ej_thick_time[t_idx] += ej_thick[i]
         ejnonzero = ej_thick[i] > 1e-6
         ej_sources[t_idx, ejnonzero] += df.cname.iloc[i] + ','
-        # TODO: if we do sublimation / ice_loss_efficiency, need to model 
+        # TODO: if we do sublimation / ice_loss_effcy, need to model 
         # bsed as independent events not max depth of ice lost
         bal_sed_time[t_idx] = np.max((bal_sed_time[t_idx], bsed_depths[i]), axis=0)
     ej_sources = ej_sources.astype(str)
@@ -448,7 +435,6 @@ def get_grid_outputs(df, grdx, grdy, cfg):
         cfg.simple2complex,
         cfg.ejecta_thickness_order,
         cfg.dtype,
-        cfg.mode
     )
     # TODO: ballistic sed depth, kinetic energy, etc
     return age_grid, ej_thick_grid
@@ -476,21 +462,47 @@ def get_gc_dist_grid(df, grdx, grdy):
         grd_dist[:, :, i] = gc_dist(*df.iloc[i][["lon", "lat"]], lon, lat)
     return grd_dist
 
+# Polar ice deposition
+def get_polar_ice(time_arr, t, cfg, rng=None):
+    """
+    Return total polar ice at timestep t from all sources.
+
+    Parameters
+    ----------
+    time_arr (array): Model time array [yrs].
+    t (int): Index of current timestep in the model.
+    cfg (Cfg): Config object, must contain:
+        ...
+
+    Return
+    ------
+    polar_ice (float): Ice thickness [m] delivered to the pole vs time.
+    """
+    global CACHE
+    if 'polar_ice_time' not in CACHE:
+        CACHE['polar_ice_time'] = np.sum([
+            get_solar_wind_ice(time_arr, cfg),
+            get_volcanic_ice(time_arr, cfg),
+            get_impact_ice(time_arr, cfg, rng)
+            ], axis=1)
+    return CACHE['polar_ice_time'][t]
+
 
 # Solar wind module
 def get_solar_wind_ice(time_arr, cfg):
     """
     Return solar wind ice over time if mode is mpies.
     """
-    sw_ice_mass = np.zeros(len(time_arr))
-    if cfg.mode == 'mpies':
+    sw_ice_mass = np.zeros_like(time_arr)
+    if cfg.solar_wind_ice:
         sw_ice_mass = solar_wind_ice(time_arr, cfg)
-    return sw_ice_mass
+    sw_ice_t = sw_ice_mass * cfg.ballistic_hop_effcy
+    return sw_ice_t
 
 
 def solar_wind_ice(time_arr, cfg):
     """
-    Return ice mass [kg] deposited by solar wind at each time in time_arr.
+    Return ice mass [kg] deposited globally by solar wind vs time in time_arr.
 
     Does not account for movement of ice, only deposition given a supply rate.
 
@@ -532,46 +544,42 @@ def solar_wind_ice(time_arr, cfg):
         # Interpolate to time_arr, scale by solar luminosity at each time
         lum_time = np.interp(-time_arr, -df_lum['age'], df_lum['luminosity'])
         sw_ice_mass *= lum_time
-        
     return sw_ice_mass
     
-
 
 # Volcanic ice delivery module
 def get_volcanic_ice(time_arr, cfg):
     """
-    Return ice mass deposited in cold traps by volcanic outgassing over time.
+    Return ice thickness [m] delivered to pole by volcanic outgassing vs time.
 
-    Values from supplemental spreadsheet S3 (Needham and Kring, 2017)
-    transient atmosphere data. Scale by coldtrap_area and pole_pct % of
-    material that is delievered to to S. pole.
-
-    @author: tylerpaladino
+    Return
+    ------
+    volc_ice_t (arr): Ice thickness [m] delivered at the pole at each time.
     """
     if cfg.volc_mode == "NK":
-        out = volcanic_ice_nk(time_arr, cfg)
-
+        volc_ice_mass = volcanic_ice_nk(time_arr, cfg)
     elif cfg.volc_mode == "Head":
-        out = volcanic_ice_head(
-            time_arr,
-            cfg.timestep,
-            cfg.volc_early,
-            cfg.volc_late,
-            cfg.volc_early_pct,
-            cfg.volc_late_pct,
-            cfg.volc_total_vol,
-            cfg.volc_h2o_ppm,
-            cfg.volc_magma_density,
-            cfg.dtype,
-        )
+        volc_ice_mass = volcanic_ice_head(time_arr, cfg)
     else:
-        raise ValueError(f"Invalid mode {cfg.mode}.")
-    return out
+        raise ValueError(f"Invalid mode {cfg.volc_mode}.")
+
+    if cfg.volc_ballistic:
+        volc_ice_t = ice_thickness(volc_ice_mass * cfg.ballistic_hop_effcy, cfg)
+    else:
+        volc_ice_t = ice_thickness(volc_ice_mass * cfg.volc_dep_effcy, cfg)
+    return volc_ice_t
     
 
 def volcanic_ice_nk(time_arr, cfg):
     """
-    Return ice [units] deposited in each timestep with Needham & Kring (2017).
+    Return global ice [kg] deposited vs time using Needham & Kring (2017).
+
+    Values from supplemental spreadsheet S3 (Needham and Kring, 2017)
+    transient atmosphere data. Scale by % material delievered to the pole.
+
+    Return
+    ------
+    volc_ice_mass (arr): Ice mass [kg] deposited at the pole at each time.
     """
     df_volc = read_volcanic_species(cfg.nk_csv_in, cfg.nk_cols, cfg.nk_species)
     df_volc = df_volc[df_volc.time < time_arr.max()]
@@ -582,50 +590,49 @@ def volcanic_ice_nk(time_arr, cfg):
 
     # Compute volc ice mass at each time in time_arr
     #   Divide each ice mass by time between timesteps in df_volc
-    volc_ice_mass = np.zeros(len(time_arr), dtype=cfg.dtype)
+    volc_ice_mass = np.zeros_like(time_arr)
     for i, t_idx in enumerate(time_idx[:-1]):
         # Sum here in case more than one crater formed at t_idx
         next_idx = time_idx[i+1]
-        time_diff = (time_arr[t_idx] - time_arr[next_idx]) / cfg.timestep
-        volc_ice_mass[t_idx:next_idx+1] = df_volc.iloc[i][cfg.nk_species] / time_diff
-    
+        dt = (time_arr[t_idx] - time_arr[next_idx]) / cfg.timestep
+        volc_ice_mass[t_idx:next_idx+1] = df_volc.iloc[i][cfg.nk_species] / dt
     return volc_ice_mass
 
 
-def volcanic_ice_head(
-    time_arr,
-    timestep,
-    early=(4e9, 3e9),
-    late=(3e9, 2e9),
-    early_pct=0.75,
-    late_pct=0.25,
-    magma_vol=1e7,
-    outgassed_h2o=10,
-    magma_rho=3000,
-    dtype=None,
-):
+def volcanic_ice_head(time_arr, cfg):
     """
-    Return ice [units] deposited in each timestep with Head et al. (2020).
+    Return global ice [kg] deposited vs time using Head et al. (2020).
+
+    Return
+    ------
+    volc_ice_mass (arr): Ice mass [kg] deposited vs time.
     """
-    # Global estimated H2O deposition
-    tot_H2O_dep = magma_rho * magma_vol * outgassed_h2o / 1e6
+    # Global ice deposition (Head et al. 2020)
+    volc_mass = cfg.volc_total_vol * cfg.volc_magma_density
+    ice_total = volc_mass * cfg.volc_ice_ppm * 1e-6  # [ppm yr^-1 -> yr^-1]
 
-    # Define periods of volcanism
-    early_idx = (time_arr <= early[0]) & (time_arr > early[1])
-    late_idx = (time_arr <= late[0]) & (time_arr > late[1])
+    # Ice deposited per epoch
+    ice_early = ice_total * cfg.volc_early_pct * cfg.timestep
+    ice_late = ice_total * cfg.volc_late_pct * cfg.timestep
 
-    # H2O deposited per timestep
-    H2O_early = tot_H2O_dep * early_pct * timestep
-    H2O_late = tot_H2O_dep * late_pct * timestep
-
-    out = np.zeros(len(time_arr), dtype=dtype)
-    out[early_idx] = H2O_early
-    out[late_idx] = H2O_late
-    return out
+    # Set ice at times in each epoch
+    volc_ice_mass = np.zeros_like(time_arr)
+    emax, emin = cfg.volc_early
+    lmax, lmin = cfg.volc_late
+    volc_ice_mass[(time_arr <= emax) & (time_arr > emin)] = ice_early
+    volc_ice_mass[(time_arr <= lmax) & (time_arr > lmin)] = ice_late
+    return volc_ice_mass
 
 
 # Ballistic sedimentation module
-def get_ballistic_sed_depth(dist, diam, cfg):
+def get_ballistic_sed_depth(time_arr, cfg):
+    """Return ballistic sedimentation mixing depths for each crater vs time."""
+    # TODO: finish
+    depth = ballistic_sed_depth(dist, diam, cfg)
+    return depth
+
+
+def ballistic_sed_depth(dist, diam, cfg):
     """
     Return ballistic sedimentation mixing depths for each crater.
     """
@@ -839,7 +846,7 @@ def init_strat_columns(ej_cols, ej_sources, cfg):
     return strat_columns
 
 
-def update_ice_cols(t, strat_cols, new_ice_thickness, overturn_depth, bal_sed_depths, mode):
+def update_ice_cols(t, strat_cols, new_ice_thickness, overturn_depth, bal_sed_depths, cfg):
     """
     Update ice_cols new ice added and ice eroded.
     """
@@ -855,7 +862,7 @@ def update_ice_cols(t, strat_cols, new_ice_thickness, overturn_depth, bal_sed_de
         ice_col[t] = new_ice_thickness
 
         # Ice eroded in column
-        ice_col = remove_ice_overturn(ice_col, ej_col, t, overturn_depth, mode)
+        ice_col = remove_ice_overturn(ice_col, ej_col, t, overturn_depth, cfg)
 
         # Save ice column back to strat_cols dict
         strat_cols[coldtrap][0] = ice_col
@@ -863,29 +870,31 @@ def update_ice_cols(t, strat_cols, new_ice_thickness, overturn_depth, bal_sed_de
     return strat_cols
 
 
-def get_ice_thickness(global_ice_mass, cfg):
+def get_ice_thickness(global_ice_mass, polar_frac, cfg):
     """
     Return ice thickness applied to all cold traps given total ice mass
-    produced globally, scaled by ice_hop_efficiency, density of ice and
+    produced globally, scaled by polar_frac, density of ice and
     total coldtrap_area.
+
+    See polar_frac in cfg.ballistic_hop_effcy and cfg.volc_dep_effcy
     """
-    polar_ice_mass = global_ice_mass * cfg.ice_hop_efficiency  # [kg]
+    polar_ice_mass = global_ice_mass * polar_frac  # [kg]
     ice_volume = polar_ice_mass / cfg.ice_density  # [m^3]
-    ice_thickness = ice_volume / cfg.coldtrap_area  # [m]
+    ice_thickness = ice_volume / cfg.coldtrap_areas[cfg.pole][cfg.ice_species]
     return ice_thickness
 
 
 # Impact overturn removal of ice
-def remove_ice_overturn(ice_col, ej_col, t, overturn_depth, mode="cannon"):
-    """Return ice_col with ice removed due to impact overturn via current mode."""
-    if mode == "cannon":
-        ice_col = erode_ice_cannon(ice_col, ej_col, t, overturn_depth)
-    elif mode == "moonpies":
+def remove_ice_overturn(ice_col, ej_col, t, overturn_depth, cfg):
+    """
+    Return ice_col with ice removed by impact gardening to overturn_depth.
+    """
+    if cfg.impact_gardening_costello:
         ice_col[: t + 1] = garden_ice_column(
             ice_col[: t + 1], ej_col[: t + 1], overturn_depth
-        )
+        )  # TODO: garden_ice_column(ice_col, ej_col, t, overturn_depth)
     else:
-        raise ValueError(f"Invalid mode {mode} in remove_ice_overturn")
+        ice_col = erode_ice_cannon(ice_col, ej_col, t, overturn_depth)
     return ice_col
 
 
@@ -1041,7 +1050,7 @@ def total_overturn_depth(time_arr, cfg):
     cfg.dtype
     """
     if cfg.mode == "cannon":
-        return 0.1 * np.ones(len(time_arr), dtype=cfg.dtype)
+        return 0.1 * np.ones_like(time_arr)
     overturn_depths = []
     for r in cfg.overturn_regimes:
         a, b = cfg.overturn_ab[r]
@@ -1116,72 +1125,237 @@ def overturn_depth_speyerer(time):
 
 
 # Impact-delivered ice module
-def total_impact_ice(time, basin_ice_t, cfg, rng=None):
-    """Return total impact ice from regimes and sfd_slopes (Cannon 2020)."""
-    total_ice = 0  # [kg]
-    for r in cfg.impact_regimes:
-        if r == "a":
-            # Micrometeorites
-            total_ice += ice_micrometeorites(
-                time,
+def get_impact_ice(time_arr, cfg, rng=None):
+    """
+    Return ice thickness [m] delivered to pole due to global impacts vs time.
+
+    Return
+    ------
+    impact_ice_t (arr): Ice thickness [m] delivered to pole at each time.
+    """
+    impact_ice_t = np.zeros_like(time_arr)
+    impact_ice_t += get_micrometeorite_ice(time_arr, cfg)
+    impact_ice_t += get_small_impactor_ice(time_arr, cfg)
+    impact_ice_t += get_small_simple_crater_ice(time_arr, cfg)
+    impact_ice_t += get_large_simple_crater_ice(time_arr, cfg, rng)
+    impact_ice_t += get_complex_crater_ice(time_arr, cfg, rng)
+    if cfg.impact_ice_basins:
+        impact_ice_t += get_basin_ice(time_arr, cfg, rng)
+    return impact_ice_t
+
+
+def get_micrometeorite_ice(time_arr, cfg):
+    """
+    Return ice thickness [m] delivered to pole due to micrometeorites vs time.
+
+    Return
+    ------
+    mm_ice_t (arr): Ice thickness [m] delivered to pole at each time.
+    """
+    mm_ice_mass = ice_micrometeorites(
+                time_arr,
                 cfg.timestep,
                 cfg.mm_mass_rate,
                 cfg.hydrated_wt_pct,
                 cfg.impactor_mass_retained,
             )
-        elif r == "b":
-            # Small impactors
-            impactor_diams, impactors = get_impactor_pop(
-                time,
-                r,
-                cfg.timestep,
-                cfg.diam_range,
-                cfg.sfd_slopes,
-                cfg.dtype,
-            )
-            total_ice += ice_small_impactors(impactor_diams, impactors, cfg)
-        elif r == "c":
-            # Small simple craters (continuous)
-            crater_diams, craters = get_crater_pop(
-                time,
-                r,
-                cfg.timestep,
-                cfg.diam_range,
-                cfg.sfd_slopes,
-                cfg.sa_moon,
-                cfg.ivanov2000,
-                rng=rng,
-            )
-            total_ice += ice_small_craters(crater_diams, craters, r, cfg)
-        elif r in ("d", "e"):
-            # Large simple & complex craters (stochastic)
-            crater_diams = get_crater_pop(
-                time,
-                r,
-                cfg.timestep,
-                cfg.diam_range,
-                cfg.sfd_slopes,
-                cfg.sa_moon,
-                cfg.ivanov2000,
-                rng=rng,
-            )
-            crater_diams = get_random_hydrated_craters(
-                crater_diams, cfg.ctype_frac, cfg.ctype_hydrated, rng=rng
-            )
-            impactor_speeds = get_random_impactor_speeds(
-                len(crater_diams),
-                cfg.impact_speed,
-                cfg.impact_sd,
-                cfg.escape_vel,
-                rng=rng,
-            )
-            total_ice += ice_large_craters(
-                crater_diams, impactor_speeds, r, cfg
-            )
-        elif r == "f":
-            # Add ice from basins (see get_basin_ice)
-            total_ice += basin_ice_t
-    return total_ice
+    mm_ice_t = get_ice_thickness(mm_ice_mass, cfg.ballistic_hop_effcy, cfg) 
+    return mm_ice_t
+
+
+def get_small_impactor_ice(time_arr, cfg):
+    """
+    Return ice thickness [m] delivered to pole due to small impactors vs time.
+
+    Return
+    ------
+    si_ice_t (arr): Ice thickness [m] delivered to pole at each time.
+    """
+    impactor_diams, impactors = get_impactor_pop(
+        time, # TODO
+        'b',
+        cfg.timestep,
+        cfg.diam_range,
+        cfg.sfd_slopes,
+        cfg.dtype,
+    )
+    si_ice_mass = ice_small_impactors(impactor_diams, impactors, cfg)
+    si_ice_t = get_ice_thickness(si_ice_mass, cfg.ballistic_hop_effcy, cfg) 
+    return si_ice_t
+
+
+def get_small_simple_crater_ice(time_arr, cfg, rng=None):
+    """
+    Return ice thickness [m] delivered to pole by small simple crater impacts.
+
+    Return
+    ------
+    ssc_ice_t (arr): Ice thickness [m] delivered to pole at each time.
+    """
+    crater_diams, craters = get_crater_pop(
+        time,  # TODO
+        'c',
+        cfg.timestep,
+        cfg.diam_range,
+        cfg.sfd_slopes,
+        cfg.sa_moon,
+        cfg.ivanov2000,
+        rng=rng,
+    )
+    ssc_ice_mass = ice_small_craters(crater_diams, craters, 'c', cfg)
+    ssc_ice_t = get_ice_thickness(ssc_ice_mass, cfg.ballistic_hop_effcy, cfg) 
+    return ssc_ice_t
+
+
+def get_large_simple_crater_ice(time_arr, cfg, rng=None):
+    """
+    Return ice thickness [m] delivered to pole by large simple crater impacts.
+
+    Return
+    ------
+    lsc_ice_t (arr): Ice thickness [m] delivered to pole at each time.
+    """
+    crater_diams = get_crater_pop(
+        time,  # TODO
+        'd',
+        cfg.timestep,
+        cfg.diam_range,
+        cfg.sfd_slopes,
+        cfg.sa_moon,
+        cfg.ivanov2000,
+        rng=rng,
+    )
+    crater_diams = get_random_hydrated_craters(
+        crater_diams, cfg.ctype_frac, cfg.ctype_hydrated, rng=rng
+    )
+    impactor_speeds = get_random_impactor_speeds(
+        len(crater_diams),
+        cfg.impact_speed,
+        cfg.impact_sd,
+        cfg.escape_vel,
+        rng=rng,
+    )
+    lsc_ice_mass = ice_large_craters(
+        crater_diams, impactor_speeds, 'd', cfg
+    )
+    lsc_ice_t = get_ice_thickness(lsc_ice_mass, cfg.ballistic_hop_effcy, cfg) 
+    return lsc_ice_t
+
+
+def get_complex_crater_ice(time_arr, cfg, rng=None):
+    """
+    Return ice thickness [m] delivered to pole by complex crater impacts.
+
+    Return
+    ------
+    cc_ice_t (arr): Ice thickness [m] delivered to pole at each time.
+    """
+    crater_diams = get_crater_pop(
+        time,  # TODO
+        'e',
+        cfg.timestep,
+        cfg.diam_range,
+        cfg.sfd_slopes,
+        cfg.sa_moon,
+        cfg.ivanov2000,
+        rng=rng,
+    )
+    crater_diams = get_random_hydrated_craters(
+        crater_diams, cfg.ctype_frac, cfg.ctype_hydrated, rng=rng
+    )
+    impactor_speeds = get_random_impactor_speeds(
+        len(crater_diams),
+        cfg.impact_speed,
+        cfg.impact_sd,
+        cfg.escape_vel,
+        rng=rng,
+    )
+    cc_ice_mass = ice_large_craters(crater_diams, impactor_speeds, 'e', cfg)
+    cc_ice_t = get_ice_thickness(cc_ice_mass, cfg.ballistic_hop_effcy, cfg) 
+    return cc_ice_t
+
+
+def get_basin_ice(time_arr, cfg, rng=None):
+    """
+    Return ice thickness [m] delivered to pole by basin impacts vs time.
+
+    Return
+    ------
+    b_ice_t (arr): Ice thickness [m] delivered to pole at each time.
+    """
+    df_basins = read_basin_list(cfg.basin_csv_in, cfg.basin_cols)
+    df_basins = randomize_crater_ages(df_basins, cfg.timestep, cfg.dtype, rng)
+    b_ice_mass = ice_basins(df_basins, time_arr, cfg)
+    b_ice_t = get_ice_thickness(b_ice_mass, cfg.ballistic_hop_effcy, cfg) 
+    return b_ice_t
+
+
+# def total_impact_ice(time, basin_ice_t, cfg, rng=None):
+#     """Return total impact ice from regimes and sfd_slopes (Cannon 2020)."""
+#     total_ice = 0  # [kg]
+#     for r in cfg.impact_ice_regimes:
+#         if r == "a":
+#             # Micrometeorites
+#             total_ice += ice_micrometeorites(
+#                 time,
+#                 cfg.timestep,
+#                 cfg.mm_mass_rate,
+#                 cfg.hydrated_wt_pct,
+#                 cfg.impactor_mass_retained,
+#             )
+#         elif r == "b":
+#             # Small impactors
+#             impactor_diams, impactors = get_impactor_pop(
+#                 time,
+#                 r,
+#                 cfg.timestep,
+#                 cfg.diam_range,
+#                 cfg.sfd_slopes,
+#                 cfg.dtype,
+#             )
+#             total_ice += ice_small_impactors(impactor_diams, impactors, cfg)
+#         elif r == "c":
+#             # Small simple craters (continuous)
+#             crater_diams, craters = get_crater_pop(
+#                 time,
+#                 r,
+#                 cfg.timestep,
+#                 cfg.diam_range,
+#                 cfg.sfd_slopes,
+#                 cfg.sa_moon,
+#                 cfg.ivanov2000,
+#                 rng=rng,
+#             )
+#             total_ice += ice_small_craters(crater_diams, craters, r, cfg)
+#         elif r in ("d", "e"):
+#             # Large simple & complex craters (stochastic)
+#             crater_diams = get_crater_pop(
+#                 time,
+#                 r,
+#                 cfg.timestep,
+#                 cfg.diam_range,
+#                 cfg.sfd_slopes,
+#                 cfg.sa_moon,
+#                 cfg.ivanov2000,
+#                 rng=rng,
+#             )
+#             crater_diams = get_random_hydrated_craters(
+#                 crater_diams, cfg.ctype_frac, cfg.ctype_hydrated, rng=rng
+#             )
+#             impactor_speeds = get_random_impactor_speeds(
+#                 len(crater_diams),
+#                 cfg.impact_speed,
+#                 cfg.impact_sd,
+#                 cfg.escape_vel,
+#                 rng=rng,
+#             )
+#             total_ice += ice_large_craters(
+#                 crater_diams, impactor_speeds, r, cfg
+#             )
+#         elif r == "f":
+#             # Add ice from basins (see get_basin_ice)
+#             total_ice += basin_ice_t
+#     return total_ice
 
 
 def ice_micrometeorites(
@@ -1264,13 +1438,13 @@ def ice_large_craters(crater_diams, impactor_speeds, regime, cfg):
     return np.sum(ice_masses)
 
 
-def get_basin_ice(df_basins, time_arr, cfg):
+def ice_basins(df_basins, time_arr, cfg):
     """Return ice mass from basin impacts vs time."""
     crater_diams = 2 * df_basins.rad.values
     impactor_speeds = (
         np.ones(len(df_basins)) * cfg.impact_speed
     )  # TODO: speeds of basins?
-    impactor_masses = np.zeros(len(crater_diams), dtype=cfg.dtype)
+    impactor_masses = np.zeros_like(crater_diams)
     for i, (diam, speed) in enumerate(zip(crater_diams, impactor_speeds)):
         impactor_diam = diam2len(diam, speed, "f", cfg)
         impactor_masses[i] = diam2vol(impactor_diam) * cfg.impactor_density
@@ -1286,7 +1460,7 @@ def get_basin_ice(df_basins, time_arr, cfg):
     time_idx = np.searchsorted(-rounded_time, -rounded_ages)
 
     # Fill ejecta thickness vs time matrix (rows: time, cols:craters)
-    basin_ice_time = np.zeros(len(time_arr), dtype=cfg.dtype)
+    basin_ice_time = np.zeros_like(time_arr)
     for i, t_idx in enumerate(time_idx):
         # Sum here in case more than one crater formed at t_idx
         basin_ice_time[t_idx] += ice_masses[i]
@@ -1303,7 +1477,7 @@ def ice_retention_factor(speeds, dtype=None):
     # TODO: find/verify retention(speed) eqn in Ong et al. 2010?
     # BUG? retention distribution is discontinuous
     speeds = speeds * 1e-3  # [m/s] -> [km/s]
-    retained = np.ones(len(speeds), dtype=dtype) * 0.5  # nominal 50%
+    retained = np.ones_like(speeds) * 0.5  # nominal 50%
     retained[speeds >= 10] = 36.26 * np.exp(-0.3464 * speeds[speeds >= 10])
     retained[retained < 0] = 0
     return retained
