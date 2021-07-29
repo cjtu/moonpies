@@ -24,6 +24,8 @@ class Cfg:
     mode: str = 'moonpies'  # 'moonpies' or 'cannon'
     if mode == 'cannon':
         solar_wind_ice: bool = False
+        ballistic_hop_moores: bool = False  # hop_effcy per crater (Moores et al 2016)
+        ejecta_basins: bool = False
         impact_ice_basins: bool = False
         impact_ice_comets: bool = False
         volc_ballistic: bool = True  # Use ballistic_hop efficiency rather than volc_dep_efficiency
@@ -31,23 +33,25 @@ class Cfg:
         impact_gardening_costello: bool = False
     if mode == 'moonpies':
         solar_wind_ice: bool = True
+        ballistic_hop_moores: bool = True  # hop_effcy per crater (Moores et al 2016)
+        ejecta_basins: bool = True
         impact_ice_basins: bool = True
         impact_ice_comets: bool = True
-        volc_ballistic: bool = False
+        volc_ballistic: bool = False  # Use volc_dep_efficiency efficiency rather than ballistic_hop
         ballistic_sed: bool = True
         impact_gardening_costello: bool = True
 
     # Desired lunar pole
     pole: str = 's'  # ['s', 'n'] TODO: only s is currently supported
     if pole.lower() in ('s', 'south'):
-        ballistic_hop_efficiency: float = 0.054  # Cannon et al. (2020)
+        ballistic_hop_effcy: float = 0.054  # Cannon et al. (2020)
         volc_dep_efficiency: float = 0.26  # 6-26% (Wilcowski et al., 2021)
         coldtrap_craters: tuple = (
             'Haworth', 'Shoemaker', 'Faustini', 'Shackleton', 'Slater', 
             'Amundsen', 'Cabeus', 'Sverdrup', 'de Gerlache', "Idel'son L", 
-            'Wiechert J')
+            'Wiechert J') # Add 'Cabeus B')
     elif pole.lower() in ('n', 'north'):
-        ballistic_hop_efficiency: float = 0.027  # Cannon et al. (2020)
+        ballistic_hop_effcy: float = 0.027  # Cannon et al. (2020)
         volc_dep_efficiency: float = 0.13  # 3-13% (Wilcowski et al., 2021)
         coldtrap_craters: tuple = (
             'Fibiger', 'Hermite', 'Hermite A', 'Hevesy', 'Lovelace', 'Nansen A', 
@@ -58,11 +62,11 @@ class Cfg:
     if ice_species == 'H2O':
         coldtrap_max_temp: float = 110  # [K] TODO: cite
     elif ice_species == 'CO2':
-        coldtrap_max_temp: float = 90  # [K] TODO: cite
+        coldtrap_max_temp: float = 55  # [K] TODO: cite
     coldtrap_areas: dict = field(default_factory = lambda: ({
         's': {
-            'H2O': 1.3e4 * 1e6,  # [m^2], (Williams et al., 2019)
-            'CO2': 204e3 * 1e6}, # [m^2], (Schorghofer and Williams, 2021)
+            'H2O': 1.3e4 * 1e6,  # [m^2], (Williams et al., 2019) (1.7e4 * 1e6 Shorghofer 2020)
+            'CO2': 104 * 1e6}, # [m^2], (<60 K max summer T, Williams et al., 2019)
         'n': {
             'H2O': 5.3e3 * 1e6,  # [m^2], (Williams et al., 2019)
             'CO2': 0}  # [m^2], TODO: compute
@@ -81,6 +85,7 @@ class Cfg:
     costello_csv_in: str = 'costello_etal_2018_t1.csv'
     bahcall_csv_in: str = 'bahcall_etal_2001_t2.csv'
     teq_csv_in: str = 'ballistic_sed_teq.csv'
+    bhop_csv_in: str = 'ballistic_hop_coldtraps.csv'
 
     # Files to export to outpath (attr name must end with "_out")
     ejcols_csv_out: str = f'ej_columns_{run_name}.csv'
@@ -117,7 +122,7 @@ class Cfg:
     target_density: float = 1500  # [kg m^-3] (Cannon 2020)
     bulk_density: float = 2700  # [kg m^-3] simple to complex (Melosh)
     ice_erosion_rate: float = 0.1 * (timestep / 10e6)  # [m], 10 cm / 10 ma (Cannon 2020)
-    ejecta_threshold: float = 4  # [crater radii] Radius of influence of a crater (ejecta deposit and ballistic sed)
+    ej_threshold: float = 4  # [crater radii] Radius of influence of a crater (ejecta deposit and ballistic sed)
 
     # Ice constants
     ice_density: float = 934  # [kg m^-3], (Cannon 2020)
@@ -225,7 +230,7 @@ class Cfg:
     volc_mode: str = 'Head'  # ['Head', 'NK']
     if mode == 'cannon':
         # Volcanic ice migrates ballistically
-        volc_efficiency: float = ice_hop_efficiency
+        volc_efficiency: float = ballistic_hop_effcy
     else:
         # Volcanic ice deposited in global transient atmosphere
         # Spole: 6-26%, Npole: 3-13% (Wilcowski et al. 2021)
