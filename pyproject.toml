@@ -41,7 +41,7 @@ generated-members=["pandas.*","pd.*"]
 output-format="colorized"
 reports="y"
 include-ids="yes"
-disable=["R0913","C0103"]
+disable=["R0913","C0103","E1136","E1137","W0511"]
 msg-template="{msg_id}:{line:3d},{column}: {obj}: {msg}"
 
 [build-system]

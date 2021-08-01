@@ -21,7 +21,6 @@ def test_volcanic_ice_head():
         # Cannon volcanic ice mass [kg]
         if age > 2.00 and age < 4.01:
             if age > 3.00:
-                print(f'{round(age, 2):.12f}')
                 iceMassVulxS[t] = 1E7*.75*3000*(1000**3)*(10/1E6)*(1E7/1E9)
             else:
                 iceMassVulxS[t] = 1E7*.25*3000*(1000**3)*(10/1E6)*(1E7/1E9)
@@ -29,21 +28,7 @@ def test_volcanic_ice_head():
             iceMassVulxS[t] = 0
     expected = iceMassVulxS
 
-    actual = mp.volcanic_ice_head(
-        time_arr,
-        CFG.timestep,
-        CFG.volc_early,
-        CFG.volc_late,
-        CFG.volc_early_pct,
-        CFG.volc_late_pct,
-        CFG.volc_total_vol,
-        CFG.volc_h2o_ppm,
-        CFG.volc_magma_density,
-        CFG.dtype,
-    )
-    diff =(actual - expected) > 1e5 
-    print(np.where(diff))
-    print(actual[diff], expected[diff])
+    actual = mp.volcanic_ice_head(time_arr, CFG)
     np.testing.assert_allclose(actual, expected)
 
 
@@ -73,35 +58,15 @@ def test_impact_flux():
 
 def test_ice_micrometeorites():
     """Test ice_micrometeorites."""
-    t = 4.25e9
-    actual = mp.ice_micrometeorites(t)
+    time_arr = mp.get_time_array(CFG)
+    actual = mp.ice_micrometeorites(time_arr, CFG)
     # Cannon 2020 ds02 Regime A: micrometeorites
     totalImpactorWater = 1e6 * 1e7 * 0.1
     totalImpactorWater = (
-        totalImpactorWater * mp.impact_flux(t) / mp.impact_flux(0)
+        totalImpactorWater * mp.impact_flux(time_arr) / mp.impact_flux(0)
     )
     expected = totalImpactorWater * 0.165
-    np.testing.assert_allclose(actual, expected)
-
-    t = 3e9
-    actual = mp.ice_micrometeorites(t)
-    # Cannon 2020 ds02 Regime A: micrometeorites
-    totalImpactorWater = 1e6 * 1e7 * 0.1
-    totalImpactorWater = (
-        totalImpactorWater * mp.impact_flux(t) / mp.impact_flux(0)
-    )
-    expected = totalImpactorWater * 0.165
-    np.testing.assert_allclose(actual, expected)
-
-    t = 0
-    actual = mp.ice_micrometeorites(t)
-    # Cannon 2020 ds02 Regime A: micrometeorites
-    totalImpactorWater = 1e6 * 1e7 * 0.1
-    totalImpactorWater = (
-        totalImpactorWater * mp.impact_flux(t) / mp.impact_flux(0)
-    )
-    expected = totalImpactorWater * 0.165
-    np.testing.assert_allclose(actual, expected)
+    np.testing.assert_allclose(actual, expected, rtol=1e-6)
 
 
 def test_get_impactors_brown():
@@ -124,8 +89,8 @@ def test_get_impactors_brown():
 
 def test_ice_small_impactors():
     """Test ice_small_impactors."""
-    t = 4.25e9
-    diams, ncraters = mp.get_impactor_pop(t, "b", CFG.timestep, CFG.diam_range, CFG.sfd_slopes)
+    time_arr = mp.get_time_array(CFG)
+    diams, ncraters = mp.get_small_impactor_pop(time_arr, CFG)
     actual = mp.ice_small_impactors(diams, ncraters, CFG)
 
     # Brown (tested above)
@@ -135,58 +100,42 @@ def test_ice_small_impactors():
     impactorDiams = diams
 
     # Cannon 2020 ds02 Regime B: small impactors
-    impactorNum = impactorNum * mp.impact_flux(t) / mp.impact_flux(0)
+    impactorNum = impactorNum * mp.impact_flux(time_arr[:, None]) / mp.impact_flux(0)
     sfd = impactorDiams ** -3.7
     impactors = sfd * (impactorNum / np.sum(sfd))
-    np.testing.assert_allclose(ncraters, impactors, rtol=5e-7)
+    np.testing.assert_allclose(ncraters, impactors, rtol=1e-6)
 
     # Cannon 2020: convert to mass
     impactorMasses = 1300 * (4 / 3) * np.pi * (impactorDiams / 2) ** 3
-    totalImpactorMass = np.sum(impactorMasses * impactors)
+    totalImpactorMass = np.sum(impactorMasses * impactors, axis=1)
     totalImpactorWater = totalImpactorMass * 0.36 * (2 / 3) * 0.1
     expected = totalImpactorWater * 0.165
-    np.testing.assert_allclose(actual, expected)
+    np.testing.assert_allclose(actual, expected, rtol=1e-6)
 
 
-def test_get_crater_pop_C():
+def test_get_crater_pop_regime_C():
     """Test get_crater_pop on regime C."""
-    t = 4.25e9
+    time_arr = mp.get_time_array(CFG)
     regime = "c"
-    rng = 0
-    diams, ncraters = mp.get_crater_pop(t, 
-                regime, 
-                CFG.timestep,
-                CFG.diam_range,
-                CFG.sfd_slopes,
-                CFG.sa_moon,
-                CFG.ivanov2000,
-                rng=rng)
+    diams, n_craters_t, sfd_prob = mp.get_crater_pop(time_arr, regime, CFG)
+    actual = n_craters_t * sfd_prob
 
     # Cannon regime C
     craterDiams = diams  # m
-    craterNum = mp.neukum(craterDiams[0], CFG.ivanov2000) - mp.neukum(craterDiams[-1], CFG.ivanov2000)
+    craterNum = mp.neukum(craterDiams[0], CFG.neukum_pf_version) - mp.neukum(craterDiams[-1], CFG.neukum_pf_version)
     craterNum = craterNum * (1e7)
     craterNum = craterNum * CFG.sa_moon
-    craterNum = craterNum * mp.impact_flux(t) / mp.impact_flux(0)
-
+    craterNum = craterNum * mp.impact_flux(time_arr) / mp.impact_flux(0)
     sfd = craterDiams ** -3.82
-    craters = sfd * (craterNum / sum(sfd))
-    np.testing.assert_allclose(ncraters, craters, rtol=5e-7)
+    expected = sfd * (craterNum[:, None] / sum(sfd))
+    np.testing.assert_allclose(actual, expected, rtol=5e-7)
 
 
 def test_ice_small_craters():
     """Test ice_small_craters."""
-    t = 4.25e9
+    time_arr = mp.get_time_array(CFG)
     regime = "c"
-    rng = 0
-    diams, ncraters = mp.get_crater_pop(t, 
-                regime, 
-                CFG.timestep,
-                CFG.diam_range,
-                CFG.sfd_slopes,
-                CFG.sa_moon,
-                CFG.ivanov2000,
-                rng=rng)
+    diams, ncraters, sfd_prob = mp.get_crater_pop(time_arr, regime, CFG)
     actual = mp.ice_small_craters(diams, ncraters, regime, CFG)
 
     # Cannon regime C
@@ -194,12 +143,12 @@ def test_ice_small_craters():
     impactorDiams = mp.diam2len(diams, v, regime, CFG)
     # impactorDiams = dToL_C(craterDiams*1000,20)
     impactorMasses = 1300 * (4 / 3) * np.pi * (impactorDiams / 2) ** 3
-    totalImpactorMass = sum(impactorMasses * ncraters)
+    totalImpactorMass = np.sum(impactorMasses * ncraters, axis=1)
     totalImpactorWater = totalImpactorMass * 0.36 * (2 / 3) * 0.1
 
     iceMassRegimeC = totalImpactorWater * 0.165
     expected = iceMassRegimeC
-    np.testing.assert_approx_equal(actual, expected)
+    np.testing.assert_allclose(actual, expected)
 
 
 def test_ice_large_craters_D():
@@ -228,32 +177,18 @@ def test_ice_large_craters_D():
 
     # Test 4.25 Ga
     t = 4.25e9
-    diams = mp.get_crater_pop(t, 
-                regime,
-                CFG.timestep,
-                CFG.diam_range,
-                CFG.sfd_slopes,
-                CFG.sa_moon,
-                CFG.ivanov2000,
-                rng=rng)
-    crater_diams = mp.get_random_hydrated_craters(diams)
-    impactor_speeds = mp.get_random_impactor_speeds(len(crater_diams))
+    diams, ncraters, sfd_prob = mp.get_crater_pop(t, regime, CFG)
+    crater_diams = mp.get_random_hydrated_craters(diams, CFG, rng)
+    impactor_speeds = mp.get_random_impactor_speeds(len(crater_diams), CFG, rng)
     actual = mp.ice_large_craters(crater_diams, impactor_speeds, regime, CFG)
     expected = cannon_D(crater_diams, impactor_speeds)
     np.testing.assert_approx_equal(actual, expected)
 
     # Test 4.25 Ga
     t = 3e9
-    diams = mp.get_crater_pop(t, 
-                regime,
-                CFG.timestep,
-                CFG.diam_range,
-                CFG.sfd_slopes,
-                CFG.sa_moon,
-                CFG.ivanov2000,
-                rng=rng)
-    crater_diams = mp.get_random_hydrated_craters(diams)
-    impactor_speeds = mp.get_random_impactor_speeds(len(crater_diams))
+    diams, ncraters, sfd_prob = mp.get_crater_pop(t, regime, CFG)
+    crater_diams = mp.get_random_hydrated_craters(diams, CFG, rng)
+    impactor_speeds = mp.get_random_impactor_speeds(len(crater_diams), CFG, rng)
     actual = mp.ice_large_craters(crater_diams, impactor_speeds, regime, CFG)
     expected = cannon_D(crater_diams, impactor_speeds)
     np.testing.assert_approx_equal(actual, expected)
@@ -287,32 +222,18 @@ def test_ice_large_craters_E():
 
     # Test 4.25 Ga
     t = 4.25e9
-    diams = mp.get_crater_pop(t, 
-                regime,
-                CFG.timestep,
-                CFG.diam_range,
-                CFG.sfd_slopes,
-                CFG.sa_moon,
-                CFG.ivanov2000,
-                rng=rng)
-    crater_diams = mp.get_random_hydrated_craters(diams)
-    impactor_speeds = mp.get_random_impactor_speeds(len(crater_diams))
+    diams, ncraters, sfd_prob = mp.get_crater_pop(t, regime, CFG)
+    crater_diams = mp.get_random_hydrated_craters(diams, CFG, rng)
+    impactor_speeds = mp.get_random_impactor_speeds(len(crater_diams), CFG, rng)
     actual = mp.ice_large_craters(crater_diams, impactor_speeds, regime, CFG)
     expected = cannon_E(crater_diams, impactor_speeds)
     np.testing.assert_approx_equal(actual, expected)
 
     # Test 3 Ga
     t = 3
-    diams = mp.get_crater_pop(t, 
-                regime,
-                CFG.timestep,
-                CFG.diam_range,
-                CFG.sfd_slopes,
-                CFG.sa_moon,
-                CFG.ivanov2000,
-                rng=rng)
-    crater_diams = mp.get_random_hydrated_craters(diams)
-    impactor_speeds = mp.get_random_impactor_speeds(len(crater_diams))
+    diams, ncraters, sfd_prob = mp.get_crater_pop(t, regime, CFG)
+    crater_diams = mp.get_random_hydrated_craters(diams, CFG, rng)
+    impactor_speeds = mp.get_random_impactor_speeds(len(crater_diams), CFG, rng)
     actual = mp.ice_large_craters(crater_diams, impactor_speeds, regime, CFG)
     expected = cannon_E(crater_diams, impactor_speeds)
     np.testing.assert_approx_equal(actual, expected)
@@ -381,8 +302,6 @@ def test_erode_ice_cannon_zero_ejecta():
     t = len(ice_col)-1 #t = index of current timestep (length of ice col)
     actual = mp.erode_ice_cannon(ice_col, ej_col, t, overturn_depth=0.1, ej_shield=0.4)
     expected = cannon2020_ds01_ice_erosion(totalIceS,t,ej_col) #final ice col from cannon
-    # print(actual,expected)
-    # raise
     np.testing.assert_array_almost_equal(actual,expected)
 
 def test_erode_ice_cannon_ejecta_layer_lessthan_gard_depth():
@@ -403,8 +322,6 @@ def test_erode_ice_cannon_ejecta_layer_equals_gard_depth():
     t = len(ice_col)-1 #t = index of current timestep (length of ice col)
     actual = mp.erode_ice_cannon(ice_col, ej_col, t, overturn_depth=0.1, ej_shield=0.4)
     expected = cannon2020_ds01_ice_erosion(totalIceS,t,ej_col) #final ice col from cannon
-    # print(actual,expected)
-    # raise
     np.testing.assert_array_almost_equal(actual,expected)
 
 def test_erode_ice_cannon_thicker_than_gard_depth_thinner_than_shield():
@@ -415,8 +332,6 @@ def test_erode_ice_cannon_thicker_than_gard_depth_thinner_than_shield():
     t = len(ice_col)-1 #t = index of current timestep (length of ice col)
     actual = mp.erode_ice_cannon(ice_col, ej_col, t, overturn_depth=0.1, ej_shield=0.4)
     expected = cannon2020_ds01_ice_erosion(totalIceS,t,ej_col) #final ice col from cannon
-    # print(actual,expected)
-    # raise
     np.testing.assert_array_almost_equal(actual,expected)
 
 def test_erode_ice_cannon_thick_ejecta():
@@ -427,8 +342,6 @@ def test_erode_ice_cannon_thick_ejecta():
     t = len(ice_col)-1 #t = index of current timestep (length of ice col)
     actual = mp.erode_ice_cannon(ice_col, ej_col, t, overturn_depth=0.1, ej_shield=0.4)
     expected = cannon2020_ds01_ice_erosion(totalIceS,t,ej_col) #final ice col from cannon
-    #print(actual,expected)
-    #raise
     np.testing.assert_array_almost_equal(actual,expected)
 
 def test_erode_ice_cannon_ej_equals_ejecta_shield():
@@ -438,9 +351,7 @@ def test_erode_ice_cannon_ej_equals_ejecta_shield():
     totalIceS = ice_col.copy()
     t = len(ice_col)-1 
     actual = mp.erode_ice_cannon(ice_col, ej_col, t, overturn_depth=0.1, ej_shield=0.4)
-    expected = cannon2020_ds01_ice_erosion(totalIceS,t,ej_col) #final ice col from cannon
-    # print(actual,expected)
-    # raise    
+    expected = cannon2020_ds01_ice_erosion(totalIceS,t,ej_col) #final ice col from cannon 
     np.testing.assert_array_almost_equal(actual,expected)
 
 def test_erode_ice_cannon_long_cols():
@@ -451,8 +362,6 @@ def test_erode_ice_cannon_long_cols():
     t = len(ice_col)-1 #t = index of current timestep (length of ice col)
     actual = mp.erode_ice_cannon(ice_col, ej_col, t, overturn_depth=0.1, ej_shield=0.4)
     expected = cannon2020_ds01_ice_erosion(totalIceS,t,ej_col) #final ice col from cannon
-    # print(actual,expected)
-    # raise    
     np.testing.assert_array_almost_equal(actual,expected)
 
 def test_erode_ice_cannon_thin_ice_sheets():
@@ -462,9 +371,7 @@ def test_erode_ice_cannon_thin_ice_sheets():
     totalIceS = ice_col.copy()
     t = len(ice_col)-1 #t = index of current timestep (length of ice col)
     actual = mp.erode_ice_cannon(ice_col, ej_col, t, overturn_depth=0.1, ej_shield=0.4)
-    expected = cannon2020_ds01_ice_erosion(totalIceS,t,ej_col) #final ice col from cannon
-    #print(actual,expected)
-    #raise     
+    expected = cannon2020_ds01_ice_erosion(totalIceS,t,ej_col) #final ice col from cannon    
     np.testing.assert_array_almost_equal(actual,expected)
 
 def test_erode_ice_cannon_thick_ejecta_on_top():
@@ -474,9 +381,7 @@ def test_erode_ice_cannon_thick_ejecta_on_top():
     totalIceS = ice_col.copy()
     t = len(ice_col)-1 #t = index of current timestep (length of ice col)
     actual = mp.erode_ice_cannon(ice_col, ej_col, t, overturn_depth=0.1, ej_shield=0.4)
-    expected = cannon2020_ds01_ice_erosion(totalIceS,t,ej_col) #final ice col from cannon
-    #print(actual,expected)
-    #raise     
+    expected = cannon2020_ds01_ice_erosion(totalIceS,t,ej_col) #final ice col from cannon     
     np.testing.assert_array_almost_equal(actual,expected)
 
 
@@ -550,38 +455,42 @@ def test_garden_ice_column():
     ice_col = np.array([10])
     ejecta_col = np.array([10])
     overturn_depth = 10
-    new_ice_col = mp.garden_ice_column(ice_col, ejecta_col, overturn_depth)
-    expected = [0]
+    t = len(ice_col) - 1
+    new_ice_col = mp.garden_ice_column(ice_col, ejecta_col, t, overturn_depth)
+    expected = [10]
     np.testing.assert_array_almost_equal(new_ice_col, expected)
 
 
     ice_col = np.array([10])
     ejecta_col = np.array([5])
     overturn_depth = 3
-    new_ice_col = mp.garden_ice_column(ice_col, ejecta_col, overturn_depth)
-    expected = [7]
+    t = len(ice_col) - 1
+    new_ice_col = mp.garden_ice_column(ice_col, ejecta_col, t, overturn_depth)
+    expected = [10]
     np.testing.assert_array_almost_equal(new_ice_col, expected)
 
 
     ice_col = np.array([10, 10])
     ejecta_col = np.array([5, 0])
     overturn_depth = 15
-    new_ice_col = mp.garden_ice_column(ice_col, ejecta_col, overturn_depth)
-    expected = [5, 0]
+    t = len(ice_col) - 1
+    new_ice_col = mp.garden_ice_column(ice_col, ejecta_col, t, overturn_depth)
+    expected = [10, 0]
     np.testing.assert_array_almost_equal(new_ice_col, expected)
 
     ice_col = np.array([6, 4, 2])
     ejecta_col = np.array([0, 2, 1])
     overturn_depth = 10
-    new_ice_col = mp.garden_ice_column(ice_col, ejecta_col, overturn_depth)
-    expected = [0, 4, 0]
+    t = len(ice_col) - 1
+    new_ice_col = mp.garden_ice_column(ice_col, ejecta_col, t, overturn_depth)
+    expected = [5, 0, 0]
     np.testing.assert_array_almost_equal(new_ice_col, expected)
 
 
 # Acceptance test for Cannon ds01
 @patch('moonpies.get_ejecta_thickness_matrix')
-@patch('moonpies.total_impact_ice')
-def test_cannon_ds01(mock_total_impact_ice, mock_ej_thick_matrix):
+@patch('moonpies.get_impact_ice')
+def test_cannon_ds01(mock_get_impact_ice, mock_ej_thick_matrix):
     """
     Test Cannon mode produces same ice cols as main Cannon model.
     
@@ -601,26 +510,25 @@ def test_cannon_ds01(mock_total_impact_ice, mock_ej_thick_matrix):
     # 3.0 Ga: 4.3507 m until 2.0 Ga (late volcanism)
     # 2.0 Ga: 4.3474 m until 0 Ga
     """
-    cfg = default_config.Cfg()
-    cfg.mode = "cannon"
-    ncraters = len(mp.read_crater_list(cfg.crater_csv_in, cfg.crater_cols))
+    cfg = default_config.Cfg(mode='cannon')
+    ncraters = len(cfg.coldtrap_names)
     ntime = len(mp.get_time_array(cfg))
 
     # Mock ejecta thickness the same way as in Cannon
     ej_thickness = np.zeros((ntime, ncraters))
-    bsed_time = np.zeros((ntime, len(cfg.coldtrap_craters)))
     ej_thickness[5] = 0.05
     ej_thickness[10] = 0.3
     ej_thickness[15] = 0.4
     ej_thickness[20] = 0.5
-    mock_ej_thick_matrix.return_value = (ej_thickness, np.full(ej_thickness.shape, '', dtype=object), bsed_time)
+    mock_ej_thick_matrix.return_value = (ej_thickness, np.full(ej_thickness.shape, '', dtype=object))
 
-    # Mock total_impact_ice same way as in Cannon (1e15 at every timestep)
-    mock_total_impact_ice.return_value = 1e15
+    # Mock get_impact_ice same way as in Cannon (1e15 kg at every timestep)
+    ice_thickness = mp.get_ice_thickness(1e15, cfg)
+    mock_get_impact_ice.return_value = np.ones(ntime) * ice_thickness
 
     out = mp.main(cfg)
     expected = out[1].Haworth.values  # output: ej_col, ice_col
-
+    
     # Test first timestep
     np.testing.assert_approx_equal(expected[0], 4.3474, 4)
 
@@ -671,21 +579,18 @@ def test_cannon_ds02(mock_diam2len):
     cfg = default_config.Cfg()
     cfg.mode = 'cannon'
     rng = mp.get_rng(92855)
-    time_array = np.array([4.25e9, 4.0e9, 3.5e9, 2.0e9, 1.0e9])
-    microice = np.empty(len(time_array))
-    smallice = np.empty(len(time_array))
-    regimecice = np.empty(len(time_array))
+    time_arr = np.array([4.25e9, 4.0e9, 3.5e9, 2.0e9, 1.0e9])
 
-    # Test regimes a, b, c
-    for t in range(0,len(time_array)):
-        microice[t] = mp.ice_micrometeorites(time_array[t])
-        impactor_diams, impactors = mp.get_impactor_pop(time_array[t], "b", cfg.timestep, cfg.diam_range, cfg.sfd_slopes, cfg.dtype)
-        smallice[t] = mp.ice_small_impactors(impactor_diams, impactors, cfg)
-        crater_diams, craters = mp.get_crater_pop(time_array[t], "c", cfg.timestep, cfg.diam_range, cfg.sfd_slopes, cfg.sa_moon, cfg.ivanov2000, rng=rng)
-        mock_diam2len.return_value = (0.03*crater_diams)
-        regimecice[t] = mp.ice_small_craters(crater_diams, craters, "c", cfg)
+    # # Test regimes a, b, c
+    # for t in range(0,len(time_array)):
+    #     microice[t] = mp.ice_micrometeorites(time_array[t])
+    #     impactor_diams, impactors = mp.get_small_impactor_pop(time_array[t], CFG)
+    #     smallice[t] = mp.ice_small_impactors(impactor_diams, impactors, cfg).flatten()
+    #     crater_diams, craters, sfd_prob = mp.get_crater_pop(time_array[t], "c", cfg)
+    #     regimecice[t] = mp.ice_small_craters(crater_diams, craters, "c", cfg)
     
     # Test regime a: micrometeorite ice
+    microice = mp.ice_micrometeorites(time_arr, cfg)
     np.testing.assert_approx_equal(microice[0], 4.5897e+14, 4)
     np.testing.assert_approx_equal(microice[1], 8.1301e+13, 4)
     np.testing.assert_approx_equal(microice[2], 2.7024e+12, 4)
@@ -693,6 +598,8 @@ def test_cannon_ds02(mock_diam2len):
     np.testing.assert_approx_equal(microice[4], 1.6500e+11, 4)
     
     # Test regime b: small impactor ice
+    impactor_diams, impactors = mp.get_small_impactor_pop(time_arr, cfg)
+    smallice = mp.ice_small_impactors(impactor_diams, impactors, cfg)
     np.testing.assert_approx_equal(smallice[0], 1.2471e+12, 4)
     np.testing.assert_approx_equal(smallice[1], 2.2090e+11, 4)
     np.testing.assert_approx_equal(smallice[2], 7.3425e+09, 4)
@@ -700,6 +607,10 @@ def test_cannon_ds02(mock_diam2len):
     np.testing.assert_approx_equal(smallice[4], 4.4832e+08, 4)
     
     # Test regime c: simple craters (continuous) ice
+    crater_diams, n_craters_t, sfd_prob = mp.get_crater_pop(time_arr, 'c', cfg)
+    mock_diam2len.return_value = (0.03*crater_diams)
+    n_craters = n_craters_t * sfd_prob
+    regimecice = mp.ice_small_craters(crater_diams, n_craters, 'c', cfg)
     np.testing.assert_approx_equal(regimecice[0], 2.1137e+12, 3)
     np.testing.assert_approx_equal(regimecice[1], 3.7442e+11, 3)
     np.testing.assert_approx_equal(regimecice[2], 1.2445e+10, 3)

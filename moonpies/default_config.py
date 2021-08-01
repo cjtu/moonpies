@@ -5,6 +5,61 @@ from dataclasses import dataclass, fields, field, asdict
 import numpy as np
 import pandas as pd
 
+MODE_DEFAULTS = {
+    'cannon': {
+        'solar_wind_ice': False,
+        'ballistic_hop_moores': False,  # hop_effcy per crater (Moores et al 2016)
+        'ejecta_basins': False,
+        'impact_ice_basins': False,
+        'impact_ice_comets': False,
+        'volc_ballistic': True,  # Use ballistic_hop efficiency rather than volc_dep_efficiency
+        'ballistic_sed': False,
+        'impact_gardening_costello': False
+    },
+    'moonpies': {
+        'solar_wind_ice': True,
+        'ballistic_hop_moores': True,  # hop_effcy per crater (Moores et al 2016)
+        'ejecta_basins': True,
+        'impact_ice_basins': True,
+        'impact_ice_comets': True,
+        'volc_ballistic': False,  # Use ballistic_hop efficiency rather than volc_dep_efficiency
+        'ballistic_sed': True,
+        'impact_gardening_costello': True
+    }
+}
+
+COLDTRAP_DEFAULTS = {
+    's': {
+        'ballistic_hop_effcy': 0.054,  # Cannon et al. (2020)
+        'volc_dep_effcy': 0.26,  # 6-26% (Wilcowski et al., 2021)
+        'coldtrap_names': (
+            'Haworth', 'Shoemaker', 'Faustini', 'Shackleton', 'Slater', 
+            'Amundsen', 'Cabeus', 'Sverdrup', 'de Gerlache', "Idel'son L", 
+            'Wiechert J', 'Cabeus B'
+        ),
+    },
+    'n': {
+        'ballistic_hop_effcy': 0.027,  # Cannon et al. (2020)
+        'volc_dep_effcy': 0.13,  # 3-13% (Wilcowski et al., 2021)
+        'coldtrap_names': ('Fibiger', 'Hermite', 'Hermite A', 'Hevesy', 
+            'Lovelace', 'Nansen A', 'Nansen F', 'Rozhdestvenskiy U', 
+            'Rozhdestvenskiy W', 'Sylvester')
+    },
+    'coldtrap_max_temp':{
+        'H2O': 110,  # [K]
+        'CO2': 60  # [K]
+    },
+    'coldtrap_area': {
+        's': {
+            'H2O': 1.3e4 * 1e6,  # [m^2], (Williams et al., 2019) (1.7e4 * 1e6 Shorghofer 2020)
+            'CO2': 104 * 1e6, # [m^2], (<60 K max summer T, Williams et al., 2019)
+        },
+        'n': {
+            'H2O': 5.3e3 * 1e6,  # [m^2], (Williams et al., 2019)
+            'CO2': 0  # [m^2], TODO: compute
+        },
+    }
+}
 
 @dataclass
 class Cfg:
@@ -21,56 +76,28 @@ class Cfg:
     plot: bool = False  # Save strat column plots - slow!
     
     # Setup Cannon vs MoonPIES config modes
-    mode: str = 'moonpies'  # 'moonpies' or 'cannon'
-    if mode == 'cannon':
-        solar_wind_ice: bool = False
-        ballistic_hop_moores: bool = False  # hop_effcy per crater (Moores et al 2016)
-        ejecta_basins: bool = False
-        impact_ice_basins: bool = False
-        impact_ice_comets: bool = False
-        volc_ballistic: bool = True  # Use ballistic_hop efficiency rather than volc_dep_efficiency
-        ballistic_sed: bool = False
-        impact_gardening_costello: bool = False
-    if mode == 'moonpies':
-        solar_wind_ice: bool = True
-        ballistic_hop_moores: bool = True  # hop_effcy per crater (Moores et al 2016)
-        ejecta_basins: bool = True
-        impact_ice_basins: bool = True
-        impact_ice_comets: bool = True
-        volc_ballistic: bool = False  # Use volc_dep_efficiency efficiency rather than ballistic_hop
-        ballistic_sed: bool = True
-        impact_gardening_costello: bool = True
+    mode: str = 'cannon'  # ['moonpies', 'cannon']
 
-    # Desired lunar pole
+    # set in __post_init__ by _set_mode_defaults(self, self.mode, MODE_DEFAULTS)
+    solar_wind_ice: bool = None
+    ballistic_hop_moores: bool = None  # hop_effcy per crater (Moores et al 2016)
+    ejecta_basins: bool = None
+    impact_ice_basins: bool = None
+    impact_ice_comets: bool = None
+    volc_ballistic: bool = None  # Use ballistic_hop efficiency rather than volc_dep_efficiency
+    ballistic_sed: bool = None
+    impact_gardening_costello: bool = None
+
+    # Lunar pole and coldtrap defaults
     pole: str = 's'  # ['s', 'n'] TODO: only s is currently supported
-    if pole.lower() in ('s', 'south'):
-        ballistic_hop_effcy: float = 0.054  # Cannon et al. (2020)
-        volc_dep_efficiency: float = 0.26  # 6-26% (Wilcowski et al., 2021)
-        coldtrap_craters: tuple = (
-            'Haworth', 'Shoemaker', 'Faustini', 'Shackleton', 'Slater', 
-            'Amundsen', 'Cabeus', 'Sverdrup', 'de Gerlache', "Idel'son L", 
-            'Wiechert J') # Add 'Cabeus B')
-    elif pole.lower() in ('n', 'north'):
-        ballistic_hop_effcy: float = 0.027  # Cannon et al. (2020)
-        volc_dep_efficiency: float = 0.13  # 3-13% (Wilcowski et al., 2021)
-        coldtrap_craters: tuple = (
-            'Fibiger', 'Hermite', 'Hermite A', 'Hevesy', 'Lovelace', 'Nansen A', 
-            'Nansen F', 'Rozhdestvenskiy U', 'Rozhdestvenskiy W', 'Sylvester')
-    
-    # Coldtrap species
     ice_species = 'H2O'  # ['H2O', 'CO2']
-    if ice_species == 'H2O':
-        coldtrap_max_temp: float = 110  # [K] TODO: cite
-    elif ice_species == 'CO2':
-        coldtrap_max_temp: float = 55  # [K] TODO: cite
-    coldtrap_areas: dict = field(default_factory = lambda: ({
-        's': {
-            'H2O': 1.3e4 * 1e6,  # [m^2], (Williams et al., 2019) (1.7e4 * 1e6 Shorghofer 2020)
-            'CO2': 104 * 1e6}, # [m^2], (<60 K max summer T, Williams et al., 2019)
-        'n': {
-            'H2O': 5.3e3 * 1e6,  # [m^2], (Williams et al., 2019)
-            'CO2': 0}  # [m^2], TODO: compute
-    }))
+    
+    # set in __post_init__ by _set_coldtrap_defaults(self, self.pole, self.ice_species, COLDTRAP_DEFAULTS)
+    ballistic_hop_effcy: float = None
+    volc_dep_effcy: float = None
+    coldtrap_area: float = None
+    coldtrap_names: tuple = None
+    coldtrap_max_temp: float = None
 
     # Paths set in post_init if not specified in custom config
     modelpath: str = ''  # path to mixing.py
@@ -88,8 +115,8 @@ class Cfg:
     bhop_csv_in: str = 'ballistic_hop_coldtraps.csv'
 
     # Files to export to outpath (attr name must end with "_out")
-    ejcols_csv_out: str = f'ej_columns_{run_name}.csv'
-    icecols_csv_out: str = f'ice_columns_{run_name}.csv'
+    ej_t_csv_out: str = f'ej_columns_{run_name}.csv'
+    ice_t_csv_out: str = f'ice_columns_{run_name}.csv'
     config_py_out: str = f'config_{run_name}.py'
     agegrd_npy_out: str = f'age_grid_{run_name}.npy'
     ejmatrix_npy_out: str = f'ejecta_matrix_{run_name}.npy'
@@ -115,14 +142,16 @@ class Cfg:
     impactor_density_avg: float = 2780  # [kg m^-3] Costello 2018
     # impactor_density = 3000  # [kg m^-3] ordinary chondrite (Melosh scaling)
     # impact_speed = 17e3  # [m/s] average impact speed (Melosh scaling)
-    impact_speed: float = 20e3  # [m/s] mean impact speed (Cannon 2020)
-    impact_sd: float = 6e3  # [m/s] standard deviation impact speed (Cannon 2020)
+    impact_speed_mean: float = 20e3  # [m/s] mean impact speed (Cannon 2020)
+    impact_speed_sd: float = 6e3  # [m/s] standard deviation impact speed (Cannon 2020)
     escape_vel: float = 2.38e3  # [m/s] lunar escape velocity
     impact_angle: float = 45  # [deg]  average impact velocity
     target_density: float = 1500  # [kg m^-3] (Cannon 2020)
     bulk_density: float = 2700  # [kg m^-3] simple to complex (Melosh)
     ice_erosion_rate: float = 0.1 * (timestep / 10e6)  # [m], 10 cm / 10 ma (Cannon 2020)
-    ej_threshold: float = 4  # [crater radii] Radius of influence of a crater (ejecta deposit and ballistic sed)
+    ej_threshold: float = 4  # [crater radii] Radius of influence of a crater (-1: no threshold)
+    thickness_threshold: float = 1e-9  # [m] minimum thickness to form a layer
+    neukum_pf_version: str = '2001'  # ['2001', '1983'] Original or updated Neukum production function (Neukum et al. 2001)
 
     # Ice constants
     ice_density: float = 934  # [kg m^-3], (Cannon 2020)
@@ -228,13 +257,6 @@ class Cfg:
 
     # Volcanic ice module
     volc_mode: str = 'Head'  # ['Head', 'NK']
-    if mode == 'cannon':
-        # Volcanic ice migrates ballistically
-        volc_efficiency: float = ballistic_hop_effcy
-    else:
-        # Volcanic ice deposited in global transient atmosphere
-        # Spole: 6-26%, Npole: 3-13% (Wilcowski et al. 2021)
-        volc_efficiency: float = 0.26 
 
     # Head et al. (2020) mode (volc_mode == 'Head')
     volc_early: tuple = (4e9, 3e9)  # [yrs]
@@ -257,12 +279,19 @@ class Cfg:
     solar_wind_mode: str = 'Benna'  # ['Benna', 'Lucey-Hurley']
     faint_young_sun: bool = True  # use faint young sun (Bahcall et al., 2001)
 
-    # lunar production function a_values (neukum 2001)
-    neukum1983: tuple = (-3.0768, -3.6269, 0.4366, 0.7935, 0.0865, -0.2649, 
-                         -0.0664, 0.0379, 0.0106, -0.0022, -5.18e-4, 3.97e-5)
-    ivanov2000: tuple = (-3.0876, -3.557528, 0.781027, 1.021521, -0.156012, 
-                         -0.444058, 0.019977, 0.086850, -0.005874, -0.006809, 
-                         8.25e-4, 5.54e-5)
+
+    def __post_init__(self):
+        """Set paths, model defaults and raise error if invalid type supplied."""
+        setattr(self, 'seed', _get_random_seed(self))
+        setattr(self, 'modelpath', _get_modelpath(self))
+        setattr(self, 'datapath', _get_datapath(self))
+        setattr(self, 'outpath', _get_outpath(self))
+        setattr(self, 'figspath', _get_figspath(self))
+        _set_mode_defaults(self, self.mode)
+        _set_coldtrap_defaults(self, self.pole, self.ice_species)
+        for cfg_field in fields(self):
+            _make_paths_absolute(self, cfg_field, self.datapath, self.outpath)
+            _enforce_dataclass_type(self, cfg_field)
 
 
     def to_dict(self):
@@ -306,16 +335,6 @@ class Cfg:
         self.to_py(outpath, self.to_string(ddict))
 
 
-    def __post_init__(self):
-        """Force set all cfg types, raise error if invalid type."""
-        setattr(self, 'seed', _get_random_seed(self))
-        setattr(self, 'modelpath', _get_modelpath(self))
-        setattr(self, 'datapath', _get_datapath(self))
-        setattr(self, 'outpath', _get_outpath(self))
-        setattr(self, 'figspath', _get_figspath(self))
-        for field in fields(self):
-            _make_paths_absolute(self, field, self.datapath, self.outpath)
-            _enforce_dataclass_type(self, field)
 
 
 # Config helper functions
@@ -328,6 +347,26 @@ def _get_random_seed(cfg):
     if not seed:
         seed = np.random.randint(1, 99999)
     return seed
+
+
+def _set_mode_defaults(cfg, mode, defaults=MODE_DEFAULTS):
+    """Set flags in config object for mode ['cannon', 'moonpies']."""
+    for param in defaults[mode]:
+        if getattr(cfg, param) is None:
+            setattr(cfg, param, defaults[mode][param])
+
+
+def _set_coldtrap_defaults(cfg, pole, ice_species, defaults=COLDTRAP_DEFAULTS):
+    """
+    Set coldtrap defaults for pole ['n', 's'] and species ['H2O', 'CO2'].
+    """
+    for param in defaults[pole]:
+        if getattr(cfg, param) is None:
+            setattr(cfg, param, defaults[pole][param])
+    if getattr(cfg, 'coldtrap_max_temp') is None:
+        setattr(cfg, 'coldtrap_max_temp', defaults['coldtrap_max_temp'][ice_species]) 
+    if getattr(cfg, 'coldtrap_area') is None:
+        setattr(cfg, 'coldtrap_area', defaults['coldtrap_area'][pole][ice_species]) 
 
 
 def _get_modelpath(cfg):
