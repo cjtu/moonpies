@@ -26,13 +26,10 @@ def main(cfg=default_config.Cfg()):
 
     rng = get_rng(cfg.seed)
     time_arr = get_time_array(cfg)
-
-    # Get crater and basin DataFrames (len: Ncraters / Nbasins)
-    df = read_crater_list(cfg.crater_csv_in, cfg.crater_cols)
-    df = randomize_crater_ages(df, cfg.timestep, cfg.dtype, rng)
+    df = get_crater_list(cfg, cfg.ejecta_basins, rng)
 
     # Init strat columns dict based for all cfg.coldtrap_names
-    strat_cols = init_strat_columns(time_arr, cfg)
+    strat_cols = init_strat_columns(time_arr, df, cfg)
 
     # Main loop over time
     vprint("Starting main loop...")
@@ -45,20 +42,29 @@ def main(cfg=default_config.Cfg()):
 
 
 # Import data
-def get_crater_list(cfg, rng=None):
+def get_crater_list(cfg, basins=False, rng=None):
     """
     Return dataframe of craters considered in the model.
     """
-    df = read_crater_list(cfg.crater_csv_in, cfg.crater_cols, cfg.rad_moon)
+    global CACHE
+    if 'crater_list' not in CACHE:
+        df_craters = read_crater_list(cfg)
+        df_craters['isbasin'] = False
+        
+        df_basins = read_basin_list(cfg)
+        df_basins['isbasin'] = True
 
-    if cfg.ejecta_basins:
-        df_basins = read_basin_list(cfg.basin_csv_in, cfg.basin_cols)
-        df = pd.concat([df, df_basins])
-    df = randomize_crater_ages(df, cfg.timestep, cfg.dtype, rng)
+        # Combine DataFrames and randomize ages
+        df = pd.concat([df_craters, df_basins])
+        df = randomize_crater_ages(df, cfg.timestep, cfg.dtype, rng)
+        CACHE['crater_list'] = df
+    df = CACHE['crater_list']
+    if not basins:
+        df = df[df.isbasin == False].reset_index(drop=True)
     return df
 
 
-def read_crater_list(crater_csv, crater_cols, rp=1737.4e3):
+def read_crater_list(cfg):
     """
     Return dataframe of craters from crater_csv path with columns names.
 
@@ -73,11 +79,6 @@ def read_crater_list(crater_csv, crater_cols, rp=1737.4e3):
     Optional columns and naming conventions:
         - 'psr_area': Permanently shadowed area of crater [km^2]
 
-    Columns defined here:
-        - 'x': X-distance of crater center from S. pole [m]
-        - 'y': Y-distance of crater center from S. pole [m]
-        - 'dist2pole': Great circle distance of crater center from S. pole [m]
-
     Parameters
     ----------
     crater_csv (str): Path to crater list csv
@@ -87,7 +88,7 @@ def read_crater_list(crater_csv, crater_cols, rp=1737.4e3):
     -------
     df (DataFrame): Crater DataFrame read and updated from crater_csv
     """
-    df = pd.read_csv(crater_csv, names=crater_cols, header=0)
+    df = pd.read_csv(cfg.crater_csv_in, names=cfg.crater_cols, header=0)
 
     # Convert units, mandatory columns
     df["diam"] = df["diam"] * 1000  # [km -> m]
@@ -102,14 +103,10 @@ def read_crater_list(crater_csv, crater_cols, rp=1737.4e3):
     else:
         # Estimate psr area as 90% of crater area
         df["psr_area"] = 0.9 * np.pi * df.rad ** 2
-
-    # Define new columns
-    df["x"], df["y"] = latlon2xy(df.lat, df.lon, rp)
-    df["dist2pole"] = gc_dist(0, -90, df.lon, df.lat, rp)
     return df
 
 
-def read_basin_list(basin_csv, basin_cols):
+def read_basin_list(cfg):
     """
     Return dataframe of craters from basin_csv path with columns names.
 
@@ -130,7 +127,7 @@ def read_basin_list(basin_csv, basin_cols):
     -------
     df (DataFrame): Crater DataFrame read and updated from basin_csv
     """
-    df = pd.read_csv(basin_csv, names=basin_cols, header=0)
+    df = pd.read_csv(cfg.basin_csv_in, names=cfg.basin_cols, header=0)
 
     # Convert units, mandatory columns
     df["diam"] = df["diam"] * 1000  # [km -> m]
@@ -360,7 +357,7 @@ def get_ejecta_thickness(distance, radius, ds2c=18e3, order=-3):
     return thickness
 
 
-def get_ejecta_thickness_matrix(time_arr, cfg):
+def get_ejecta_thickness_matrix(time_arr, df, cfg):
     """
     Return ejecta_matrix of thickness [m] at each time in time_arr given
     triangular matrix of distances between craters in df.
@@ -369,7 +366,6 @@ def get_ejecta_thickness_matrix(time_arr, cfg):
     ------
     ejecta_thick_time (3D array): Ejecta thicknesses (shape: NY, NX, NT)
     """
-    df = get_crater_list(cfg)
     # Distance from all craters to all coldtraps shape: (Ncrater, Ncoldtrap)
     ej_distances = get_coldtrap_dists(df, cfg)
 
@@ -493,10 +489,10 @@ def get_solar_wind_ice(time_arr, cfg):
     """
     Return solar wind ice over time if mode is mpies.
     """
-    sw_ice_mass = np.zeros_like(time_arr)
+    sw_ice_t = np.zeros_like(time_arr)
     if cfg.solar_wind_ice:
         sw_ice_mass = solar_wind_ice(time_arr, cfg)
-    sw_ice_t = sw_ice_mass * cfg.ballistic_hop_effcy
+        sw_ice_t = get_ice_thickness(sw_ice_mass, cfg)
     return sw_ice_t
 
 
@@ -565,6 +561,7 @@ def get_volcanic_ice(time_arr, cfg):
 
     volc_ice_t = get_ice_thickness(volc_ice_mass, cfg)
     if not cfg.volc_ballistic:
+        volc_ice_t = get_ice_thickness(volc_ice_mass, cfg)
         # rescale by volcanic deposition % instead of ballistic hop %
         volc_ice_t *= cfg.volc_dep_effcy / cfg.ballistic_hop_effcy
     return volc_ice_t
@@ -633,17 +630,17 @@ def get_ballistic_sed_depths(time_arr, t, cfg):
     """
     global CACHE
     if "bsed_depths" not in CACHE:
-        CACHE["bsed_depths"] = ballistic_sed_depths_time(time_arr, cfg)
+        df = CACHE['crater_list']  # Must exist before calling this function
+        CACHE["bsed_depths"] = ballistic_sed_depths_time(time_arr, df, cfg)
     return CACHE["bsed_depths"][t]
 
 
-def ballistic_sed_depths_time(time_arr, cfg):
+def ballistic_sed_depths_time(time_arr, df, cfg):
     """
     Return ballistic sedimentation depth vs time for each coldtrap.
     """
     if not cfg.ballistic_sed:
         return np.zeros((len(time_arr), len(cfg.coldtrap_names)), cfg.dtype)
-    df = get_crater_list(cfg)
     dist = get_coldtrap_dists(df, cfg)
     diam = df.rad.values[:, np.newaxis] * 2  # Diameter column vector
 
@@ -856,11 +853,11 @@ def secondary_excavation_depth_eff(depth, t_rad, cfg):
 
 
 # Strat column functions
-def init_strat_columns(time_arr, cfg):
+def init_strat_columns(time_arr, df, cfg):
     """
     Return initialized stratigraphy columns (ice, ej, ej_sources)
     """
-    ej_cols, ej_sources = get_ejecta_thickness_matrix(time_arr, cfg)
+    ej_cols, ej_sources = get_ejecta_thickness_matrix(time_arr, df, cfg)
     strat_columns = make_strat_columns(ej_cols, ej_sources, cfg)
     return strat_columns
 
@@ -1223,10 +1220,8 @@ def get_impact_ice(time_arr, cfg, rng=None):
     impact_ice_t += get_large_simple_crater_ice(time_arr, cfg, rng)
     impact_ice_t += get_complex_crater_ice(time_arr, cfg, rng)
     if cfg.impact_ice_basins:
-        impact_ice_t += get_basin_ice(time_arr, cfg, rng)
-
-    # Scale impact_ice_t to only ice that arrives at pole ballistically
-    return impact_ice_t * cfg.ballistic_hop_effcy
+        impact_ice_t += get_basin_ice(time_arr, cfg)
+    return impact_ice_t
 
 
 def get_micrometeorite_ice(time_arr, cfg):
@@ -1295,7 +1290,7 @@ def get_complex_crater_ice(time_arr, cfg, rng=None):
     return cc_ice_t
 
 
-def get_basin_ice(time_arr, cfg, rng=None):
+def get_basin_ice(time_arr, cfg):
     """
     Return ice thickness [m] delivered to pole by basin impacts vs time.
 
@@ -1303,8 +1298,8 @@ def get_basin_ice(time_arr, cfg, rng=None):
     ------
     b_ice_t (arr): Ice thickness [m] delivered to pole at each time.
     """
-    df_basins = read_basin_list(cfg.basin_csv_in, cfg.basin_cols)
-    df_basins = randomize_crater_ages(df_basins, cfg.timestep, cfg.dtype, rng)
+    df_basins = get_crater_list(cfg, basins=True)
+    df_basins = df_basins[df_basins.isbasin].reset_index(drop=True)
     b_ice_mass = ice_basins(df_basins, time_arr, cfg)
     b_ice_t = get_ice_thickness(b_ice_mass, cfg)
     return b_ice_t
@@ -1351,7 +1346,8 @@ def read_ballistic_hop_csv(bhop_csv):
     with open(bhop_csv, "r") as f:
         for line in f.readlines():
             coldtrap, bhop = line.strip().split(",")
-            ballistic_hop_coldtraps[coldtrap] = float(bhop)
+            # TODO: our bhop efficiency is per km^2 so we * 1e6 / 100 to make it % like cannon (should change bhop_csv)
+            ballistic_hop_coldtraps[coldtrap] = float(bhop) * 1e6 / 100
     return ballistic_hop_coldtraps
 
 
@@ -2124,6 +2120,8 @@ if __name__ == "__main__":
     # If seed given, it takes precedence over seed set in custom cfg
     if args.seed is not None:
         cfg_dict["seed"] = args.seed
+    # TODO: remove (DEBUG)
+    cfg_dict['seed'] = 12345
     custom_cfg = default_config.from_dict(cfg_dict)
 
     # Run model:

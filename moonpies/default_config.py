@@ -18,12 +18,12 @@ MODE_DEFAULTS = {
     },
     'moonpies': {
         'solar_wind_ice': True,
-        'ballistic_hop_moores': True,  # hop_effcy per crater (Moores et al 2016)
+        'ballistic_hop_moores': False,  # hop_effcy per crater (Moores et al 2016)
         'ejecta_basins': True,
         'impact_ice_basins': True,
-        'impact_ice_comets': True,
-        'volc_ballistic': False,  # Use ballistic_hop efficiency rather than volc_dep_efficiency
-        'ballistic_sed': True,
+        'impact_ice_comets': False, #TODO: implement and make True
+        'volc_ballistic': False, # Use ballistic_hop efficiency rather than volc_dep_efficiency
+        'ballistic_sed': False, # TODO: change bsed and make True
         'impact_gardening_costello': True
     }
 }
@@ -76,7 +76,7 @@ class Cfg:
     plot: bool = False  # Save strat column plots - slow!
     
     # Setup Cannon vs MoonPIES config modes
-    mode: str = 'cannon'  # ['moonpies', 'cannon']
+    mode: str = 'moonpies'  # ['moonpies', 'cannon']
 
     # set in __post_init__ by _set_mode_defaults(self, self.mode, MODE_DEFAULTS)
     solar_wind_ice: bool = None

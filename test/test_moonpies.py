@@ -300,7 +300,7 @@ def test_erode_ice_cannon_zero_ejecta():
     ej_col = np.array([0,0]) #test the amount of ejecta
     totalIceS = ice_col.copy()
     t = len(ice_col)-1 #t = index of current timestep (length of ice col)
-    actual = mp.erode_ice_cannon(ice_col, ej_col, t, overturn_depth=0.1, ej_shield=0.4)
+    actual = mp.erode_ice_cannon(ice_col, ej_col, t, 0.1, ej_shield=0.4)
     expected = cannon2020_ds01_ice_erosion(totalIceS,t,ej_col) #final ice col from cannon
     np.testing.assert_array_almost_equal(actual,expected)
 
@@ -310,7 +310,7 @@ def test_erode_ice_cannon_ejecta_layer_lessthan_gard_depth():
     ej_col = np.array([0.05,0.05]) #test the amount of ejecta
     totalIceS = ice_col.copy()
     t = len(ice_col)-1 #t = index of current timestep (length of ice col)
-    actual = mp.erode_ice_cannon(ice_col, ej_col, t, overturn_depth=0.1, ej_shield=0.4)
+    actual = mp.erode_ice_cannon(ice_col, ej_col, t, 0.1, ej_shield=0.4)
     expected = cannon2020_ds01_ice_erosion(totalIceS,t,ej_col) #final ice col from cannon
     np.testing.assert_array_almost_equal(actual,expected)
 
@@ -320,7 +320,7 @@ def test_erode_ice_cannon_ejecta_layer_equals_gard_depth():
     ej_col = np.array([0.1,0.1]) #test the amount of ejecta
     totalIceS = ice_col.copy()
     t = len(ice_col)-1 #t = index of current timestep (length of ice col)
-    actual = mp.erode_ice_cannon(ice_col, ej_col, t, overturn_depth=0.1, ej_shield=0.4)
+    actual = mp.erode_ice_cannon(ice_col, ej_col, t, 0.1, ej_shield=0.4)
     expected = cannon2020_ds01_ice_erosion(totalIceS,t,ej_col) #final ice col from cannon
     np.testing.assert_array_almost_equal(actual,expected)
 
@@ -330,7 +330,7 @@ def test_erode_ice_cannon_thicker_than_gard_depth_thinner_than_shield():
     ej_col = np.array([0.2,0.2]) #test the amount of ejecta
     totalIceS = ice_col.copy()
     t = len(ice_col)-1 #t = index of current timestep (length of ice col)
-    actual = mp.erode_ice_cannon(ice_col, ej_col, t, overturn_depth=0.1, ej_shield=0.4)
+    actual = mp.erode_ice_cannon(ice_col, ej_col, t, 0.1, ej_shield=0.4)
     expected = cannon2020_ds01_ice_erosion(totalIceS,t,ej_col) #final ice col from cannon
     np.testing.assert_array_almost_equal(actual,expected)
 
@@ -340,7 +340,7 @@ def test_erode_ice_cannon_thick_ejecta():
     ej_col = np.array([0.5,0.5]) #test the amount of ejecta
     totalIceS = ice_col.copy()
     t = len(ice_col)-1 #t = index of current timestep (length of ice col)
-    actual = mp.erode_ice_cannon(ice_col, ej_col, t, overturn_depth=0.1, ej_shield=0.4)
+    actual = mp.erode_ice_cannon(ice_col, ej_col, t, 0.1, ej_shield=0.4)
     expected = cannon2020_ds01_ice_erosion(totalIceS,t,ej_col) #final ice col from cannon
     np.testing.assert_array_almost_equal(actual,expected)
 
@@ -350,7 +350,7 @@ def test_erode_ice_cannon_ej_equals_ejecta_shield():
     ej_col = np.array([0.4,0.4])
     totalIceS = ice_col.copy()
     t = len(ice_col)-1 
-    actual = mp.erode_ice_cannon(ice_col, ej_col, t, overturn_depth=0.1, ej_shield=0.4)
+    actual = mp.erode_ice_cannon(ice_col, ej_col, t, 0.1, ej_shield=0.4)
     expected = cannon2020_ds01_ice_erosion(totalIceS,t,ej_col) #final ice col from cannon 
     np.testing.assert_array_almost_equal(actual,expected)
 
@@ -360,7 +360,7 @@ def test_erode_ice_cannon_long_cols():
     ej_col = np.array([0.5,0.5,0.5,0.1,0,0.3]) #test the amount of ejecta
     totalIceS = ice_col.copy()
     t = len(ice_col)-1 #t = index of current timestep (length of ice col)
-    actual = mp.erode_ice_cannon(ice_col, ej_col, t, overturn_depth=0.1, ej_shield=0.4)
+    actual = mp.erode_ice_cannon(ice_col, ej_col, t, 0.1, ej_shield=0.4)
     expected = cannon2020_ds01_ice_erosion(totalIceS,t,ej_col) #final ice col from cannon
     np.testing.assert_array_almost_equal(actual,expected)
 
@@ -370,7 +370,7 @@ def test_erode_ice_cannon_thin_ice_sheets():
     ej_col = np.array([0.1,0.1,0,0,1,0,0.1]) #test the amount of ejecta
     totalIceS = ice_col.copy()
     t = len(ice_col)-1 #t = index of current timestep (length of ice col)
-    actual = mp.erode_ice_cannon(ice_col, ej_col, t, overturn_depth=0.1, ej_shield=0.4)
+    actual = mp.erode_ice_cannon(ice_col, ej_col, t, 0.1, ej_shield=0.4)
     expected = cannon2020_ds01_ice_erosion(totalIceS,t,ej_col) #final ice col from cannon    
     np.testing.assert_array_almost_equal(actual,expected)
 
@@ -380,7 +380,7 @@ def test_erode_ice_cannon_thick_ejecta_on_top():
     ej_col = np.array([0.1,0.1,0,0,1,0,20]) #test the amount of ejecta
     totalIceS = ice_col.copy()
     t = len(ice_col)-1 #t = index of current timestep (length of ice col)
-    actual = mp.erode_ice_cannon(ice_col, ej_col, t, overturn_depth=0.1, ej_shield=0.4)
+    actual = mp.erode_ice_cannon(ice_col, ej_col, t, 0.1, ej_shield=0.4)
     expected = cannon2020_ds01_ice_erosion(totalIceS,t,ej_col) #final ice col from cannon     
     np.testing.assert_array_almost_equal(actual,expected)
 
