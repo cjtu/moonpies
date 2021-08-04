@@ -68,7 +68,7 @@ class Cfg:
     """Class to configure a mixing model run."""
     seed: int = 0  # Note: Should not be set here - set when model is run only
     run_name: str = 'mpies'  # Name of the current run
-    _version: str = '0.2.0'  # TODO: set this somewhere central
+    _version: str = '0.6.0'  # TODO: set this somewhere central
     run_date: str = pd.Timestamp.now().strftime("%y%m%d")
     run_time: str = pd.Timestamp.now().strftime("%H:%M:%S")
 
@@ -162,7 +162,7 @@ class Cfg:
     ice_latent_heat: float = 334e3  # [j/kg] latent heat of h2o ice
 
     # Comet constants
-    _impact_speed_comet: bool = False  # Use comet impact speed distribution instead of asteroid speeds
+    impact_speed_comet: bool = False  # Use comet impact speed distribution instead of asteroid speeds
     comet_ast_frac: float = 0.1  # 5-17% TODO: check citation (Joy et al 2012) fraction of comets/asteroids
     comet_density: float = 1300  # [kg/m^3]
     comet_hydrated_wt_pct: float = 0.5  # 50% of comet mass is hydrated
@@ -187,8 +187,9 @@ class Cfg:
 
     # Ballistic sedimentation module
     ballistic_teq: bool = False  # Do ballistic sed only if teq > coldtrap_max_temp
-    ballistic_sed_vf_a: float = 2.913  # Fit to Ries crater ballistic sed, a
-    ballistic_sed_vf_b: float = -3.978  # Fit to Ries crater ballistic sed, b
+    vol_frac_a: float = 0.0183  # (Oberbeck et al. 1975 via Eq 4 Zhang et al. 2021)  #2.913  # Fit to Ries crater ballistic sed, a
+    vol_frac_b: float = 0.87  # (Oberbeck et al. 1975 via Eq 4 Zhang et al. 2021)  #-3.978  # Fit to Ries crater ballistic sed, b
+    vol_frac_petro: bool = True  # Use Petro and Pieter (2006) adjustment to volume fraction
     ice_frac: float = 0.056  # fraction ice vs regolith (5.6% Colaprete 2010)
     heat_frac: float = 0.5  # fraction of ballistic ke used in heating vs mixing
     heat_retained: float = 0.1  # fraction of heat retained (10-30%; Stopar 2018)
@@ -305,6 +306,11 @@ class Cfg:
         for cfg_field in fields(self):
             _make_paths_absolute(self, cfg_field, self.datapath, self.outpath)
             _enforce_dataclass_type(self, cfg_field)
+
+
+    @property
+    def version(self) -> str:
+        return self._version
 
 
     def to_dict(self):
