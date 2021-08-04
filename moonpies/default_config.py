@@ -8,23 +8,25 @@ import pandas as pd
 MODE_DEFAULTS = {
     'cannon': {
         'solar_wind_ice': False,
-        'ballistic_hop_moores': False,  # hop_effcy per crater (Moores et al 2016)
+        'ballistic_hop_moores': False,  # constant hop_effcy 
         'ejecta_basins': False,
         'impact_ice_basins': False,
         'impact_ice_comets': False,
-        'volc_ballistic': True,  # Use ballistic_hop efficiency rather than volc_dep_efficiency
+        'use_volc_dep_effcy': False,  # Use ballistic_hop efficiency rather than volc_dep_efficiency
         'ballistic_sed': False,
-        'impact_gardening_costello': False
+        'impact_gardening_costello': False,
+        'impact_speed_mean': 20e3, # [m/s] 
     },
     'moonpies': {
         'solar_wind_ice': True,
-        'ballistic_hop_moores': False,  # hop_effcy per crater (Moores et al 2016)
+        'ballistic_hop_moores': True,  # hop_effcy per crater (Moores et al 2016)
         'ejecta_basins': True,
         'impact_ice_basins': True,
-        'impact_ice_comets': False, #TODO: implement and make True
-        'volc_ballistic': False, # Use ballistic_hop efficiency rather than volc_dep_efficiency
-        'ballistic_sed': False, # TODO: change bsed and make True
-        'impact_gardening_costello': True
+        'impact_ice_comets': True, #TODO: test
+        'use_volc_dep_effcy': True, # Use volc_dep_efficiency instead of ballistic_hop_efficiency
+        'ballistic_sed': True, # Default: True. TODO: too big?
+        'impact_gardening_costello': True, 
+        'impact_speed_mean': 17e3,  # [m/s] 
     }
 }
 
@@ -66,6 +68,7 @@ class Cfg:
     """Class to configure a mixing model run."""
     seed: int = 0  # Note: Should not be set here - set when model is run only
     run_name: str = 'mpies'  # Name of the current run
+    _version: str = '0.2.0'  # TODO: set this somewhere central
     run_date: str = pd.Timestamp.now().strftime("%y%m%d")
     run_time: str = pd.Timestamp.now().strftime("%H:%M:%S")
 
@@ -84,7 +87,7 @@ class Cfg:
     ejecta_basins: bool = None
     impact_ice_basins: bool = None
     impact_ice_comets: bool = None
-    volc_ballistic: bool = None  # Use ballistic_hop efficiency rather than volc_dep_efficiency
+    use_volc_dep_effcy: bool = None  # Use volc_dep_efficiency rather than ballistic hop for volcanics
     ballistic_sed: bool = None
     impact_gardening_costello: bool = None
 
@@ -138,7 +141,7 @@ class Cfg:
     complex2peakring: float = 1.4e5  # [m], lunar c2pr transition diameter (Melosh 1989)
 
     # Impact cratering constants
-    impactor_density: float = 1300  # [kg m^-3], Cannon 2020
+    impactor_density: float = 1300  # [kg m^-3], (Carry 2012 via Cannon 2020)
     impactor_density_avg: float = 2780  # [kg m^-3] Costello 2018
     # impactor_density = 3000  # [kg m^-3] ordinary chondrite (Melosh scaling)
     # impact_speed = 17e3  # [m/s] average impact speed (Melosh scaling)
@@ -148,7 +151,7 @@ class Cfg:
     impact_angle: float = 45  # [deg]  average impact velocity
     target_density: float = 1500  # [kg m^-3] (Cannon 2020)
     bulk_density: float = 2700  # [kg m^-3] simple to complex (Melosh)
-    ice_erosion_rate: float = 0.1 * (timestep / 10e6)  # [m], 10 cm / 10 ma (Cannon 2020)
+    ice_erosion_rate: float = 0.1 # [m], 10 cm / 10 ma (Cannon 2020)
     ej_threshold: float = 4  # [crater radii] Radius of influence of a crater (-1: no threshold)
     thickness_threshold: float = 1e-9  # [m] minimum thickness to form a layer
     neukum_pf_version: str = '2001'  # ['2001', '1983'] Original or updated Neukum production function (Neukum et al. 2001)
@@ -159,18 +162,23 @@ class Cfg:
     ice_latent_heat: float = 334e3  # [j/kg] latent heat of h2o ice
 
     # Comet constants
+    _impact_speed_comet: bool = False  # Use comet impact speed distribution instead of asteroid speeds
+    comet_ast_frac: float = 0.1  # 5-17% TODO: check citation (Joy et al 2012) fraction of comets/asteroids
+    comet_density: float = 1300  # [kg/m^3]
+    comet_hydrated_wt_pct: float = 0.5  # 50% of comet mass is hydrated
+    comet_mass_retained: float = 0.065  # asteroid mass retained in impact (Ong et al., 2011)
     halley_to_oort_ratio: float = 3  # N_Halley / N_Oort
-    halley_mean_speed: float = 23
-    halley_sd_speed: float = 5
-    oort_mean_speed: float = 55
-    oort_sd_speed: float = 5
+    halley_mean_speed: float = 20e3  # [m/s] (Chyba et al., 1994; Ong et al., 2011)
+    halley_sd_speed: float = 5e3  # [m/s]
+    oort_mean_speed: float = 54e3  # [m/s] (Jeffers et al., 2001; Ong et al., 2011)
+    oort_sd_speed: float = 5e3  # [m/s]
     
 
     # Ejecta shielding module
     crater_cols: tuple = ('cname', 'lat', 'lon', 'psr_lat', 'psr_lon', 'diam', 
                           'age', 'age_low','age_upp', 'psr_area', 'age_ref', 
                           'prio', 'notes')
-    ejecta_thickness_order: float = -3  # min: -3.5, avg: -3, max: -2.5 (kring 1995)
+    ejecta_thickness_order: float = -3  # min: -3.5, avg: -3, max: -2.5 (Kring 1995)
 
     # Basin ice module
     basin_cols: tuple = ('cname', 'lat', 'lon', 'diam', 'inner_ring_diam', 
@@ -178,11 +186,13 @@ class Cfg:
     basin_impact_speed = 20e3  # [km/s]
 
     # Ballistic sedimentation module
-    ballistic_teq: bool = True  # Do ballistic sed only if teq > coldtrap_max_temp
-    ice_frac: float = 0.056  # fraction ice vs regolith (5.6% colaprete 2010)
+    ballistic_teq: bool = False  # Do ballistic sed only if teq > coldtrap_max_temp
+    ballistic_sed_vf_a: float = 2.913  # Fit to Ries crater ballistic sed, a
+    ballistic_sed_vf_b: float = -3.978  # Fit to Ries crater ballistic sed, b
+    ice_frac: float = 0.056  # fraction ice vs regolith (5.6% Colaprete 2010)
     heat_frac: float = 0.5  # fraction of ballistic ke used in heating vs mixing
-    heat_retained: float = 0.1  # fraction of heat retained (10-30%; stopar 2018)
-    regolith_cp: float = 4.3e3  # heat capacity [j kg^-1 k^-1] (0.7-4.2 kj/kg/k for h2o)
+    heat_retained: float = 0.1  # fraction of heat retained (10-30%; Stopar 2018)
+    regolith_cp: float = 4.3e3  # heat capacity [J kg^-1 K^-1] (0.7-4.2 kJ/kg/K for h2o)
 
     # Secondary crater scaling (Singer et al, 2020)
     ## Regression values from Table 2 (Singer et al., 2020)
@@ -200,17 +210,20 @@ class Cfg:
     orientale_b: float = -0.95 # ± 0.17 Orientale b value for secondary scaling law from Singer et al. 2020 [km]
     
     # Compute depths of secondary craters using singer or xie
-    secondary_depth_mode = 'singer'  # ['singer', 'xie']
+    secondary_depth_mode: str = 'singer'  # ['singer', 'xie']
+    secondary_depth_eff: float = True  # Convert secondary max depth to effective depth (Equation 17, Xie et al., 2020)
+    sec_depth_eff_rad_frac: float = 0.5 # [0-1 crater radii] Distance from secondary to compute depth (Equation 17, Xie et al., 2020)
+    sec_depth_eff_c_ex: float = 3.5  # Equation 17
+
     ## Singer mode - compute secondary crater diam from observed secondaries
     depth_to_diam_sec = 0.125  # Value used in Singer et al. (2020)
 
     ## Xie mode - compute secondary crater depth from ballistic velocity
     ## Equations from (Xie et al., 2020)
-    xie_depth_rad: float = 0.0134  # pre-exponential term, Equation 16  
-    xie_vel_exp: float = 0.38  # velocity exponential, Equation 14
-    xie_depth_eff: float = False  # Convert to effective depth Equation 17
-    xie_sec_radial_frac: float = 0 # Equation 17
-    xie_c_ex: float = 3.5  # Equation 17
+    xie_a_simple: float = 0.0094  # pre-exponential term for simple secondaries, Equation 15 
+    xie_a_complex: float = 0.0134  # pre-exponential term for complex secondaries, Equation 16  
+    xie_b: float = 0.38  # velocity exponential, Equation 14
+
 
     # Impact gardening module (Costello 2020)
     overturn_prob_pct: str = '99%'  # poisson probability ['10%', '50%', '99%'] (table 1, Costello 2018)
@@ -225,7 +238,7 @@ class Cfg:
     overturn_regimes: tuple = ('primary', 'secondary', 'micrometeorite')
     overturn_ab: dict = field(default_factory = lambda: ({  # overturn sfd params aD^b (table 2, Costello et al. 2018)
         'primary': (6.3e-11, -2.7), 
-        'secondary': (7.25e-9, -4), # 1e5 secondaries, -4 slope from mcewen 2005
+        'secondary': (7.25e-9, -4), # 1e5 secondaries, -4 slope from McEwen 2005
         'micrometeorite': (1.53e-12, -2.64)
     }))
     impact_speeds: dict = field(default_factory = lambda: ({
@@ -235,11 +248,11 @@ class Cfg:
     }))
 
     # Impact ice module   
-    mm_mass_rate: float = 1e6  # [kg/yr], lunar micrometeorite flux (grun et al. 2011)
-    ctype_frac: float = 0.36  # 36% of impactors are c-type (jedicke et al., 2018)
-    ctype_hydrated: float = 2/3  # 2/3 of c-types are hydrated (rivkin, 2012)
+    mm_mass_rate: float = 1e6  # [kg/yr], lunar micrometeorite flux (Grun et al. 2011)
+    ctype_frac: float = 0.36  # 36% of impactors are c-type (Jedicke et al., 2018)
+    ctype_hydrated: float = 2/3  # 2/3 of c-types are hydrated (Rivkin, 2012)
     hydrated_wt_pct: float = 0.1  # impactors wt% H2O (Cannon 2020)
-    impactor_mass_retained: float = 0.165  # asteroid mass retained in impact (ong et al., 2011)
+    impact_mass_retained: float = 0.165  # asteroid mass retained in impact (Ong et al., 2011)
     diam_range: dict = field(default_factory = lambda: ({
         # regime: (rad_min, rad_max, step)
         'a': (0, 0.01, None),  # micrometeorites (<1 mm)
