@@ -4,3 +4,4 @@ dist/
 refs/
 __pycache__/
 *.zip
+*.prof

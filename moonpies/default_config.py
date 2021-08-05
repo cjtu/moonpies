@@ -68,7 +68,7 @@ class Cfg:
     """Class to configure a mixing model run."""
     seed: int = 0  # Note: Should not be set here - set when model is run only
     run_name: str = 'mpies'  # Name of the current run
-    _version: str = '0.6.0'  # TODO: set this somewhere central
+    _version: str = '0.9.0'  # TODO: set this somewhere central
     run_date: str = pd.Timestamp.now().strftime("%y%m%d")
     run_time: str = pd.Timestamp.now().strftime("%H:%M:%S")
 
@@ -346,6 +346,8 @@ class Cfg:
         del ddict['seed']
         del ddict['run_time']
         del ddict['run_date']
+        for k in MODE_DEFAULTS['cannon'].keys():
+            del ddict[k]
         for k, v in ddict.copy().items():
             if 'path' in k:
                 ddict[k] = ''

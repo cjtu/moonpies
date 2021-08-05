@@ -1,6 +1,6 @@
 """
 Moon Polar Ice and Ejecta Stratigraphy module
-Date: 07/06/21
+Date: 08/04/21
 Authors: CJ Tai Udovicic, K Frizzell, K Luchsinger, A Madera, T Paladino
 Acknowledgements: This model is largely updated from Cannon et al. (2020)
 """
@@ -477,14 +477,16 @@ def get_polar_ice(time_arr, t, cfg, rng=None):
     global CACHE
     if "polar_ice_time" not in CACHE:
         polar_ice = []
-        asteroid_ice = get_impact_ice(time_arr, cfg, rng)
+        impact_ice = get_impact_ice(time_arr, cfg, rng)
         comet_ice = get_impact_ice_comet(time_arr, cfg, rng)
         if cfg.impact_ice_comets:
-            asteroid_ice = asteroid_ice * (1 - cfg.comet_ast_frac)
-            polar_ice.append(comet_ice)
+            # comet_ice is run every time for repro, but only add if needed
+            # Scale impact ice to ast frac, add comet ice * comet frac
+            impact_ice *= (1 - cfg.comet_ast_frac)
+            impact_ice += comet_ice
 
         # Sum all ice sources and cache result
-        polar_ice.append(asteroid_ice)
+        polar_ice.append(impact_ice)
         polar_ice.append(get_solar_wind_ice(time_arr, cfg))
         CACHE["polar_ice_time"] = np.sum(polar_ice, axis=0)
     return CACHE["polar_ice_time"][t]
@@ -576,9 +578,6 @@ def get_volcanic_ice(time_arr, cfg):
         raise ValueError(f"Invalid mode {cfg.volc_mode}.")
 
     volc_ice_t = get_ice_thickness(volc_ice_mass, cfg)
-    if not cfg.use_volc_dep_effcy:
-        # rescale by volcanic deposition % instead of ballistic hop %
-        volc_ice_t *= cfg.volc_dep_effcy / cfg.ballistic_hop_effcy
     return volc_ice_t
 
 
@@ -654,7 +653,7 @@ def get_ballistic_sed_depths(time_arr, t, cfg):
 def bsed_depth_petro_pieters(time_arr, df, cfg):
     """
     Return ballistic sedimentation depth vs time for each coldtrap in the 
-    method of Petro and Pieters (2004) via Zhaneg et al. (2021).
+    method of Petro and Pieters (2004) via Zhang et al. (2021).
 
     Return
     ------
@@ -1301,8 +1300,10 @@ def get_impact_ice(time_arr, cfg, rng=None):
     impact_ice_t += get_small_simple_crater_ice(time_arr, cfg)
     impact_ice_t += get_large_simple_crater_ice(time_arr, cfg, rng)
     impact_ice_t += get_complex_crater_ice(time_arr, cfg, rng)
+    impact_ice_basins_t = get_basin_ice(time_arr, cfg, rng)
     if cfg.impact_ice_basins:
-        impact_ice_t += get_basin_ice(time_arr, cfg, rng)
+        # get_basin_ice is run every time for repro, but only add if needed
+        impact_ice_t += impact_ice_basins_t
     return impact_ice_t
 
 
@@ -1314,7 +1315,6 @@ def get_impact_ice_comet(time_arr, cfg, rng=None):
     ------
     impact_ice_t (arr): Ice thickness [m] delivered to pole at each time.
     """
-    # TODO: update speeds in stochastic and basin ice for comets
     comet_cfg_dict = cfg.to_dict()
     comet_cfg_dict['impact_speed_comet'] = True
     comet_cfg_dict['impactor_density'] = cfg.comet_density
@@ -2287,7 +2287,8 @@ def clear_cache():
             obj.cache_clear()
 
 
-def plot_version(cfg, xy=None, ha=None, va=None, loc='ll', ax=None, **kwargs):
+def plot_version(cfg, xy=None, ha='left', va='bottom', loc='ll', ax=None, 
+                 **kwargs):
     """Add version label """
     import matplotlib.pyplot as plt
     if ax is None:
