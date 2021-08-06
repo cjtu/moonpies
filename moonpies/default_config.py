@@ -4,6 +4,7 @@ from os import path, sep, environ, getcwd
 from dataclasses import dataclass, fields, field, asdict
 import numpy as np
 import pandas as pd
+from . import __version__
 
 MODE_DEFAULTS = {
     'cannon': {
@@ -68,7 +69,7 @@ class Cfg:
     """Class to configure a mixing model run."""
     seed: int = 0  # Note: Should not be set here - set when model is run only
     run_name: str = 'mpies'  # Name of the current run
-    _version: str = '0.9.0'  # TODO: set this somewhere central
+    _version: str = __version__  # Current version of MoonPIES
     run_date: str = pd.Timestamp.now().strftime("%y%m%d")
     run_time: str = pd.Timestamp.now().strftime("%H:%M:%S")
 
@@ -120,7 +121,7 @@ class Cfg:
     # Files to export to outpath (attr name must end with "_out")
     ej_t_csv_out: str = f'ej_columns_{run_name}.csv'
     ice_t_csv_out: str = f'ice_columns_{run_name}.csv'
-    config_py_out: str = f'config_{run_name}.py'
+    config_py_out: str = f'run_config_{run_name}.py'
     agegrd_npy_out: str = f'age_grid_{run_name}.npy'
     ejmatrix_npy_out: str = f'ejecta_matrix_{run_name}.npy'
 
@@ -161,19 +162,6 @@ class Cfg:
     ice_melt_temp: float = 273  # [k]
     ice_latent_heat: float = 334e3  # [j/kg] latent heat of h2o ice
 
-    # Comet constants
-    impact_speed_comet: bool = False  # Use comet impact speed distribution instead of asteroid speeds
-    comet_ast_frac: float = 0.1  # 5-17% TODO: check citation (Joy et al 2012) fraction of comets/asteroids
-    comet_density: float = 1300  # [kg/m^3]
-    comet_hydrated_wt_pct: float = 0.5  # 50% of comet mass is hydrated
-    comet_mass_retained: float = 0.065  # asteroid mass retained in impact (Ong et al., 2011)
-    halley_to_oort_ratio: float = 3  # N_Halley / N_Oort
-    halley_mean_speed: float = 20e3  # [m/s] (Chyba et al., 1994; Ong et al., 2011)
-    halley_sd_speed: float = 5e3  # [m/s]
-    oort_mean_speed: float = 54e3  # [m/s] (Jeffers et al., 2001; Ong et al., 2011)
-    oort_sd_speed: float = 5e3  # [m/s]
-    
-
     # Ejecta shielding module
     crater_cols: tuple = ('cname', 'lat', 'lon', 'psr_lat', 'psr_lon', 'diam', 
                           'age', 'age_low','age_upp', 'psr_area', 'age_ref', 
@@ -210,44 +198,6 @@ class Cfg:
     orientale_a: float = 1.8e4 # Orientale a value for secondary scaling law from Singer et al. 2020 [km]
     orientale_b: float = -0.95 # ± 0.17 Orientale b value for secondary scaling law from Singer et al. 2020 [km]
     
-    # Compute depths of secondary craters using singer or xie
-    secondary_depth_mode: str = 'singer'  # ['singer', 'xie']
-    secondary_depth_eff: float = True  # Convert secondary max depth to effective depth (Equation 17, Xie et al., 2020)
-    sec_depth_eff_rad_frac: float = 0.5 # [0-1 crater radii] Distance from secondary to compute depth (Equation 17, Xie et al., 2020)
-    sec_depth_eff_c_ex: float = 3.5  # Equation 17
-
-    ## Singer mode - compute secondary crater diam from observed secondaries
-    depth_to_diam_sec = 0.125  # Value used in Singer et al. (2020)
-
-    ## Xie mode - compute secondary crater depth from ballistic velocity
-    ## Equations from (Xie et al., 2020)
-    xie_a_simple: float = 0.0094  # pre-exponential term for simple secondaries, Equation 15 
-    xie_a_complex: float = 0.0134  # pre-exponential term for complex secondaries, Equation 16  
-    xie_b: float = 0.38  # velocity exponential, Equation 14
-
-
-    # Impact gardening module (Costello 2020)
-    overturn_prob_pct: str = '99%'  # poisson probability ['10%', '50%', '99%'] (table 1, Costello 2018)
-    n_overturn: int = 100  # number of overturns needed for ice loss
-    crater_proximity: float = 0.41  # crater proximity scaling parameter
-    depth_overturn: float = 0.04  # fractional depth overturned
-    target_kr: float = 0.6  # Costello 2018, for lunar regolith
-    target_k1: float = 0.132  # Costello 2018, for lunar regolith
-    target_k2: float = 0.26  # Costello 2018, for lunar regolith
-    target_mu: float = 0.41  # Costello 2018, for lunar regolith
-    target_yield_str: float = 0.01*1e6  # [pa] Costello 2018, for lunar regolith
-    overturn_regimes: tuple = ('primary', 'secondary', 'micrometeorite')
-    overturn_ab: dict = field(default_factory = lambda: ({  # overturn sfd params aD^b (table 2, Costello et al. 2018)
-        'primary': (6.3e-11, -2.7), 
-        'secondary': (7.25e-9, -4), # 1e5 secondaries, -4 slope from McEwen 2005
-        'micrometeorite': (1.53e-12, -2.64)
-    }))
-    impact_speeds: dict = field(default_factory = lambda: ({
-        'primary': 1800,  # [km/s]
-        'secondary': 507,  # [km/s]
-        'micrometeorite': 1800  # [km/s]
-    }))
-
     # Impact ice module   
     mm_mass_rate: float = 1e6  # [kg/yr], lunar micrometeorite flux (Grun et al. 2011)
     ctype_frac: float = 0.36  # 36% of impactors are c-type (Jedicke et al., 2018)
@@ -268,6 +218,18 @@ class Cfg:
         'd': -1.80,  # simple craters 'shallow' branch
         'e': -1.80,  # complex craters 'shallow' branch
     }))
+
+    # Comet constants
+    impact_speed_comet: bool = False  # Use comet impact speed distribution
+    comet_ast_frac: float = 0.1  # 5-17% TODO: check citation (Joy et al 2012) 
+    comet_density: float = 1300  # [kg/m^3]
+    comet_hydrated_wt_pct: float = 0.5  # 50% of comet mass is hydrated
+    comet_mass_retained: float = 0.065  # asteroid mass retained (Ong et al., 2011)
+    halley_to_oort_ratio: float = 3  # N_Halley / N_Oort
+    halley_mean_speed: float = 20e3  # [m/s] (Chyba et al., 1994; Ong et al., 2011)
+    halley_sd_speed: float = 5e3  # [m/s]
+    oort_mean_speed: float = 54e3  # [m/s] (Jeffers et al., 2001; Ong et al., 2011)
+    oort_sd_speed: float = 5e3  # [m/s]
 
     # Volcanic ice module
     volc_mode: str = 'Head'  # ['Head', 'NK']
@@ -293,6 +255,28 @@ class Cfg:
     solar_wind_mode: str = 'Benna'  # ['Benna', 'Lucey-Hurley']
     faint_young_sun: bool = True  # use faint young sun (Bahcall et al., 2001)
 
+    # Impact gardening module (Costello 2020)
+    overturn_prob_pct: str = '99%'  # poisson probability ['10%', '50%', '99%'] 
+    n_overturn: int = 100  # number of overturns needed for ice loss
+    crater_proximity: float = 0.41  # crater proximity scaling parameter
+    depth_overturn_frac: float = 0.04  # fractional depth overturned
+    target_kr: float = 0.6  # Costello 2018, for lunar regolith
+    target_k1: float = 0.132  # Costello 2018, for lunar regolith
+    target_k2: float = 0.26  # Costello 2018, for lunar regolith
+    target_mu: float = 0.41  # Costello 2018, for lunar regolith
+    target_yield_str: float = 0.01*1e6  # [pa] Costello 2018, for lunar regolith
+    overturn_regimes: tuple = ('primary', 'secondary', 'micrometeorite')
+    overturn_ab: dict = field(default_factory = lambda: ({  
+        # overturn sfd params aD^b (table 2, Costello et al. 2018)
+        'primary': (6.3e-11, -2.7), 
+        'secondary': (7.25e-9, -4), # 1e5 secondaries, -4 slope from McEwen 2005
+        'micrometeorite': (1.53e-12, -2.64)
+    }))
+    impact_speeds: dict = field(default_factory = lambda: ({
+        'primary': 1800,  # [km/s]
+        'secondary': 507,  # [km/s]
+        'micrometeorite': 1800  # [km/s]
+    }))
 
     def __post_init__(self):
         """Set paths, model defaults and raise error if invalid type supplied."""

@@ -7,7 +7,7 @@ rm $pkg
 mkdir moonpies_package
 mkdir moonpies_package/moonpies
 mkdir moonpies_package/data
-mkdir moonpies_package/figs
+mkdir moonpies_package/figures
 mkdir moonpies_package/test
 
 cp README.pdf moonpies_package

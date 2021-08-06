@@ -1,12 +1,12 @@
 [tool.poetry]
 name = "moonpies"
-version = "0.6.0"
+version = "0.10.0"
 description = "Moon Polar Ice and Ejecta Stratigraphy model"
-authors = ["Christian Tai Udovicic <cj.taiudovicic@gmail.com>"]
+authors = ["Christian J. Tai Udovicic <cjtu@nau.edu>", "Katelyn R. Frizzell", "Kristen M. Luchsinger", "Alissa Madera", "Tyler G. Paladino"]
 license = "MIT"
 
 [tool.poetry.dependencies]
-python = "^3.6.2"
+python = "^3.8"
 numpy = "^1.15"
 pandas = "^1.0"
 matplotlib = "^3.3"
@@ -18,6 +18,10 @@ pylint = "^2.9.3"
 pytest = "^6.2.4"
 pandoc = "^1.1.0"
 snakeviz = "^2.1.0"
+Sphinx = "^4.1.2"
+sphinx-rtd-theme = "^0.5.2"
+myst-parser = "^0.15.1"
+numpydoc = "^1.1.0"
 
 [tool.black]
 line-length=79
