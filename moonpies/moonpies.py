@@ -309,7 +309,8 @@ def read_lambda_table(costello_csv):
     ----------
     costello_csv (str): Path to costello et al. (2018) Table 1.
     """
-    df = pd.read_csv(costello_csv, header=1)
+    df = pd.read_csv(costello_csv, header=1, index_col=0)
+    df.columns = df.columns.astype(float)
     return df
 
 
@@ -834,79 +835,6 @@ def get_overturn_depth(time_arr, t, cfg=CFG):
     return CACHE["overturn_depth_time"][t]
 
 
-def overturn_depth_costello(u, v, cfg=CFG):
-    """
-    Return regolith overturn depth at time t, given lambda and size-frequency
-    u, v given (u*D^v). Uses eqn 10, Costello (2020).
-
-    Parameters
-    ----------
-    u (num): Sfd scaling factor (u*x^v) [m^-(2+v) yrs^-1]
-    t (num): Time elapsed [yrs] (i.e. timestep)
-    cfg (Cfg): Config object, must contain:
-        crater_proximity (num): Proximity scaling param for overlapping craters
-        depth_overturn_frac (num): Depth fraction of crater overturn
-
-    Returns
-    ----------
-    overturn_depth (num): Impact gardening depth [m]
-    """
-    c = cfg.crater_proximity
-    h = cfg.depth_overturn_frac
-    lam = overturn_lambda(cfg)
-    b = 1 / (v + 2)  # eq 12, Costello 2020
-    p1 = (v + 2) / (v * u)
-    p2 = 4 * lam / (np.pi * c ** 2)
-    a = abs(h * (p1 * p2) ** b)  # eq 11, Costello 2020
-    # TODO: should we get overturn for each timestep or all time at once?
-    overturn_depth = a * cfg.timestep ** (-b)  # eq 10, Costello 2020
-    return overturn_depth
-
-
-def overturn_u(a, b, regime, vf=1800, cfg=CFG):
-    """
-    Return size-frequecy factor u for overturn (eqn 13, Costello 2020).
-
-    Parameters
-    ----------
-    a (num): Pre-exponential factor
-    b (num): Exponent
-    regime (str): 
-    vf (num): Final velocity [m/s]
-    cfg (Cfg): Config object, must contain:
-    """
-    rho_t = cfg.target_density
-    rho_i = cfg.impactor_density_avg
-    kr = cfg.target_kr
-    k1 = cfg.target_k1
-    k2 = cfg.target_k2
-    mu = cfg.target_mu
-    y = cfg.target_yield_str
-    g = cfg.grav_moon
-    theta_i = cfg.impact_angle
-
-    # Eq 13, Costello 2020
-    alpha = k2 * (y / (rho_t * vf ** 2)) ** ((2 + mu) / 2)
-    beta = (-3 * mu) / (2 + mu)
-    delta = 2 * kr
-    gamma = (k1 * np.pi * rho_i) / (6 * rho_t)
-    eps = (g / (2 * vf ** 2)) * (rho_i / rho_t) ** (1 / 3)
-
-    if regime == "strength":
-        t1 = np.sin(np.deg2rad(theta_i)) ** (2 / 3)
-        denom = delta * (gamma * alpha ** beta) ** (1 / 3)
-        u = t1 * a * (1 / denom) ** b
-
-    elif regime == "gravity":
-        t1 = np.sin(np.deg2rad(theta_i)) ** (1 / 3)
-        denom = delta * (gamma * eps ** beta) ** (1 / 3)
-        exp = (3 * b) / (3 + beta)
-        u = t1 * a * (1 / denom) ** exp
-    else:
-        raise ValueError('Regime must be "strength" or "gravity"')
-    return u
-
-
 def overturn_depth_time(time_arr, cfg=CFG):
     """
     Return array of overturn depth [m] as a function of time.
@@ -924,15 +852,7 @@ def overturn_depth_time(time_arr, cfg=CFG):
     cfg.impact_speeds
     """
     if cfg.impact_gardening_costello:
-        overturn_depths = []
-        for r in cfg.overturn_regimes:
-            a, b = cfg.overturn_ab[r]
-            vf = cfg.impact_speeds[r]
-            a_scaled = a * impact_flux_scaling(time_arr)
-            u = overturn_u(a_scaled, b, "strength", vf, cfg)
-            overturn = overturn_depth_costello(u, b, cfg)
-            overturn_depths.append(overturn)
-        overturn_t = np.sum(overturn_depths, axis=0)
+        overturn_t = overturn_depth_costello_time(time_arr, cfg)
     else:
         # Cannon mode assume ice_erosion_rate 0.1 m / Ma gardening at all times
         t_scaling = cfg.timestep / 1e7  # scale from 10 Ma rate
@@ -940,23 +860,155 @@ def overturn_depth_time(time_arr, cfg=CFG):
     return overturn_t
 
 
-def overturn_lambda(cfg=CFG):
+def overturn_depth_costello_time(time_arr, cfg=CFG):
     """
-    Return lambda given prob_pct and n events (Table 1, Costello et al. 2018).
+    Return regolith overturn depth at each time_arr (Costello et al., 2020).
+    """
+    overturn_depths = []
+    for impactor in cfg.overturn_regimes:
+        a, b = cfg.overturn_ab[impactor]
+        dt = cfg.timestep
+        a_scaled = a * impact_flux_scaling(time_arr)
+        depth = overturn_depth_costello(dt, a_scaled, b, impactor, cfg=cfg)
+        overturn_depths.append(depth)
+    overturn_t = np.sum(overturn_depths, axis=0)
+    return overturn_t
+
+
+def overturn_depth_costello(t=None, a=None, b=None, impactor='primary', 
+                            regimes=('strength', 'gravity'), n_overturn=None, 
+                            prob=None, cfg=CFG):
+    """
+    Return regolith overturn depth after t elapsed (Costello et al., 2020).
+
+    Parameters
+    ----------
+    u (num): Sfd scaling factor (u*x^v) [m^-(2+v) yrs^-1]
+    t (num, arr): Time elapsed [yrs] (i.e. timestep)
+    cfg (Cfg): Config object, must contain:
+        crater_proximity (num): Proximity scaling param for overlapping craters
+        depth_overturn_frac (num): Depth fraction of crater overturn
+
+    Returns
+    ----------
+    overturn_depth (num): Impact gardening depth [m]
+    """
+    # Get parameters
+    c = cfg.crater_proximity
+    h = cfg.depth_overturn_frac
+    a_cfg, b_cfg = cfg.overturn_ab[impactor]
+    if t is None:
+        t = cfg.timestep
+    if a is None:
+        a = a_cfg
+    if b is None:
+        b = b_cfg
+    lam = overturn_lambda(n_overturn, prob, cfg)
+
+    # Compute overturn curves in strength and gravity regimes
+    overturn_depths = {}
+    for regime in regimes:
+        u = overturn_u(a, b, impactor, regime, cfg)
+        v = b
+        p1 = (v + 2) / (v * u)
+        p2 = 4 * lam / (np.pi * c ** 2)
+        B = 1 / (v + 2)  # eq 12, Costello 2020
+        A = np.abs(h * (p1 * p2) ** B)  # eq 11, Costello 2020
+        overturn_depths[regime] = A * t ** -B  # eq 10, Costello 2020
+    
+    # Depth is strength where depth < stength-to-grav depth, otherwise gravity
+    if len(regimes) > 1:
+        depth = np.atleast_1d(overturn_depths['strength'])
+        d_grav = np.atleast_1d(overturn_depths['gravity'])
+        depth[depth > cfg.depth_s2g] = d_grav[depth > cfg.depth_s2g]
+    else:
+        depth = overturn_depths[regime]
+    return depth
+
+
+def overturn_u(a, b, impactor='primary', regime='strength', cfg=CFG):
+    """
+    Return size-frequecy factor u for overturn (eqn 13, Costello 2020).
+
+    Parameters
+    ----------
+    a (num): Pre-exponential factor
+    b (num): Exponent
+    impactor (str): Impactor regime ['primary', 'secondary', 'micrometeorite']
+    cfg (Cfg): Config object, must contain:
+    """
+    rho_t = cfg.target_density
+    rho_i = cfg.impactor_density_avg
+    kr = cfg.target_kr
+    kd = cfg.target_kd
+    k1 = cfg.target_k1
+    k2 = cfg.target_k2
+    mu = cfg.target_mu
+    y = cfg.target_yield_str
+    g =  cfg.grav_moon 
+    theta = cfg.impact_angle
+    vf = cfg.impact_speeds[impactor]
+
+    # Eq 13, Costello 2020
+    alpha = k2 * (y / (rho_t * vf ** 2)) ** ((2 + mu) / 2)
+    beta = (-3 * mu) / (2 + mu)
+    delta = 2 * kr
+    gamma = (k1 * np.pi * rho_i) / (6 * rho_t)
+    eps = (g / (2 * vf ** 2)) * (rho_i / rho_t) ** (1/3)
+
+    # TODO DEBUG: compute thsese params derived in costello 2018
+    C = alpha / eps
+    C_LAM = ((kd * delta) / (2 * kr)) * (gamma*C**3 * (eps*C + alpha)**beta)**1/3  
+    # C~0.05 m, C_lam = 0.6 m
+    # print(C, C_LAM)
+    
+    if regime == "strength":
+        t1 = np.sin(np.deg2rad(theta)) ** (2/3)
+        denom = delta * (gamma * alpha ** beta) ** (1/3)
+        exp = b
+    elif regime == "gravity":
+        t1 = np.sin(np.deg2rad(theta)) ** (1/3)
+        denom = delta * (gamma * eps ** beta) ** (1/3)
+        exp = (3 * b) / (3 + beta)
+    else:
+        raise ValueError('Regime must be "strength" or "gravity"')
+    u = t1 * a * (1 / denom) ** exp
+    return u
+
+
+def overturn_lambda(n_overturn=None, prob=None, cfg=CFG):
+    """
+    Return lambda given prob and n events (Table 1, Costello et al. 2018).
+
+    If n == 1: any probability is allowed.
+    If n > 1: prob must be [0.1, 0.5, 0.99] (if not, closest is used)
 
     Parameters
     ----------
     n (num): cumulative number of overturn events
-    prob_pct ('10%', '50%', or '90%): percent probability threshold
+    prob (num): probability threshold [0, 1]
 
     Returns
     -------
     lam (num): avg number of events per area per time
     """
     df = read_lambda_table(cfg.costello_csv_in)
-
-    # Interpolate nearest value in df[prob_pct] from input n
-    lam = np.interp(cfg.n_overturn, df.n, df[cfg.overturn_prob_pct])
+    if n_overturn is None:
+        n_overturn = cfg.n_overturn
+    if prob is None:
+        prob = cfg.overturn_prob
+    if n_overturn == 1:
+        # Use nearest prob value
+        lam = df.iloc[0, np.abs(df.columns - prob).argmin()]
+    else:
+        # Currently only for 10%, 50%, and 99%, if missing find nearest
+        df = df.loc[:, [0.1, 0.5, 0.99]]
+        if prob not in df.columns:
+            old = prob
+            prob = df.columns[np.abs(df.columns - prob).argmin()]
+            print(f"Overturn prob {old} not in [0.1, 0.5, 0.99], using {prob}")
+        # Interpolate to nearest n value
+        lam = np.interp(n_overturn, df.index.values, df[prob])
     return lam
 
 

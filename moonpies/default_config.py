@@ -23,10 +23,10 @@ MODE_DEFAULTS = {
         'ballistic_hop_moores': True,  # hop_effcy per crater (Moores et al 2016)
         'ejecta_basins': True,
         'impact_ice_basins': True,
-        'impact_ice_comets': True, #TODO: test
+        'impact_ice_comets': True,
         'use_volc_dep_effcy': True, # Use volc_dep_efficiency instead of ballistic_hop_efficiency
-        'ballistic_sed': True, # Default: True. TODO: too big?
-        'impact_gardening_costello': True, 
+        'ballistic_sed': True, # TODO: improvements in progress
+        'impact_gardening_costello': False, # TODO: bug fixes in progress, use False for now
         'impact_speed_mean': 17e3,  # [m/s] 
     }
 }
@@ -113,7 +113,7 @@ class Cfg:
     crater_csv_in: str = 'crater_list.csv'
     basin_csv_in: str = 'basin_list.csv'
     nk_csv_in: str = 'needham_kring_2017_s3.csv'
-    costello_csv_in: str = 'costello_etal_2018_t1.csv'
+    costello_csv_in: str = 'costello_etal_2018_t1_expanded.csv'
     bahcall_csv_in: str = 'bahcall_etal_2001_t2.csv'
     teq_csv_in: str = 'ballistic_sed_teq.csv'
     bhop_csv_in: str = 'ballistic_hop_coldtraps.csv'
@@ -255,27 +255,29 @@ class Cfg:
     solar_wind_mode: str = 'Benna'  # ['Benna', 'Lucey-Hurley']
     faint_young_sun: bool = True  # use faint young sun (Bahcall et al., 2001)
 
-    # Impact gardening module (Costello 2020)
-    overturn_prob_pct: str = '99%'  # poisson probability ['10%', '50%', '99%'] 
-    n_overturn: int = 100  # number of overturns needed for ice loss
+    # Impact gardening module from Costello et al. (2018, 2020)
+    overturn_prob: float = 0.02  # poisson prob (equilibrium~0.02, saturation~0.99)
+    n_overturn: int = 1  # number of overturns needed for ice loss
     crater_proximity: float = 0.41  # crater proximity scaling parameter
     depth_overturn_frac: float = 0.04  # fractional depth overturned
-    target_kr: float = 0.6  # Costello 2018, for lunar regolith
-    target_k1: float = 0.132  # Costello 2018, for lunar regolith
-    target_k2: float = 0.26  # Costello 2018, for lunar regolith
-    target_mu: float = 0.41  # Costello 2018, for lunar regolith
-    target_yield_str: float = 0.01*1e6  # [pa] Costello 2018, for lunar regolith
+    depth_s2g: float = 0.6  # depth of strength-to-gravity transition (Costello et al., 2018)
+    target_k1: float = 0.132  # Costello et al. (2018), for lunar regolith
+    target_k2: float = 0.26  # Costello et al. (2018), for lunar regolith
+    target_kr: float = 1.1  # Costello et al. (2018), for lunar regolith
+    target_kd: float = 0.6  # Costello et al. (2018), for lunar regolith
+    target_mu: float = 0.41  # Costello et al. (2018), for lunar regolith
+    target_yield_str: float = 0.01*1e6  # [Pa] Costello et al. (2018), for lunar regolith
     overturn_regimes: tuple = ('primary', 'secondary', 'micrometeorite')
-    overturn_ab: dict = field(default_factory = lambda: ({  
-        # overturn sfd params aD^b (table 2, Costello et al. 2018)
-        'primary': (6.3e-11, -2.7), 
+    overturn_ab: dict = field(default_factory = lambda: ({
+        # overturn sfd params at^b (table 2, Costello et al., 2018)
+        'primary': (6.3e-11, -2.7),
         'secondary': (7.25e-9, -4), # 1e5 secondaries, -4 slope from McEwen 2005
         'micrometeorite': (1.53e-12, -2.64)
     }))
     impact_speeds: dict = field(default_factory = lambda: ({
-        'primary': 1800,  # [km/s]
-        'secondary': 507,  # [km/s]
-        'micrometeorite': 1800  # [km/s]
+        'primary': 18000,  # [m/s]
+        'secondary': 507,  # [m/s]
+        'micrometeorite': 18000  # [m/s]
     }))
 
     def __post_init__(self):
