@@ -2,6 +2,10 @@
 docs/_build/
 data/
 dist/
+figs/
+final_report/
+other_modules/
+paper/
 refs/
 __pycache__/
 *.zip
