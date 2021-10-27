@@ -143,7 +143,6 @@ class Cfg:
 
     # Impact cratering constants
     impactor_density: float = 1300  # [kg m^-3], (Carry 2012 via Cannon 2020)
-    impactor_density_avg: float = 2780  # [kg m^-3] Costello 2018
     # impactor_density = 3000  # [kg m^-3] ordinary chondrite (Melosh scaling)
     # impact_speed = 17e3  # [m/s] average impact speed (Melosh scaling)
     impact_speed_mean: float = 20e3  # [m/s] mean impact speed (Cannon 2020)
@@ -255,30 +254,10 @@ class Cfg:
     solar_wind_mode: str = 'Benna'  # ['Benna', 'Lucey-Hurley']
     faint_young_sun: bool = True  # use faint young sun (Bahcall et al., 2001)
 
-    # Impact gardening module from Costello et al. (2018, 2020)
-    overturn_prob: float = 0.02  # poisson prob (equilibrium~0.02, saturation~0.99)
-    n_overturn: int = 1  # number of overturns needed for ice loss
-    crater_proximity: float = 0.41  # crater proximity scaling parameter
-    depth_overturn_frac: float = 0.04  # fractional depth overturned
-    depth_s2g: float = 0.6  # depth of strength-to-gravity transition (Costello et al., 2018)
-    target_k1: float = 0.132  # Costello et al. (2018), for lunar regolith
-    target_k2: float = 0.26  # Costello et al. (2018), for lunar regolith
-    target_kr: float = 1.1  # Costello et al. (2018), for lunar regolith
-    target_kd: float = 0.6  # Costello et al. (2018), for lunar regolith
-    target_mu: float = 0.41  # Costello et al. (2018), for lunar regolith
-    target_yield_str: float = 0.01*1e6  # [Pa] Costello et al. (2018), for lunar regolith
-    overturn_regimes: tuple = ('primary', 'secondary', 'micrometeorite')
-    overturn_ab: dict = field(default_factory = lambda: ({
-        # overturn sfd params at^b (table 2, Costello et al., 2018)
-        'primary': (6.3e-11, -2.7),
-        'secondary': (7.25e-9, -4), # 1e5 secondaries, -4 slope from McEwen 2005
-        'micrometeorite': (1.53e-12, -2.64)
-    }))
-    impact_speeds: dict = field(default_factory = lambda: ({
-        'primary': 18000,  # [m/s]
-        'secondary': 507,  # [m/s]
-        'micrometeorite': 18000  # [m/s]
-    }))
+    # Impact gardening module Costello et al. (2020)
+    overturn_depth_present: float = 0.1  # [m] Present day overturn depth for secondaries at 99%
+    overturn_ancient_slope: float = 0.01  # [m/yr] Slope of overturn depth at higher early impact flux > 2 Ga
+    # TODO: find ancirent slope
 
     def __post_init__(self):
         """Set paths, model defaults and raise error if invalid type supplied."""
