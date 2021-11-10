@@ -777,7 +777,7 @@ def erode_ice_cannon(ice_col, ej_col, t, erosion_depth=0.1, ej_shield=0.4):
     return ice_col
 
 
-def garden_ice_column(ice_column, ejecta_column, t, depth):
+def garden_ice_column(ice_column, ejecta_column, t, depth, eff=1):
     """
     Return ice_column gardened to overturn_depth, preserved by ejecta_column.
 
@@ -791,6 +791,7 @@ def garden_ice_column(ice_column, ejecta_column, t, depth):
     t (int): Current timestep (first index in ice/ej columns to garden)
     depth (num): Total depth [m] to garden.
     ice_first (bool): Erode ice first (bsed) else ejecta first (gardening)
+    eff (num): Erosion efficiency (frac removed in each layer, default 100%)
     """
     # Alternate so i//2 is current index to garden (odd: ejecta, even: ice)
     # If ice_first, skip topmost ejecta layer and erode ice first
@@ -801,9 +802,12 @@ def garden_ice_column(ice_column, ejecta_column, t, depth):
             # Odd i (ejecta): do nothing, add ejecta layer to depth, d
             d += ejecta_column[i // 2]
         else:
-            # Even i (ice): remove all ice from layer, add it to depth, d
-            d += ice_column[i // 2]
-            ice_column[i // 2] = 0
+            # Even i (ice): remove ice*eff from layer, add it to depth, d
+            removed = ice_column[i // 2] * eff
+            d += removed
+            ice_column[i // 2] -= removed
+
+            # TODO: check if last step, only remove some ice
         i -= 1
     # If odd i (ice) on last iter, we likely removed too much ice
     #   Add back any excess depth we travelled to ice_col
@@ -864,8 +868,10 @@ def overturn_depth_costello_time(time_arr, cfg=CFG):
     """
     Return regolith overturn depth at each time_arr (Costello et al., 2020).
     """
-    depth = np.ones_like(time_arr) *cfg.overturn_depth_present
-    depth[time_arr > 2e9] += cfg.overturn_ancient_slope * (time_arr[time_arr > 2e9] - 2e9)
+    t_anc = cfg.overturn_ancient_t0
+    depth = np.ones_like(time_arr) * cfg.overturn_depth_present
+    d_scaling = cfg.overturn_ancient_slope * (time_arr - t_anc) + 1
+    depth[time_arr > t_anc] *= d_scaling[time_arr > t_anc]
     return depth
 
 
