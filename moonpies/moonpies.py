@@ -804,16 +804,13 @@ def garden_ice_column(ice_column, ejecta_column, t, depth, eff=1):
         else:
             # Even i (ice): remove ice*eff from layer, add it to depth, d
             removed = ice_column[i // 2] * eff
+
+            # Removing more ice than depth so only remove enough to reach depth
+            if (d + removed) > depth:
+                removed = depth - d
             d += removed
             ice_column[i // 2] -= removed
-
-            # TODO: check if last step, only remove some ice
         i -= 1
-    # If odd i (ice) on last iter, we likely removed too much ice
-    #   Add back any excess depth we travelled to ice_col
-    last_ind = i + 1
-    if not (last_ind % 2) and d > depth:
-        ice_column[last_ind // 2] = d - depth
     return ice_column
 
 
@@ -1069,8 +1066,8 @@ def get_ice_coldtrap(ice_polar, ice_volcanic, coldtrap, cfg=CFG):
         ice_volcanic *= cfg.volc_dep_effcy / cfg.ballistic_hop_effcy
     else:
         # Treat as ballistically hopping polar ice
-        ice_volcanic = 0
         ice_polar += ice_volcanic
+        ice_volcanic = 0
     
     # Rescale by ballistic hop efficiency per coldtrap
     if cfg.ballistic_hop_moores:
@@ -1078,14 +1075,6 @@ def get_ice_coldtrap(ice_polar, ice_volcanic, coldtrap, cfg=CFG):
         ice_polar *= bhop_effcy_coldtrap / cfg.ballistic_hop_effcy
     coldtrap_ice = ice_polar + ice_volcanic
     return coldtrap_ice
-
-
-def ice_moores(ice_thickness, bhop_effcy_pole, bhop_effcy_coldtrap):
-    """
-    Return ice_thickness scaled by ballistic hop efficiency of coldtrap.
-    """
-    bhop_eff_per_crater = bhop_effcy_pole / bhop_effcy_coldtrap
-    return ice_thickness * bhop_eff_per_crater
 
 
 def ice_micrometeorites(time, cfg=CFG):

@@ -3,13 +3,12 @@ import sys
 from pathlib import Path
 sys.path.insert(0, Path(__file__).parents[1].joinpath('moonpies').as_posix())
 
-import unittest
 from unittest.mock import patch
 import numpy as np
 import default_config
 import moonpies as mp
 
-CFG = default_config.Cfg()
+CFG = default_config.from_dict({'mode': 'cannon'})
 
 def test_volcanic_ice_head():
     """Test volcanic_ice_head()."""
@@ -178,7 +177,7 @@ def test_ice_large_craters_D():
     # Test 4.25 Ga
     t = 4.25e9
     diams, ncraters, sfd_prob = mp.get_crater_pop(t, regime, CFG)
-    crater_diams = mp.get_random_hydrated_craters(diams, CFG, rng)
+    crater_diams = mp.get_random_hydrated_craters(len(diams), CFG, rng)
     impactor_speeds = mp.get_random_impactor_speeds(len(crater_diams), CFG, rng)
     actual = mp.ice_large_craters(crater_diams, impactor_speeds, regime, CFG)
     expected = cannon_D(crater_diams, impactor_speeds)
@@ -187,7 +186,7 @@ def test_ice_large_craters_D():
     # Test 4.25 Ga
     t = 3e9
     diams, ncraters, sfd_prob = mp.get_crater_pop(t, regime, CFG)
-    crater_diams = mp.get_random_hydrated_craters(diams, CFG, rng)
+    crater_diams = mp.get_random_hydrated_craters(len(diams), CFG, rng)
     impactor_speeds = mp.get_random_impactor_speeds(len(crater_diams), CFG, rng)
     actual = mp.ice_large_craters(crater_diams, impactor_speeds, regime, CFG)
     expected = cannon_D(crater_diams, impactor_speeds)
@@ -223,7 +222,7 @@ def test_ice_large_craters_E():
     # Test 4.25 Ga
     t = 4.25e9
     diams, ncraters, sfd_prob = mp.get_crater_pop(t, regime, CFG)
-    crater_diams = mp.get_random_hydrated_craters(diams, CFG, rng)
+    crater_diams = mp.get_random_hydrated_craters(len(diams), CFG, rng)
     impactor_speeds = mp.get_random_impactor_speeds(len(crater_diams), CFG, rng)
     actual = mp.ice_large_craters(crater_diams, impactor_speeds, regime, CFG)
     expected = cannon_E(crater_diams, impactor_speeds)
@@ -232,7 +231,7 @@ def test_ice_large_craters_E():
     # Test 3 Ga
     t = 3
     diams, ncraters, sfd_prob = mp.get_crater_pop(t, regime, CFG)
-    crater_diams = mp.get_random_hydrated_craters(diams, CFG, rng)
+    crater_diams = mp.get_random_hydrated_craters(len(diams), CFG, rng)
     impactor_speeds = mp.get_random_impactor_speeds(len(crater_diams), CFG, rng)
     actual = mp.ice_large_craters(crater_diams, impactor_speeds, regime, CFG)
     expected = cannon_E(crater_diams, impactor_speeds)
@@ -433,21 +432,6 @@ def test_diam2len_johnson():
     np.testing.assert_allclose(actual, expected, rtol=0.35)
 
 
-def test_diam2len_potter():
-    """Test diam2len_potter."""
-    # Testing fig 6, Potter et al. 2016
-    diams = np.array([208629, 255489, 343091])
-    actual = mp.diam2len_potter(
-            diams,
-	    v=17e3,
-	    rho_i=1300,
-	    rho_t=1500,
-	    g=1.62,
-	    )
-    expected = ([41113, 55351, 85316]) # TODO
-    np.testing.assert_allclose(actual, expected, rtol=0.35)
-
-
 def test_garden_ice_column():
     """Test garden_ice_column."""
 
@@ -510,7 +494,7 @@ def test_cannon_ds01(mock_get_impact_ice, mock_ej_thick_matrix):
     # 3.0 Ga: 4.3507 m until 2.0 Ga (late volcanism)
     # 2.0 Ga: 4.3474 m until 0 Ga
     """
-    cfg = default_config.Cfg(mode='cannon')
+    cfg = CFG
     ncraters = len(cfg.coldtrap_names)
     ntime = len(mp.get_time_array(cfg))
 
@@ -576,9 +560,8 @@ def test_cannon_ds02(mock_diam2len):
     """
     Test Cannon mode produces same impact ice as main Cannon model regimes.
     """
-    cfg = default_config.Cfg()
-    cfg.mode = 'cannon'
-    rng = mp.get_rng(92855)
+    cfg = CFG
+    rng = mp._rng(92855)
     time_arr = np.array([4.25e9, 4.0e9, 3.5e9, 2.0e9, 1.0e9])
 
     # # Test regimes a, b, c

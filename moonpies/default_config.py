@@ -4,7 +4,7 @@ from os import path, sep, environ, getcwd
 from dataclasses import dataclass, fields, field, asdict
 import numpy as np
 import pandas as pd
-from . import __version__
+from _version import __version__
 
 MODE_DEFAULTS = {
     'cannon': {
