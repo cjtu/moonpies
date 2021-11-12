@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "moonpies"
-version = "0.10.0"
+version = "0.11.0"
 description = "Moon Polar Ice and Ejecta Stratigraphy model"
 authors = ["Christian J. Tai Udovicic <cjtu@nau.edu>", "Katelyn R. Frizzell", "Kristen M. Luchsinger", "Alissa Madera", "Tyler G. Paladino"]
 license = "MIT"

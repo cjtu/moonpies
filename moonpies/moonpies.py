@@ -78,7 +78,7 @@ def init_strat_columns(time_arr, df, cfg=CFG):
     df (DataFrame): Crater DataFrame.
     cfg (Cfg): Config object.
     """
-    ej_cols, ej_sources = get_ejecta_thickness_matrix(time_arr, df, cfg)
+    ej_cols, ej_sources = get_ejecta_thickness_time(time_arr, df, cfg)
     strat_columns = make_strat_columns(ej_cols, ej_sources, cfg)
     return strat_columns
 
@@ -156,14 +156,14 @@ def update_strat_cols(strat_cols, time_arr, t, cfg=CFG, rng=None):
     rng (seed or np.random.rng): Random number generator.
     """
     # Get ice modification for this timestep
-    ballistic_sed_d = get_ballistic_sed_depths(time_arr, t, cfg)
+    bsed_depth, bsed_frac = get_ballistic_sed_depths(time_arr, t, cfg)
     polar_ice = get_polar_ice(time_arr, t, cfg, rng)
     volc_ice = get_volcanic_ice_t(time_arr, t, cfg)
     overturn_d = get_overturn_depth(time_arr, t, cfg)
 
     # Update all coldtrap strat_cols
     for i, (coldtrap, cols) in enumerate(strat_cols.items()):
-        bsed_d = ballistic_sed_d[i]
+        bsed_d = bsed_depth[i]
         new_ice = get_ice_coldtrap(polar_ice, volc_ice, coldtrap, cfg)
         ice_col = update_ice_col(cols, t, new_ice, overturn_d, bsed_d, cfg)
         strat_cols[coldtrap][0] = ice_col
@@ -385,14 +385,41 @@ def get_ejecta_thickness(distance, radius, ds2c=18e3, order=-3):
     return thickness
 
 
-def get_ejecta_thickness_matrix(time_arr, df, cfg=CFG):
+def get_ejecta_thickness_time(time_arr, df, cfg=CFG):
     """
-    Return ejecta_matrix of thickness [m] at each time in time_arr given
-    triangular matrix of distances between craters in df.
+    Return ejecta thickness [m] and name(s) of ejecta source craters at each 
+    time in time_arr.
 
     Returns
     -------
-    ejecta_thick_time (3D array): Ejecta thicknesses (shape: NY, NX, NT)
+    ej_thick_t (2D array): Ejecta thickness at each t in time_arr by coldtrap
+    ej_sources_t (2D array): Source crater(s) at each t in time_arr by coldtrap
+    """
+    ej_thick = get_ejecta_thickness_matrix(df, cfg)
+    ej_ages = df.age.values
+    ej_thick_t = ages2time(time_arr, ej_ages, ej_thick, np.nansum, 0)
+
+    # Label sources above threshold
+    has_ej = ej_thick > cfg.thickness_threshold
+    ej_sources = (df.cname.values[:, np.newaxis] + ",") * has_ej
+    ej_sources_t = ages2time(time_arr, ej_ages, ej_sources, np.sum, "", object)
+    ej_sources_t = np.char.rstrip(ej_sources_t.astype(str), ",")
+    return ej_thick_t, ej_sources_t
+
+
+def get_ejecta_thickness_matrix(df, cfg=CFG):
+    """
+    Return ejecta thickness matrix of thickness [m] of ejecta in each coldtrap
+    crater from each crater in df (shape: len(df), len(cfg.coldtrap_names)).
+
+    Requires:
+    - cfg.coldtrap_names
+    - cfg.simple2complex
+    - cfg.ejecta_thickness_order
+
+    Returns
+    -------
+    ejecta_thick (2D array): Ejecta thickness from each crater to each coldtrap
     """
     # Distance from all craters to all coldtraps shape: (Ncrater, Ncoldtrap)
     ej_distances = get_coldtrap_dists(df, cfg)
@@ -405,15 +432,7 @@ def get_ejecta_thickness_matrix(time_arr, df, cfg=CFG):
         cfg.simple2complex,
         cfg.ejecta_thickness_order,
     )
-    ej_ages = df.age.values
-    ej_thick_t = ages2time(time_arr, ej_ages, ej_thick, np.nansum, 0)
-
-    # Label sources above threshold
-    has_ej = ej_thick > cfg.thickness_threshold
-    ej_sources = (df.cname.values[:, np.newaxis] + ",") * has_ej
-    ej_sources_t = ages2time(time_arr, ej_ages, ej_sources, np.sum, "", object)
-    ej_sources_t = np.char.rstrip(ej_sources_t.astype(str), ",")
-    return ej_thick_t, ej_sources_t
+    return ej_thick
 
 
 def ages2time(time_arr, age_arr, values, agg=np.nansum, fillval=0, dtype=None):
@@ -678,6 +697,101 @@ def volcanic_ice_head(time_arr, cfg=CFG):
 
 
 # Ballistic sedimentation module
+def get_melt_frac(ejecta_temps, vol_fracs, cfg=CFG):
+    """
+
+    """
+    mdf = read_ballistic_melt_frac(cfg.bsed_frac_mean_in)
+    temps = insert_unique_in_range(ejecta_temps, mdf.columns.to_numpy())
+    vfs = insert_unique_in_range(vol_fracs, mdf.index.to_numpy())
+    mdf = mdf.reindex(index=vfs, columns=temps)
+    minterp = mdf.interpolate(axis=0).interpolate(axis=1)
+    melt_frac = np.zeros_like(ejecta_temps)
+    for i, row in enumerate(ejecta_temps):
+        for j, temp in enumerate(row):
+            try:
+                melt_frac[i, j] = minterp.loc[vol_fracs[i, j], temp]
+            except KeyError:
+                melt_frac[i, j] = 0
+    return melt_frac
+
+
+def insert_unique_in_range(src, target):
+    """
+    Return sorted target with unique values in src inserted.
+    """
+    uniq = np.unique(src[~np.isnan(src)])
+    t_min = target.min()
+    t_max = target.max()
+    uniq = uniq[(t_min < uniq) & (uniq < t_max)]
+    arr = np.sort(np.concatenate([target, uniq]))
+    return arr
+
+
+def kinetic_energy(mass, velocity):
+    """Return kinetic energy [J] given mass [kg] and velocity [m/s]."""
+    return 0.5 * mass * velocity ** 2
+
+
+def ejecta_temp(ke, mass, cfg=CFG):
+    """
+    Return the temperature distribution of the ejecta blanket
+
+    delT = KE / (mass * cp)
+
+    Note: assumes initial ejecta temp is from a typical subsurface polar region
+
+    Parameters
+    ----------
+    ke (num or array): kinetic energy of the ejecta blanket [J/m^2]
+    thick (num or array): thickness of the ejecta blanket [m]
+    Cp (num): specific heat of the ejecta blanket [J/K/kg]
+    density (num): density of the ejecta blanket [kg/m^3]
+    """
+    return cfg.ejecta_temp_init + cfg.heat_frac * ke / (mass * cfg.regolith_cp)
+
+
+def ballistic_velocity(dist, cfg=CFG):
+    """
+    Return ballistic speed given dist of travel [km] assuming spherical planet 
+    (Vickery, 1986).
+
+    Requires:
+    - cfg.grav_moon
+    - cfg.rad_moon
+    - cfg.impact_angle
+    
+    Parameters
+    ----------
+    dist (arr): Distance of travel [m]
+
+    Returns
+    -------
+    v (arr): Ballistic speed [m/s]
+    """
+    theta = np.radians(cfg.impact_angle)
+    g = cfg.grav_moon
+    rp = cfg.rad_moon
+    tan_phi = np.tan(dist / (2 * rp))
+    num = g * rp * tan_phi
+    denom = (np.sin(theta) * np.cos(theta)) + (np.cos(theta)**2 * tan_phi)
+    return np.sqrt(num / denom)
+
+
+@lru_cache(2)
+def read_ballistic_melt_frac(bsed_csv, cfg=CFG):
+    """
+    Return DataFrame of ballistic sedimentation melt fractions.
+
+    Returns
+    -------
+    df (DataFrame): DataFrame of melt fractions.
+    """
+    df = pd.read_csv(bsed_csv, index_col=0, dtype=cfg.dtype)
+    df.columns = df.columns.astype(cfg.dtype)
+    return df
+
+
 def get_ballistic_sed_depths(time_arr, t, cfg=CFG):
     """
     Return ballistic sedimentation depth for each coldtrap at t.
@@ -685,9 +799,10 @@ def get_ballistic_sed_depths(time_arr, t, cfg=CFG):
     global CACHE
     if "bsed_depths" not in CACHE:
         df = CACHE['crater_list']  # Must exist before calling this function
-        # CACHE["bsed_depths"] = ballistic_sed_depths_time(time_arr, df, cfg)
-        CACHE["bsed_depths"] = bsed_depth_petro_pieters(time_arr, df, cfg)
-    return CACHE["bsed_depths"][t]
+        bsed_depths, bsed_fracs = bsed_depth_petro_pieters(time_arr, df, cfg)
+        CACHE["bsed_depths"] = bsed_depths
+        CACHE["bsed_fracs"] = bsed_fracs
+    return CACHE["bsed_depths"][t], CACHE["bsed_fracs"][t]
 
 
 def bsed_depth_petro_pieters(time_arr, df, cfg=CFG):
@@ -697,41 +812,74 @@ def bsed_depth_petro_pieters(time_arr, df, cfg=CFG):
 
     Returns
     -------
-    bsed_depths (arr): Ballistic sedimentation depth shape: (time, coldtraps).
+    bsed_depths (arr): Ballistic sed depth. shape: (time, coldtraps).
+    bsed_fracs (arr): Ballistic sed melt fraction. shape: (time, coldtraps).
     """
     if not cfg.ballistic_sed:
-        return np.zeros((len(time_arr), len(cfg.coldtrap_names)), cfg.dtype)
+        depths = np.zeros((len(time_arr), len(cfg.coldtrap_names)), cfg.dtype)
+        fracs = np.zeros((len(time_arr), len(cfg.coldtrap_names)), cfg.dtype)
+        return depths, fracs
+
+    # Get distance, mixing_ratio, volume_frac for each crater to each coldtrap 
     dist = get_coldtrap_dists(df, cfg)
-    vol_frac = get_volume_frac_oberbeck(dist, cfg)
+    thick = get_ejecta_thickness_matrix(df, cfg)
+    mass = thick * cfg.target_density
+    vel = ballistic_velocity(dist, cfg)
+    ke = kinetic_energy(mass, vel)
+    ej_temp = ejecta_temp(ke, mass, cfg)
+    mixing_ratio = get_mixing_ratio_oberbeck(dist, cfg)
+    volume_frac = mixing_ratio_to_volume_fraction(mixing_ratio)
+    melt_frac = get_melt_frac(ej_temp, volume_frac, cfg)
     
-    ejecta_thickness_t, _ = get_ejecta_thickness_matrix(time_arr, df, cfg)
     # Convert to time array shape: (Ncrater, Ncoldtrap) -> (Ntime, Ncoldtrap)
+    ejecta_thickness_t, _ = get_ejecta_thickness_time(time_arr, df, cfg)
     ages = df.age.values
-    vol_frac_t = ages2time(time_arr, ages, vol_frac, np.nanmax, 0)
-    bsed_depths = ejecta_thickness_t * vol_frac_t
-    return bsed_depths
+    mixing_ratio_t = ages2time(time_arr, ages, mixing_ratio, np.nanmax, 0)
+    bsed_depths_t = ejecta_thickness_t * mixing_ratio_t
+    # TODO: should we take the max melt frac with multiple events?
+    melt_frac_t = ages2time(time_arr, ages, melt_frac, np.nanmax, 0) 
+    return bsed_depths_t, melt_frac_t
 
 
-def get_volume_frac_oberbeck(ej_distances, cfg=CFG):
+def mixing_ratio_to_volume_fraction(mixing_ratio):
     """
-    Return volume fraction of target/ejecta material in [0, 1]. 
+    Return volume fraction from mixing ratio.
     
-    Ex. 0.9 = 90% target, 10% ejecta; 0.5 = 50% target, 50% ejecta.
+    mr 66% => 66% target / 33% ejecta = 2
+    mr 90% => 90% of target material, 10% ejecta => 9
+
+    Parameters
+    ----------
+    mixing_ratio (arr): Mixing ratio
+
+    Returns
+    -------
+    volume_fraction (arr): Volume fraction
+    """
+    return mixing_ratio / (1 + mixing_ratio)
+
+
+def get_mixing_ratio_oberbeck(ej_distances, cfg=CFG):
+    """
+    Return mixing ratio of target/ejecta material.
+
+    Ex. 0.5: target == 1/2 ejecta
+    Ex. 1: target == ejecta
+    Ex. 2: target == 2 * ejecta
     
     Parameters
     ----------
-    ej_distances (2D array): distances between each crater and each cold trap [m]
+    ej_distances (2D array): distance [m] between each crater and cold trap
     
     Returns
     -------
-    vf (2D array): volume fraction of ballistic sedimentation mixing region for
-        each crater into each cold trap [fraction]
+    mr (2D array): mixing ratio of local (target) to foreign (ejecta) material
     """
-    dist = ej_distances * 1e-3  # [m -> km]    
-    vol_frac = cfg.vol_frac_a * dist ** cfg.vol_frac_b
-    if cfg.vol_frac_petro:
-        vol_frac[vol_frac > 5] = 0.5 * vol_frac[vol_frac > 5] + 2.5
-    return vol_frac
+    dist = ej_distances * 1e-3  # [m -> km]
+    mr = cfg.mr_a * dist ** cfg.mr_b
+    if cfg.mr_petro:
+        mr[mr > 5] = 0.5 * mr[mr > 5] + 2.5
+    return mr
 
 
 # Impact gardening module (remove ice by impact overturn)

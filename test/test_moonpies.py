@@ -472,9 +472,9 @@ def test_garden_ice_column():
 
 
 # Acceptance test for Cannon ds01
-@patch('moonpies.get_ejecta_thickness_matrix')
+@patch('moonpies.get_ejecta_thickness_time')
 @patch('moonpies.get_impact_ice')
-def test_cannon_ds01(mock_get_impact_ice, mock_ej_thick_matrix):
+def test_cannon_ds01(mock_get_impact_ice, mock_ej_thick_time):
     """
     Test Cannon mode produces same ice cols as main Cannon model.
     
@@ -504,7 +504,7 @@ def test_cannon_ds01(mock_get_impact_ice, mock_ej_thick_matrix):
     ej_thickness[10] = 0.3
     ej_thickness[15] = 0.4
     ej_thickness[20] = 0.5
-    mock_ej_thick_matrix.return_value = (ej_thickness, np.full(ej_thickness.shape, '', dtype=object))
+    mock_ej_thick_time.return_value = (ej_thickness, np.full(ej_thickness.shape, '', dtype=object))
 
     # Mock get_impact_ice same way as in Cannon (1e15 kg at every timestep)
     ice_thickness = mp.get_ice_thickness(1e15, cfg)
@@ -613,6 +613,17 @@ def test_cannon_ds02(mock_diam2len):
     mock_diam2len.return_value = np.array([0.8229,1.1411,3.2323,7.1054,24.7516])
     regimeeice = mp.ice_large_craters(crater_diams, impactor_speeds, "e", cfg)
     np.testing.assert_approx_equal(regimeeice, 6.4969e+03, 4)
+
+
+def test_moonpies_mode():
+    """Run main in moonpies mode."""
+    cfg = default_config.from_dict({
+        'mode': 'moonpies', 
+        'seed': 0,
+        'write': False,
+        'write_npy': False
+    })
+    mp.main(cfg)
 
 if __name__ == '__main__':
     import pytest

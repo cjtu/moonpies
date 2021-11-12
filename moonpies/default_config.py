@@ -4,7 +4,10 @@ from os import path, sep, environ, getcwd
 from dataclasses import dataclass, fields, field, asdict
 import numpy as np
 import pandas as pd
-from _version import __version__
+try:
+    from ._version import __version__
+except ImportError:
+    from _version import __version__
 
 MODE_DEFAULTS = {
     'cannon': {
@@ -115,8 +118,9 @@ class Cfg:
     nk_csv_in: str = 'needham_kring_2017_s3.csv'
     costello_csv_in: str = 'costello_etal_2018_t1_expanded.csv'
     bahcall_csv_in: str = 'bahcall_etal_2001_t2.csv'
-    teq_csv_in: str = 'ballistic_sed_teq.csv'
     bhop_csv_in: str = 'ballistic_hop_coldtraps.csv'
+    bsed_frac_mean_in: str = 'ballistic_sed_frac_melted_mean.csv'
+    bsed_frac_std_in: str = 'ballistic_sed_frac_melted_std.csv'
 
     # Files to export to outpath (attr name must end with "_out")
     ej_t_csv_out: str = f'ej_columns_{run_name}.csv'
@@ -174,13 +178,14 @@ class Cfg:
 
     # Ballistic sedimentation module
     ballistic_teq: bool = False  # Do ballistic sed only if teq > coldtrap_max_temp
-    vol_frac_a: float = 0.0183  # (Oberbeck et al. 1975 via Eq 4 Zhang et al. 2021)  #2.913  # Fit to Ries crater ballistic sed, a
-    vol_frac_b: float = 0.87  # (Oberbeck et al. 1975 via Eq 4 Zhang et al. 2021)  #-3.978  # Fit to Ries crater ballistic sed, b
-    vol_frac_petro: bool = True  # Use Petro and Pieter (2006) adjustment to volume fraction
-    ice_frac: float = 0.056  # fraction ice vs regolith (5.6% Colaprete 2010)
-    heat_frac: float = 0.5  # fraction of ballistic ke used in heating vs mixing
-    heat_retained: float = 0.1  # fraction of heat retained (10-30%; Stopar 2018)
-    regolith_cp: float = 4.3e3  # heat capacity [J kg^-1 K^-1] (0.7-4.2 kJ/kg/K for h2o)
+    mr_a: float = 0.0183  # (Oberbeck et al. 1975 via Eq 4 Zhang et al. 2021)  #2.913  # Fit to Ries crater ballistic sed, a
+    mr_b: float = 0.87  # (Oberbeck et al. 1975 via Eq 4 Zhang et al. 2021)  #-3.978  # Fit to Ries crater ballistic sed, b
+    mr_petro: bool = True  # Use Petro and Pieter (2006) adjustment to volume fraction
+    ice_frac: float = 0.056  # Fraction ice vs regolith (5.6% Colaprete 2010)
+    heat_frac: float = 0.5  # Fraction of ballistic ke used in heating vs mixing
+    heat_retained: float = 0.1  # Fraction of heat retained (10-30%; Stopar 2018)
+    regolith_cp: float = 396.3  # Heat capacity at 140 K [J kg^-1 K^-1] (Hayne et al., 2017)
+    ejecta_temp_init: float = 140  # [K] Initial ejecta temperature (Vasavada et al., 1999 via Feng & Siegler, 2021)
 
     # Secondary crater scaling (Singer et al, 2020)
     ## Regression values from Table 2 (Singer et al., 2020)
@@ -197,7 +202,7 @@ class Cfg:
     orientale_a: float = 1.8e4 # Orientale a value for secondary scaling law from Singer et al. 2020 [km]
     orientale_b: float = -0.95 # ± 0.17 Orientale b value for secondary scaling law from Singer et al. 2020 [km]
     
-    # Impact ice module   
+    # Impact ice module
     mm_mass_rate: float = 1e6  # [kg/yr], lunar micrometeorite flux (Grun et al. 2011)
     ctype_frac: float = 0.36  # 36% of impactors are c-type (Jedicke et al., 2018)
     ctype_hydrated: float = 2/3  # 2/3 of c-types are hydrated (Rivkin, 2012)
@@ -316,7 +321,7 @@ class Cfg:
         for k, v in ddict.copy().items():
             if 'path' in k:
                 ddict[k] = ''
-            elif '_in' in k or '_out' in k:
+            elif k[-3:] == '_in' in k[-4:] == '_out':
                 ddict[k] = path.basename(v)
         self.to_py(outpath, self.to_string(ddict))
 
@@ -448,9 +453,9 @@ def _make_paths_absolute(cfg, field, datapath, outpath):
     """
     value = getattr(cfg, field.name)
     newpath = ''
-    if '_in' in field.name:
+    if field.name[-3:] == '_in':
         newpath = path.join(datapath, value)
-    elif '_out' in field.name:
+    elif field.name[-4:] == '_out':
         # Recompute path to _out files in case outpath changed (e.g. appending seed dir)
         newpath = path.join(outpath, path.basename(value))
     elif 'path' in field.name:
