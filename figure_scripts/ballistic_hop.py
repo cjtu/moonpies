@@ -1,11 +1,14 @@
+from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
-import pandas as pd
-import moonpies as mp
-import default_config
+from moonpies import moonpies as mp
+from moonpies import default_config
 
-fig_dir = "/home/kristen/codes/code/moonpies_package/figs/"
-data_dir = "/home/kristen/codes/code/moonpies_package/data/"
+# Set Fig paths
+FIGDIR = ''  # Set or leave blank to use default (moonpies/figs)
+if not FIGDIR:
+    FIGDIR = default_config.Cfg().figspath
+FIGDIR = str(Path(FIGDIR).resolve() / "_")[:-1]  # add trailing slash
 
 def Moores():
     names = ["Haworth", "Shoemaker", "Faustini", "de Gerlache", "Sverdrup", "Shackleton","Cabeus"]
@@ -39,7 +42,7 @@ def plot_km(lat, frac, m, b, cold_trap_lat, cold_trap_name, cfg):
     plt.plot(cold_trap_lat,1e6*(m*cold_trap_lat + b), label="Fit to Moores 2016")
 
     plt.axhline(100*(0.056), label="Cannon et al. 2020")
-    plt.text(82, 100*(0.056 + 0.0001), "Cannon et al. 2020")
+    plt.text(82, 100*(0.056 + 0.001), "Cannon et al. 2020")
     plt.text(86.7, 100*(0.056 + 0.02), "Fit to Moores 2016")
     plt.arrow(86.7, 100*(0.056 + 0.02), -0.5, -1, width=0.0000001, head_width=0.00002, head_length=0.0001, shape='full')
 #    for f in range(0,5):#len(cold_trap_lat)):#
@@ -63,10 +66,10 @@ def plot_km(lat, frac, m, b, cold_trap_lat, cold_trap_name, cfg):
     plt.ylabel("Ballistic Hop Efficiency [% per km$^{2}$]")
     plt.title("Ballistic Hop Efficiency by Latitude")
     plt.tight_layout()
-    plt.savefig(fig_dir+"ball_hop_km.png", dpi=300)
-    plt.show()
+    plt.savefig(FIGDIR + "ball_hop_km.png", dpi=300)
+    # plt.show()
 
-def plot_area(m, b, cold_trap_lat, cold_trap_name, cold_trap_area):
+def plot_area(m, b, cold_trap_lat, cold_trap_name, cold_trap_area, cfg):
     for f in range(0,len(cold_trap_area)-1):
         plt.plot(cold_trap_lat[f], cold_trap_area[f]*100*(m*cold_trap_lat[f] + b), 'ro')#, label="This work")
     plt.plot(cold_trap_lat[-1], cold_trap_area[-1]*100*(m*cold_trap_lat[-1] + b), 'ro')#
@@ -83,15 +86,16 @@ def plot_area(m, b, cold_trap_lat, cold_trap_name, cold_trap_area):
     plt.ylabel("Ballistic hop efficiency [% per total PSR area]")
     plt.title("Ballistic hop efficiency by latitude")
     plt.tight_layout()
-    plt.savefig(fig_dir+"ball_hop_area.png", dpi=300)
-    plt.show()
+    plt.savefig(FIGDIR + "ball_hop_area.png", dpi=300)
+    # plt.show()
 
-cfg = default_config.Cfg(mode='moonpies')
+if __name__ == "__main__":
+    cfg = default_config.Cfg(mode='moonpies')
 
-frac, area_frac, lat, names, m, b = Moores()
-cold_trap_name, cold_trap_lat, cold_trap_area = cold_trap()
-plot_km(lat, frac, m, b, cold_trap_lat, cold_trap_name, cfg)
-#plot_area(m, b, cold_trap_lat, cold_trap_name, cold_trap_area)
+    frac, area_frac, lat, names, m, b = Moores()
+    cold_trap_name, cold_trap_lat, cold_trap_area = cold_trap()
+    plot_km(lat, frac, m, b, cold_trap_lat, cold_trap_name, cfg)
+#plot_area(m, b, cold_trap_lat, cold_trap_name, cold_trap_area, cfg)
 #cold_trap_fit = m*cold_trap_lat + b
 #np.savetxt("ball_hop_fit.csv", cold_trap_fit)
 #np.savetxt("ball_hop_moores.csv", frac)
