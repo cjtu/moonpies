@@ -406,7 +406,7 @@ def _get_figspath(cfg):
     figspath = cfg.figspath
     if figspath == '':
         modelpath = getattr(cfg, 'modelpath')
-        figspath = path.abspath(path.join(modelpath, '..', 'figs')) + sep
+        figspath = path.abspath(path.join(modelpath, '..', 'figures')) + sep
     return figspath
 
 
