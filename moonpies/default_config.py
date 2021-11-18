@@ -421,10 +421,10 @@ def _get_outpath(cfg):
             outpath = path.dirname(path.normpath(outpath))
         outpath = path.join(outpath, run_seed)
     elif outpath == '':
-        # Default outpath is datapath/yymmdd_runname/seed/
+        # Default outpath is datapath/out/yymmdd_runname/seed/
         datapath = cfg.datapath
         run_dir = f'{cfg.run_date}_{cfg.run_name}'
-        outpath = path.join(datapath, run_dir, run_seed)
+        outpath = path.join(datapath, 'out', run_dir, run_seed)
     return outpath + sep
 
 
