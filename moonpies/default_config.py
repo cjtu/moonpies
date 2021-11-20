@@ -29,7 +29,7 @@ MODE_DEFAULTS = {
         'impact_ice_comets': True,
         'use_volc_dep_effcy': True, # Use volc_dep_efficiency instead of ballistic_hop_efficiency
         'ballistic_sed': True, # TODO: improvements in progress
-        'impact_gardening_costello': False, # TODO: bug fixes in progress, use False for now
+        'impact_gardening_costello': True,
         'impact_speed_mean': 17e3,  # [m/s] 
     }
 }

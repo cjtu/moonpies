@@ -3,25 +3,31 @@ Script to produce bulk statistics of ensemble runs. Produces boxplot, error bar 
 '''
 import os
 from glob import glob
+from pathlib import Path
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt 
-
-# import sys and use the following command to point to the directory where moonpies.py is (This is not necessary if this script is in that directory)
-import sys
-sys.path.insert(0, "/Users/tylerpaladino/Documents/ISU/LPI_NASA/Codes/moonpies_package/moonpies")
-
-import moonpies as mp
+from moonpies import moonpies as mp
 from moonpies import default_config
+
+# Set Fig paths
+FIGDIR = ''  # Set or leave blank to use default (moonpies/figs)
+if not FIGDIR:
+    FIGDIR = default_config.Cfg().figspath
+FIGDIR = str(Path(FIGDIR).resolve() / "_")[:-1]  # add trailing slash
+
+# Set data path
+DATADIR = '/home/cjtu/projects/moonpies/data/out/211119_mpies'
+if not DATADIR:
+    DATADIR = default_config.Cfg().outpath
+DATADIR = str(Path(DATADIR).resolve() / "_")[:-1]  # add trailing slash
+os.chdir(DATADIR)
+
 
 cfg= default_config.Cfg()
 
-out_dir = '/Users/tylerpaladino/Documents/ISU/LPI_NASA/figs/'
-data_pth = '/Users/tylerpaladino/Documents/ISU/LPI_NASA/Codes/moonpies_package/data/210804_mpies'
-os.chdir(data_pth)
-
 # Find model run directories
-model_run_pths = data_pth + '/*/'
+model_run_pths = DATADIR + '/*/'
 fn = 'ice_columns_mpies.csv'
 dir_list = glob(model_run_pths)
 
@@ -57,24 +63,26 @@ ax.boxplot(net_ice,whis=2.5)
 # Boxplot index starts at 1 not 0
 x = [1,2,3,4,5,6,7,8,9,10,11,12]
 plt.title(f'Statistics From {len(dir_list)} Ensemble Run')
-plt.xticks(x,col_names[1:])
+plt.xticks(x,col_names_new[1:])
 plt.xticks(rotation = 45)
-plt.ylabel('Ice Retained Thickness [m]')
+plt.ylabel('Ice Thickness Retained [m]')
 mp.plot_version(cfg, loc = 'ur')
-plt.show()
-fig.savefig(out_dir + 'boxplot_enesemble.png')
+ax.set_yscale('log')
+ax.set_xlim(4.5, 12.5)
+# plt.show()
+fig.savefig(FIGDIR + 'boxplot_enesemble.png')
 
 # ---- Error bars ----
 fig1,ax1 = plt.subplots()
 x1 = np.arange(0,len(cfg.coldtrap_names))
 ax1.errorbar(x1,stat_df['mean'],yerr=stat_df['SD'], linestyle='None', marker = 'o', capsize=3)
 plt.title(f'Mean w/SD From {len(dir_list)} Ensemble Run')
-plt.xticks(x1,col_names[1:])
+plt.xticks(x1,col_names_new[1:])
 plt.xticks(rotation = 45)
-plt.ylabel('Ice Retained Thickness [m]')
+plt.ylabel('Ice Thickness Retained [m]')
 mp.plot_version(cfg, loc = 'ur')
-plt.show()
-fig1.savefig(out_dir + 'errorbar_enesemble.png')
+# plt.show()
+fig1.savefig(FIGDIR + 'errorbar_enesemble.png')
 
 # ---- Violin plot ----
 fig2,ax2 = plt.subplots()
@@ -85,8 +93,8 @@ ax2.plot(x2, stat_df['mean'], 'o')
 plt.title(f'Statistics From {len(dir_list)} Ensemble Run')
 plt.xticks(x2,col_names_new[1:])
 plt.xticks(rotation = 45)
-plt.ylabel('Ice Retained Thickness [m]')
+plt.ylabel('Ice Thickness Retained [m]')
 ax2.set_yscale('log')
 mp.plot_version(cfg, loc = 'ur')
-plt.show()
-fig2.savefig(out_dir + 'violin_plot_ensemble.png')
+# plt.show()
+fig2.savefig(FIGDIR + 'violin_plot_ensemble.png')
