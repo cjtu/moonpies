@@ -733,11 +733,9 @@ def kinetic_energy(mass, velocity):
     return 0.5 * mass * velocity ** 2
 
 
-def ejecta_temp(ke, mass, cfg=CFG):
+def ejecta_temp(df, ke, mass, cfg=CFG):
     """
     Return the temperature distribution of the ejecta blanket
-
-    delT = KE / (mass * cp)
 
     Note: assumes initial ejecta temp is from a typical subsurface polar region
 
@@ -748,7 +746,42 @@ def ejecta_temp(ke, mass, cfg=CFG):
     Cp (num): specific heat of the ejecta blanket [J/K/kg]
     density (num): density of the ejecta blanket [kg/m^3]
     """
-    return cfg.ejecta_temp_init + cfg.heat_frac * ke / (mass * cfg.regolith_cp)
+    rad = df.rad.values[:, np.newaxis]
+    depth_ex = 2 * rad / 10
+    depth_ex[depth_ex > cfg.max_excavation_depth] = cfg.max_excavation_depth
+    t0 = temp_at_depth(depth_ex)
+    return t0 + delta_temp_at_impact(ke, mass, cfg.heat_frac, cfg.regolith_cp)
+
+
+def temp_at_depth(depth, cfg=CFG):
+    """
+    Return the temperature [K] at depth [m] using Zhu et al. (2017) profiles.
+
+    Parameters
+    ----------
+    depth (num or array): depth [m]
+    """
+    if cfg.temp_depth_profile == 'warm':
+        slope = cfg.temp_depth_profile_slope_warm
+    elif cfg.temp_depth_profile == 'cold':
+        slope = cfg.temp_depth_profile_slope_cold
+    else:
+        raise ValueError('thermal_profile must be "warm" or "cold"')
+    return cfg.temp_depth_profile_tsurf + slope * depth
+
+
+def delta_temp_at_impact(ke, mass, heat_frac=0.5, cp=396.3):
+    """
+    Return the temperature change at impact [K] using ke conversion.
+
+    delT = ke / (mass * cp)
+
+    Parameters
+    ----------
+    ke (num or array): kinetic energy of the ejecta blanket [J/m^2]
+    mass (num or array): mass of the ejecta blanket [kg]
+    """
+    return heat_frac * ke / (mass * cp)
 
 
 def ballistic_velocity(dist, cfg=CFG):
@@ -826,7 +859,7 @@ def bsed_depth_petro_pieters(time_arr, df, cfg=CFG):
     mass = thick * cfg.target_density
     vel = ballistic_velocity(dist, cfg)
     ke = kinetic_energy(mass, vel)
-    ej_temp = ejecta_temp(ke, mass, cfg)
+    ej_temp = ejecta_temp(df, ke, mass, cfg)
     mixing_ratio = get_mixing_ratio_oberbeck(dist, cfg)
     volume_frac = mixing_ratio_to_volume_fraction(mixing_ratio)
     melt_frac = get_melt_frac(ej_temp, volume_frac, cfg)
@@ -1663,16 +1696,7 @@ def diam2len(
     return impactor_length
 
 
-def final2transient_croft(diams, cfg=CFG, ds2c=18.7e3):
-    """
-    Return transient crater diameter fom final crater diams (Croft 1985).
-    """
-    t_diams = np.zeros_like(diams)
-    t_diams[diams >= cfg.simple2complex] = (diams * ds2c**0.18)**(1/1.18)
-    return t_diams
-
-
-def final2transient(diams, ds2c=18e3, gamma=1.25, eta=0.13):
+def final2transient(diam, cfg=CFG):
     """
     Return transient crater diameters from final crater diams (Melosh 1989).
 
@@ -1686,15 +1710,66 @@ def final2transient(diams, ds2c=18e3, gamma=1.25, eta=0.13):
     -------
     transient_diams (num or array): transient crater diameters [m]
     """
-    # Scale simple to complex diameter (only if target is not Moon)
-    # ds2c = simple2complex_diam(g)  # [m]
+    # Init arrays and transition diams
+    diam = np.atleast_1d(diam)
+    t_diam = np.zeros_like(diam)
+    ds2c = cfg.simple2complex
+    dc2pr = cfg.complex2peakring
 
-    diams = np.atleast_1d(diams)
-    t_diams = diams / gamma
-    t_diams[diams > ds2c] = (1 / gamma) * (
-        diams[diams > ds2c] * ds2c ** eta
-    ) ** (1 / (1 + eta))
-    return t_diams
+    # Simple craters
+    mask = diam <= ds2c
+    t_diam[mask] = f2t_melosh(diam[mask], simple=True)
+
+    # Complex craters
+    mask = (diam > ds2c) & (diam <= dc2pr)
+    t_diam[mask] = f2t_melosh(diam[mask], simple=False)
+
+    # Basins
+    mask = diam > dc2pr
+    t_diam[mask] = f2t_croft(diam[mask])  # TODO: make potter?
+    return t_diam
+
+
+def f2t_melosh(diam, simple=True, ds2c=18e3, gamma=1.25, eta=0.13):
+    """
+    Return transient crater diameter(s) from final crater diam (Melosh 1989).
+
+    Parameters
+    ----------
+    diams (num or array): final crater diameters [m]
+    simple (bool): if True, use simple scaling law (Melosh 1989).
+    """
+    if simple:  # Simple crater scaling
+        t_diam = diam / gamma
+    else:  # Complex crater scaling
+        t_diam = (1 / gamma) * (diam * ds2c ** eta) ** (1 / (1 + eta))
+    return t_diam
+
+
+def f2t_croft(diam, ds2c=18.7e3, eta=0.18):
+    """
+    Return transient crater diameter(s) fom final crater diam (Croft 1985).
+    """
+    return (diam * ds2c**eta)**(1/(1 + eta))
+
+
+def f2t_potter(rad_ca, mode='tp1'):
+    """
+    Return transient basin rad from crustal anomaly rad (Potter et al. 2012).
+
+    Parameters
+    ----------
+    diams (num or array): final crater diameters [m]
+    simple (bool): if True, use simple scaling law (Melosh 1989).
+    """
+    if mode == 'tp1':  # Thermal profile 1
+        a = 5.12
+        b = 0.62
+    elif mode == 'tp2':  # Thermal profile 2
+        a = 4.22
+        b = 0.72
+    t_rad = a * rad_ca ** b
+    return t_rad
 
 
 @lru_cache(1)

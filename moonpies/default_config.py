@@ -187,6 +187,11 @@ class Cfg:
     regolith_cp: float = 396.3  # Heat capacity at 140 K [J kg^-1 K^-1] (Hayne et al., 2017)
     ejecta_temp_init: float = 140  # [K] Initial ejecta temperature (Vasavada et al., 1999 via Feng & Siegler, 2021)
 
+    temp_depth_profile: str = 'cold'  # ['cold', 'warm'] Temperature depth profile (Zhu et al., 2017)
+    temp_depth_profile_tsurf: float = 250  # [K] Surface temperature (Spohn et al., 2001)
+    temp_depth_profile_slope_cold: float = 10*1e-3  # [K m^-1] Slope of cold temperature-depth profile (Spohn et al., 2001 via Zhu et al., 2017)
+    temp_depth_profile_slope_warm: float = 25*1e-3  # [K m^-1] Slope of warm temperature-depth profile (Laneuville et al., 2013 via Zhu et al., 2017)
+
     # Secondary crater scaling (Singer et al, 2020)
     ## Regression values from Table 2 (Singer et al., 2020)
     kepler_regime: tuple = (18e3, 60e3)  # [m] diameter
