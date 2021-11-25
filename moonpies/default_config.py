@@ -189,8 +189,8 @@ class Cfg:
 
     temp_depth_profile: str = 'cold'  # ['cold', 'warm'] Temperature depth profile (Zhu et al., 2017)
     temp_depth_profile_tsurf: float = 250  # [K] Surface temperature (Spohn et al., 2001)
-    temp_depth_profile_slope_cold: float = 10*1e-3  # [K m^-1] Slope of cold temperature-depth profile (Spohn et al., 2001 via Zhu et al., 2017)
-    temp_depth_profile_slope_warm: float = 25*1e-3  # [K m^-1] Slope of warm temperature-depth profile (Laneuville et al., 2013 via Zhu et al., 2017)
+    temp_depth_profile_slope_cold: float = 2*1e-3  # [K m^-1] Slope of cold temperature-depth profile (Spohn et al., 2001 via Fernandes & Artemieva 2012)
+    temp_depth_profile_slope_warm: float = 15*1e-3  # [K m^-1] Slope of warm temperature-depth profile (Spohn et al., 2001 via Fernandes & Artemieva 2012)
 
     # Secondary crater scaling (Singer et al, 2020)
     ## Regression values from Table 2 (Singer et al., 2020)
