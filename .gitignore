@@ -2,7 +2,7 @@
 docs/_build/
 **/out/
 dist/
-figs/
+figures/
 final_report/
 other_modules/
 paper/

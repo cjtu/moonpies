@@ -17,7 +17,7 @@ FIGDIR = ''  # Full path or '' for default (moonpies/figs)
 DATADIR = ''  # Full path or '' for default (moonpies/data)
 SEED = '65106'  # Set seed as string or '' to pick first seed from datadir
 COI = 'Faustini'  # Set coldtrap of interest or '' for default ("Haworth")
-RUNNAME = '_bsed'  # append runname to filename
+RUNNAME = '_no_bsed'  # append runname to filename
 SAVELITH = True  # Save lith key (to use same layers for multiple runs)
 MIN_THICKNESS = 10  # [m] minimum layer thickness
 
@@ -52,7 +52,7 @@ COI_CSV = OUTDIR / f'strat_{COI}.csv'
 # Set output paths
 OUT_LITHKEY = FIGDIR / f'lith_key_{COI}_{SEED}.json'
 OUT_STRAT = FIGDIR / f'strat_{COI}_{SEED}{RUNNAME}.png'
-OUT_KEY = FIGDIR / f'strat_{COI}_{SEED}_key.png'
+OUT_KEY = FIGDIR / f'strat_{COI}_{SEED}{RUNNAME}_key.png'
 
 plt.rcParams['font.size'] = 12
 plt.rcParams['axes.labelsize'] = 14
@@ -61,13 +61,13 @@ plt.rcParams['figure.titlesize'] = 14
 # Make lithology style dictionary
 HATCHES = [
     "/", "O", "\\", "+", 
-    "//", "||", "-\\", "-", 
+    "//", "||", "-\\", "xx", 
     "\\\\", "x", "O|", "\\|",
-    "o","--","++","OO",
-    "..","xx","O.", "|"][::-1]
+    "o","|","++","OO",
+    "O."][::-1]
 
 # Make diverging ice% colormap (gray, white, blue)
-COLORS = ['#8b8c8d', '#ffffff', '#3c8df0']
+# COLORS = ['#8b8c8d', '#ffffff', '#3c8df0']
 COLORS = ['#ffffff', '#3c8df0']
 
 def get_continuous_cmap(hex_list, locs=None):
@@ -115,6 +115,7 @@ ICE_CM = get_continuous_cmap(COLORS)
 def get_lith_key(strat, cmap=ICE_CM, savepath=None):
     """Return dict of dict of lithology to label, hatch style and ice_pct"""
     lith_key = {}
+    lith_key_saved = {}
     if savepath is not None and Path(savepath).exists():
         with open(savepath, 'r') as f:
             lith_key_saved = json.load(f)
@@ -242,6 +243,7 @@ def makekey(lith_key, savepath, ncols=1, show_ict_pct=False, key_color='white', 
     ysize = 9 #nrows * 1.5
     fig, axes = plt.subplots(ncols=ncols, nrows=nrows, sharex=True, sharey=True, 
                              figsize=(xsize, ysize), 
+                             gridspec_kw = {'wspace':0, 'hspace':1},
                              subplot_kw={'xticks':[], 'yticks':[]})
     
     norm = mpl.colors.Normalize(vmin=0, vmax=100)
@@ -259,8 +261,7 @@ def makekey(lith_key, savepath, ncols=1, show_ict_pct=False, key_color='white', 
             for a in ax.spines.values():
                 a.set_visible(False)
         ax.set_title(label, size=10)
-    fig.tight_layout()
-    fig.savefig(savepath, bbox_inches='tight', dpi=300)
+    fig.savefig(savepath, dpi=300)
     print(f"Saved key to {savepath}")
 
 

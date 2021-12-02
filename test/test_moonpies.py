@@ -393,12 +393,12 @@ def test_get_diam_array():
         np.testing.assert_array_almost_equal(actual, expected)
 
 
-def test_get_ejecta_thickness_basin():
-    """Test get_ejecta_thickness_basin."""
+def test_get_ej_thick_basin():
+    """Test get_ej_thick_basin."""
     # Test against Table 2, Zhang et al. (2021)
     dist = np.array([250, 500, 1000]) * 1e3
     t_rads = np.array([300, 250, 200]) * 1e3/2  
-    actual = mp.get_ejecta_thickness_basin(dist, t_rads[:, np.newaxis])
+    actual = mp.get_ej_thick_basin(dist, t_rads[:, np.newaxis])
     expected = np.array([
         [1035.9, 129.2, 17.0],
         [500.2, 62.7, 8.3],
