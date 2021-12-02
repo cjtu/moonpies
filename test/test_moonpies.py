@@ -121,7 +121,7 @@ def test_get_crater_pop_regime_C():
 
     # Cannon regime C
     craterDiams = diams  # m
-    craterNum = mp.neukum(craterDiams[0], CFG.neukum_pf_version) - mp.neukum(craterDiams[-1], CFG.neukum_pf_version)
+    craterNum = mp.neukum(craterDiams[0], CFG) - mp.neukum(craterDiams[-1], CFG)
     craterNum = craterNum * (1e7)
     craterNum = craterNum * CFG.sa_moon
     craterNum = craterNum * mp.impact_flux(time_arr) / mp.impact_flux(0)
@@ -393,10 +393,28 @@ def test_get_diam_array():
         np.testing.assert_array_almost_equal(actual, expected)
 
 
+def test_get_ej_thick_basin():
+    """Test get_ej_thick_basin."""
+    # Test against Table 2, Zhang et al. (2021)
+    dist = np.array([250, 500, 1000]) * 1e3
+    t_rads = np.array([300, 250, 200]) * 1e3/2  
+    actual = mp.get_ej_thick_basin(dist, t_rads[:, np.newaxis])
+    expected = np.array([
+        [1035.9, 129.2, 17.0],
+        [500.2, 62.7, 8.3],
+        [205.5, 25.8, 3.4]])
+    np.testing.assert_allclose(actual, expected, rtol=1e-2)
+    
+
 def test_final2transient():
     """Test final2transient."""
-    actual = mp.final2transient(np.array([1500, 15e3, 299e3]))
-    expected = (1200, 12e3, 173125.614057)
+    diams = np.array([1500, 15e3, 20e3, 299e3])
+    actual = mp.final2transient(diams)
+    expected = np.array([
+        1200, 
+        mp.f2t_melosh(diams[1], simple=True), 
+        mp.f2t_melosh(diams[2], simple=False),
+        mp.f2t_croft(diams[3])])
     np.testing.assert_array_almost_equal(actual, expected)
 
 

@@ -41,6 +41,7 @@ def main(cfg=CFG):
     # Setup time and crater list
     time_arr = get_time_array(cfg)
     df = get_crater_list(cfg.ejecta_basins, cfg, rng)
+    print(df[df.cname == 'Faustini'])
 
     # Init strat columns dict based for all cfg.coldtrap_names
     strat_cols = init_strat_columns(time_arr, df, cfg)
@@ -114,7 +115,7 @@ def make_strat_columns(ej_cols, ej_sources, cfg=CFG):
     return strat_columns
 
 
-def update_ice_col(cols, t, new_ice, overturn_depth, bsed_depth, cfg=CFG):
+def update_ice_col(cols, t, new_ice, overturn_depth, bsed_depth, bsed_frac, cfg=CFG):
     """
     Return ice_column updated with all processes applicable at time t.
 
@@ -133,7 +134,7 @@ def update_ice_col(cols, t, new_ice, overturn_depth, bsed_depth, cfg=CFG):
     """
     ice_col, ej_col, _ = cols
     # Ballistic sed gardens first, if crater was formed
-    ice_col = garden_ice_column(ice_col, ej_col, t - 1, bsed_depth)
+    ice_col = garden_ice_column(ice_col, ej_col, t - 1, bsed_depth, bsed_frac)
 
     # Ice gained by column
     ice_col[t] = new_ice
@@ -163,9 +164,10 @@ def update_strat_cols(strat_cols, time_arr, t, cfg=CFG, rng=None):
 
     # Update all coldtrap strat_cols
     for i, (coldtrap, cols) in enumerate(strat_cols.items()):
-        bsed_d = bsed_depth[i]
         new_ice = get_ice_coldtrap(polar_ice, volc_ice, coldtrap, cfg)
-        ice_col = update_ice_col(cols, t, new_ice, overturn_d, bsed_d, cfg)
+        ice_col = update_ice_col(
+            cols, t, new_ice, overturn_d, bsed_depth[i], bsed_frac[i], cfg
+        )
         strat_cols[coldtrap][0] = ice_col
     return strat_cols
 
@@ -356,6 +358,7 @@ def get_coldtrap_dists(df, cfg=CFG):
     for i, row in df.iterrows():
         src_lon = row.lon
         src_lat = row.lat
+        src_rad = row.rad
         for j, cname in enumerate(cfg.coldtrap_names):
             if row.cname == cname:
                 dist[i, j] = np.nan
@@ -363,26 +366,122 @@ def get_coldtrap_dists(df, cfg=CFG):
             dst_lon = df[df.cname == cname].psr_lon.values
             dst_lat = df[df.cname == cname].psr_lat.values
             d = gc_dist(src_lon, src_lat, dst_lon, dst_lat)
-            dist[i, j] = d
-            # Cut off distances > ej_threshold crater radii
-            if dist[i, j] > (ej_threshold * df.iloc[i].rad):
+            if d <= src_rad:
+                # Cut out distances within the crater
                 dist[i, j] = np.nan
+            elif dist[i, j] > (ej_threshold * src_rad):
+                # Cut off distances > ej_threshold crater radii
+                dist[i, j] = np.nan
+            else:
+                dist[i, j] = d
     dist[dist <= 0] = np.nan
     return dist
 
 
-def get_ejecta_thickness(distance, radius, ds2c=18e3, order=-3):
+def get_ejecta_thickness(distance, radius, cfg=CFG):
     """
     Return ejecta thickness as a function of distance given crater radius.
 
     Complex craters McGetchin 1973
     """
-    exp_complex = 0.74  # McGetchin 1973, simple craters exp=1
-    exp = np.ones_like(radius)
-    exp[radius * 2 > ds2c] = exp_complex
-    thickness = 0.14 * radius ** exp * (distance / radius) ** order
-    thickness[np.isnan(thickness)] = 0
-    return thickness
+    rad_v = radius[:, np.newaxis]  # radius as column vector for broadcasting
+    thick = np.zeros_like(distance*rad_v)
+    exp = cfg.ejecta_thickness_order
+
+    # Simple craters
+    is_s = radius < cfg.simple2complex
+    thick[is_s] = get_ej_thick_simple(distance[is_s], rad_v[is_s], exp)
+    
+    # Complex craters
+    is_c = (cfg.simple2complex < radius) & (radius < cfg.complex2peakring)
+    thick[is_c] = get_ej_thick_complex(distance[is_c], rad_v[is_c], exp)
+
+    # Basins
+    is_pr = radius >= cfg.complex2peakring
+    t_radius = final2transient(rad_v*2, cfg) / 2
+    thick[is_pr] = get_ej_thick_basin(distance[is_pr], t_radius[is_pr], exp, cfg.rad_moon)
+    thick[np.isnan(thick)] = 0
+    return thick
+
+
+def get_ej_thick_simple(distance, radius, order=-3):
+    """
+    Return ejecta thickness with distance from a simple crater (Kring 1995).
+
+    Parameters
+    ----------
+    distance (arr): Distance from crater [m]
+    radius (arr): Simple crater final radius [m]
+    order (int): Negative exponent (-3 +/- 0.5)
+    """
+    return 0.04 * radius  * (distance / radius) ** order
+    
+
+def get_ej_thick_complex(distance, radius, order=-3):
+    """
+    Return ejecta thickness with distance from a complex crater (Kring 1995).
+
+    Parameters
+    ----------
+    distance (arr): Distance from crater [m]
+    radius (arr): Complex crater final radius [m]
+    order (int): Negative exponent (-3 +/- 0.5)
+    """
+    return 0.14 * (radius ** 0.74)  * (distance / radius) ** order
+    
+
+def get_ej_thick_basin(distance, t_radius, order=-3, R0=1737.1e3):
+    """
+    Return ejecta thickness with distance from a basin (Zhang et al., 2021).
+
+    Uses Pike (1974) and Haskin et al. (2003) correction for curvature
+
+    Parameters
+    ----------
+    distance (arr): Distance from crater [m]
+    t_radius (arr): Transient crater radius [m]
+    order (int): Negative exponent (-3 +/- 0.5)
+
+    """
+    def r_flat(r_t, R, g=1.62/1e3, theta=45):
+        """Return distance on flat surface, r' (eq S3, Zhang et al., 2021)"""
+        v = ballistic_velocity(r_t*1e3) / 1e3
+        return R + (v**2 * np.sin(2*np.deg2rad(theta))) / g
+
+    def r_soi(r, R, R0=1737.1e3):
+        """Return distance to SOI (eq S4/S5, Zhang et al., 2021)."""
+        tanr = np.tan((r - R) / (2 * R0))
+        return R + (2 * R0 * tanr) / (tanr + 1)
+
+    def s_flat(r_inner_sph, r_outer_sph):
+        """Return area of flat SOI (eq S6, Zhang et al., 2021)."""
+        return np.pi * (r_outer_sph ** 2 - r_inner_sph ** 2)
+
+    def s_spherical(r_inner, r_outer, R0=1737.1e3):
+        """Return area of spherical SOI (eq S7, Zhang et al., 2021)."""
+        return 2 * np.pi * R0**2 * (np.cos(r_inner/R0) - np.cos(r_outer/R0))
+
+    def area_corr(distance, radius, R0=1737.1e3):
+        """Return correction for area of SOI (eq S8, Zhang et al., 2021)."""
+        r_inner = distance - radius / 8
+        r_outer = distance + radius / 8
+        area_sph = s_spherical(r_inner, r_outer, R0)
+        r_inner_sph = r_soi(r_inner, radius, R0)
+        r_outer_sph = r_soi(r_outer, radius, R0)
+        area_flat = s_flat(r_inner_sph, r_outer_sph)
+        return (area_flat / area_sph)
+    
+    # Compute dist and area corrections and return thickness
+    radius = t_radius * 1e-3  # [m] -> [km]
+    distance *= 1e-3  # [m] -> [km]
+    R0 = R0 * 1e-3  # [m] -> [km]
+    r_t = distance - radius
+    rflat = r_flat(r_t, radius)
+    with np.errstate(divide='ignore', over='ignore'):
+        acorr = area_corr(distance, radius, R0)
+        thickness = 0.033 * radius * np.power(rflat / radius, order) * acorr
+    return thickness * 1e3  # [km] -> [m]
+    
 
 
 def get_ejecta_thickness_time(time_arr, df, cfg=CFG):
@@ -425,13 +524,8 @@ def get_ejecta_thickness_matrix(df, cfg=CFG):
     ej_distances = get_coldtrap_dists(df, cfg)
 
     # Ejecta thickness [m] deposited in each coldtrap from each crater
-    rad = df.rad.values[:, np.newaxis]  # Pass radii as column vector
-    ej_thick = get_ejecta_thickness(
-        ej_distances,
-        rad,
-        cfg.simple2complex,
-        cfg.ejecta_thickness_order,
-    )
+    rad = df.rad.values
+    ej_thick = get_ejecta_thickness(ej_distances, rad, cfg)
     return ej_thick
 
 
@@ -699,7 +793,18 @@ def volcanic_ice_head(time_arr, cfg=CFG):
 # Ballistic sedimentation module
 def get_melt_frac(ejecta_temps, vol_fracs, cfg=CFG):
     """
+    Return fraction of ice melted at given ejecta_temps and vol_fracs.
 
+    Uses thermal equilibrium model results from this work.
+
+    Parameters
+    ----------
+    ejecta_temps (arr): Ejecta temperatures [K].
+    vol_fracs (arr): Volume fractions (ejecta/target).
+
+    Returns
+    -------
+    melt_frac (arr): Fraction of ice melted at each ejecta_temp and vol_frac.
     """
     mdf = read_ballistic_melt_frac(cfg.bsed_frac_mean_in)
     temps = insert_unique_in_range(ejecta_temps, mdf.columns.to_numpy())
@@ -737,8 +842,6 @@ def ejecta_temp(ke, mass, cfg=CFG):
     """
     Return the temperature distribution of the ejecta blanket
 
-    delT = KE / (mass * cp)
-
     Note: assumes initial ejecta temp is from a typical subsurface polar region
 
     Parameters
@@ -748,7 +851,28 @@ def ejecta_temp(ke, mass, cfg=CFG):
     Cp (num): specific heat of the ejecta blanket [J/K/kg]
     density (num): density of the ejecta blanket [kg/m^3]
     """
-    return cfg.ejecta_temp_init + cfg.heat_frac * ke / (mass * cfg.regolith_cp)
+    if cfg.basin_ejecta_temp_warm:
+        temp_init = cfg.basin_ejecta_temp_init_warm
+    else:
+        temp_init = cfg.basin_ejecta_temp_init_warm
+    sphc = specific_heat_capacity(temp_init, cfg)
+    return temp_init + delta_temp_at_impact(ke, mass, cfg.heat_frac, sphc)
+
+
+def delta_temp_at_impact(ke, mass, heat_frac, sphc):
+    """
+    Return the temperature change at impact [K] using ke conversion.
+
+    delT = ke / (mass * cp)
+
+    Parameters
+    ----------
+    ke (num or array): kinetic energy of the ejecta [J/m^2]
+    mass (num or array): mass of the ejecta [kg]
+    heat_frac (num): fraction of kinetic energy converted to heat [0-1]
+    sphc (num): specific heat capacity of the ejecta blanket [J/K/kg]
+    """
+    return heat_frac * ke / (mass * sphc)
 
 
 def ballistic_velocity(dist, cfg=CFG):
@@ -850,11 +974,11 @@ def mixing_ratio_to_volume_fraction(mixing_ratio):
 
     Parameters
     ----------
-    mixing_ratio (arr): Mixing ratio
+    mixing_ratio (arr): Mixing ratio (target:ejecta)
 
     Returns
     -------
-    volume_fraction (arr): Volume fraction
+    volume_fraction (arr): Volume fraction (target/ejecta)
     """
     return mixing_ratio / (1 + mixing_ratio)
 
@@ -876,8 +1000,8 @@ def get_mixing_ratio_oberbeck(ej_distances, cfg=CFG):
     mr (2D array): mixing ratio of local (target) to foreign (ejecta) material
     """
     dist = ej_distances * 1e-3  # [m -> km]
-    mr = cfg.mr_a * dist ** cfg.mr_b
-    if cfg.mr_petro:
+    mr = cfg.mixing_ratio_a * dist ** cfg.mixing_ratio_b
+    if cfg.mixing_ratio_petro:
         mr[mr > 5] = 0.5 * mr[mr > 5] + 2.5
     return mr
 
@@ -1435,46 +1559,18 @@ def get_comet_speeds(n, cfg=CFG, rng=None):
 
 
 # Crater/impactor size-frequency helpers
-@lru_cache(6)
-def neukum(diam, neukum_version="2001"):
+# @lru_cache(6)
+def neukum(diam, cfg=CFG):
     """
     Return number of craters per m^2 per yr at diam [m] (eqn. 2, Neukum 2001).
 
     Eqn 2 expects diam [km], returns N [km^-2 Ga^-1].
 
     """
-    if str(neukum_version) == "2001":
-        a_vals = (
-            -3.0876,
-            -3.557528,
-            0.781027,
-            1.021521,
-            -0.156012,
-            -0.444058,
-            0.019977,
-            0.086850,
-            -0.005874,
-            -0.006809,
-            8.25e-4,
-            5.54e-5,
-        )
-    elif str(neukum_version) == "1983":
-        a_vals = (
-            -3.0768,
-            -3.6269,
-            0.4366,
-            0.7935,
-            0.0865,
-            -0.2649,
-            -0.0664,
-            0.0379,
-            0.0106,
-            -0.0022,
-            -5.18e-4,
-            3.97e-5,
-        )
+    if cfg.neukum_pf_new:
+        a_vals = cfg.neukum_pf_a_2001
     else:
-        raise ValueError('Neukum version invalid (accepts "2001" or "1983").')
+        a_vals = cfg.neukum_pf_a_1983
     diam = diam * 1e-3  # [m] -> [km]
     j = np.arange(len(a_vals))
     ncraters = 10 ** np.sum(a_vals * np.log10(diam) ** j)  # [km^-2 Ga^-1]
@@ -1528,8 +1624,8 @@ def num_craters_chronology(mindiam, maxdiam, time, cfg=CFG):
     Return number of craters [m^-2 yr^-1] mindiam and maxdiam at each time.
     """
     # Compute number of craters from neukum pf
-    fmax = neukum(mindiam, cfg.neukum_pf_version)
-    fmin = neukum(maxdiam, cfg.neukum_pf_version)
+    fmax = neukum(mindiam, cfg)
+    fmin = neukum(maxdiam, cfg)
     count = (fmax - fmin) * cfg.sa_moon * cfg.timestep
 
     # Scale count by impact flux relative to present day flux
@@ -1628,7 +1724,7 @@ def diam2len(
     -------
     lengths (arr): Impactor diameters [m].
     """
-    t_diams = final2transient(diams, cfg.simple2complex)
+    t_diams = final2transient(diams, cfg)
     if regime == "c":
         impactor_length = diam2len_prieur(
             tuple(t_diams),
@@ -1663,16 +1759,7 @@ def diam2len(
     return impactor_length
 
 
-def final2transient_croft(diams, cfg=CFG, ds2c=18.7e3):
-    """
-    Return transient crater diameter fom final crater diams (Croft 1985).
-    """
-    t_diams = np.zeros_like(diams)
-    t_diams[diams >= cfg.simple2complex] = (diams * ds2c**0.18)**(1/1.18)
-    return t_diams
-
-
-def final2transient(diams, ds2c=18e3, gamma=1.25, eta=0.13):
+def final2transient(diam, cfg=CFG):
     """
     Return transient crater diameters from final crater diams (Melosh 1989).
 
@@ -1686,15 +1773,66 @@ def final2transient(diams, ds2c=18e3, gamma=1.25, eta=0.13):
     -------
     transient_diams (num or array): transient crater diameters [m]
     """
-    # Scale simple to complex diameter (only if target is not Moon)
-    # ds2c = simple2complex_diam(g)  # [m]
+    # Init arrays and transition diams
+    diam = np.atleast_1d(diam)
+    t_diam = np.zeros_like(diam)
+    ds2c = cfg.simple2complex
+    dc2pr = cfg.complex2peakring
 
-    diams = np.atleast_1d(diams)
-    t_diams = diams / gamma
-    t_diams[diams > ds2c] = (1 / gamma) * (
-        diams[diams > ds2c] * ds2c ** eta
-    ) ** (1 / (1 + eta))
-    return t_diams
+    # Simple craters
+    mask = diam <= ds2c
+    t_diam[mask] = f2t_melosh(diam[mask], simple=True)
+
+    # Complex craters
+    mask = (diam > ds2c) & (diam <= dc2pr)
+    t_diam[mask] = f2t_melosh(diam[mask], simple=False)
+
+    # Basins
+    mask = diam > dc2pr
+    t_diam[mask] = f2t_croft(diam[mask])  # TODO: make potter?
+    return t_diam
+
+
+def f2t_melosh(diam, simple=True, ds2c=18e3, gamma=1.25, eta=0.13):
+    """
+    Return transient crater diameter(s) from final crater diam (Melosh 1989).
+
+    Parameters
+    ----------
+    diams (num or array): final crater diameters [m]
+    simple (bool): if True, use simple scaling law (Melosh 1989).
+    """
+    if simple:  # Simple crater scaling
+        t_diam = diam / gamma
+    else:  # Complex crater scaling
+        t_diam = (1 / gamma) * (diam * ds2c ** eta) ** (1 / (1 + eta))
+    return t_diam
+
+
+def f2t_croft(diam, ds2c=18.7e3, eta=0.18):
+    """
+    Return transient crater diameter(s) fom final crater diam (Croft 1985).
+    """
+    return (diam * ds2c**eta)**(1/(1 + eta))
+
+
+def f2t_potter(rad_ca, mode='tp1'):
+    """
+    Return transient basin rad from crustal anomaly rad (Potter et al. 2012).
+
+    Parameters
+    ----------
+    diams (num or array): final crater diameters [m]
+    simple (bool): if True, use simple scaling law (Melosh 1989).
+    """
+    if mode == 'tp1':  # Thermal profile 1
+        a = 5.12
+        b = 0.62
+    elif mode == 'tp2':  # Thermal profile 2
+        a = 4.22
+        b = 0.72
+    t_rad = a * rad_ca ** b
+    return t_rad
 
 
 @lru_cache(1)
@@ -1810,6 +1948,21 @@ def diam2len_johnson(
     return impactor_length
 
 
+# Thermal module
+def specific_heat_capacity(T, cfg=CFG):
+    """
+    Return specific heat capacity [J/kg/K] at temperature T [K] for lunar 
+    regolith (Hayne et al., 2017).
+
+    Parameters
+    ----------
+    T (num or array): temperature [K]
+    cfg (Cfg): Config object with specific_heat_coeffs
+    """
+    c0, c1, c2, c3, c4 = cfg.specific_heat_coeffs
+    return c0 + c1 * T + c2 * T ** 2 + c3 * T ** 3 + c4 * T ** 4
+
+
 # Surface age module
 def get_age_grid(df, grdx, grdy, cfg=CFG):
     """Return final surface age of each grid point after all craters formed."""
@@ -1854,6 +2007,7 @@ def make_strat_col(time, ice, ejecta, ejecta_sources, thresh=1e-6):
     label = np.empty(len(time), dtype=object)
     label[ice > thresh] = "Ice"
     label[ejecta > thresh] = ejecta_sources[ejecta > thresh]
+    label[label == ''] = "Minor source(s)"
 
     # Make stratigraphy DataFrame
     data = [time, ice, ejecta]
@@ -1865,22 +2019,22 @@ def make_strat_col(time, ice, ejecta, ejecta_sources, thresh=1e-6):
     sdf = sdf.dropna(subset=["label"])
 
     # Combine adjacent rows with same label into layers
-    isadj = (sdf.label != sdf.label.shift()).cumsum()
-    agg = {k: "sum" for k in ("ice", "ejecta")}
-    agg = {
-        "label": "last",
-        "time": "last",
-        **agg,
-    }
-    strat = sdf.groupby(["label", isadj], as_index=False, sort=False).agg(agg)
+    strat = merge_adjacent_strata(sdf)
 
-    # Add depth and ice vs ejecta % of each layer
-    # Add depth (reverse cumulative sum)
+    # Compute depth of each layer (reverse cumulative sum of ice and ejecta)
     strat["depth"] = np.cumsum(strat.ice[::-1] + strat.ejecta[::-1])[::-1]
 
     # Add ice / ejecta percentage of each layer
     strat["icepct"] = np.round(100 * strat.ice / (strat.ice + strat.ejecta), 4)
     return strat
+
+
+def merge_adjacent_strata(strat, agg=None):
+    """Return strat_col with adjacent rows with same label merged."""
+    isadj = (strat.label != strat.label.shift()).cumsum()
+    if agg is None:
+        agg = {"ice": "sum", "ejecta": "sum", "label": "last", "time": "last"}
+    return strat.groupby(["label", isadj], as_index=False, sort=False).agg(agg)
 
 
 def format_csv_outputs(strat_cols, time_arr):

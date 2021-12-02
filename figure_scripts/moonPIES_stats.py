@@ -1,6 +1,9 @@
-'''
-Script to produce bulk statistics of ensemble runs. Produces boxplot, error bar plot, and violin plot
-'''
+"""
+Plot bulk statistics of ensemble runs. Produces boxplot, error bar plot, 
+and violin plot.
+T. Paladino
+Last updated: 11/29/21
+"""
 import os
 from glob import glob
 from pathlib import Path

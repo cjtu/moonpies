@@ -157,8 +157,10 @@ class Cfg:
     bulk_density: float = 2700  # [kg m^-3] simple to complex (Melosh)
     ice_erosion_rate: float = 0.1 # [m], 10 cm / 10 ma (Cannon 2020)
     ej_threshold: float = 4  # [crater radii] Radius of influence of a crater (-1: no threshold)
-    thickness_threshold: float = 1e-9  # [m] minimum thickness to form a layer
-    neukum_pf_version: str = '2001'  # ['2001', '1983'] Original or updated Neukum production function (Neukum et al. 2001)
+    thickness_threshold: float = 1e-3  # [m] minimum thickness to form a layer
+    neukum_pf_new: bool = True  # [True=>2001, False=>1983] Neukum production function version (Neukum et al. 2001)
+    neukum_pf_a_2001: tuple = (-3.0876, -3.557528, 0.781027, 1.021521, -0.156012, -0.444058, 0.019977, 0.086850, -0.005874, -0.006809, 8.25e-4, 5.54e-5)
+    neukum_pf_a_1983: tuple = (-3.0768, -3.6269, 0.4366, 0.7935, 0.0865, -0.2649, -0.0664, 0.0379, 0.0106, -0.0022, -5.18e-4, 3.97e-5)
 
     # Ice constants
     ice_density: float = 934  # [kg m^-3], (Cannon 2020)
@@ -178,14 +180,17 @@ class Cfg:
 
     # Ballistic sedimentation module
     ballistic_teq: bool = False  # Do ballistic sed only if teq > coldtrap_max_temp
-    mr_a: float = 0.0183  # (Oberbeck et al. 1975 via Eq 4 Zhang et al. 2021)  #2.913  # Fit to Ries crater ballistic sed, a
-    mr_b: float = 0.87  # (Oberbeck et al. 1975 via Eq 4 Zhang et al. 2021)  #-3.978  # Fit to Ries crater ballistic sed, b
-    mr_petro: bool = True  # Use Petro and Pieter (2006) adjustment to volume fraction
+    mixing_ratio_petro: bool = True  # Use Petro and Pieter (2006) adjustment to volume fraction
+    mixing_ratio_a: float = 0.0183  # (Oberbeck et al. 1975 via Eq 4 Zhang et al. 2021)  #2.913  # Fit to Ries crater ballistic sed, a
+    mixing_ratio_b: float = 0.87  # (Oberbeck et al. 1975 via Eq 4 Zhang et al. 2021)  #-3.978  # Fit to Ries crater ballistic sed, b
     ice_frac: float = 0.056  # Fraction ice vs regolith (5.6% Colaprete 2010)
-    heat_frac: float = 0.5  # Fraction of ballistic ke used in heating vs mixing
-    heat_retained: float = 0.1  # Fraction of heat retained (10-30%; Stopar 2018)
-    regolith_cp: float = 396.3  # Heat capacity at 140 K [J kg^-1 K^-1] (Hayne et al., 2017)
-    ejecta_temp_init: float = 140  # [K] Initial ejecta temperature (Vasavada et al., 1999 via Feng & Siegler, 2021)
+    heat_frac: float = 0.45  # Fraction of ballistic ke used in heating vs mixing
+    basin_ejecta_temp_warm: bool = False  # Use warm ejecta temperature for basin ice
+    basin_ejecta_temp_init_cold: float = 260  # [K] Initial ejecta temperature, present-cold-Moon (Fernandes & Artemieva 2012)
+    basin_ejecta_temp_init_warm: float = 420  # [K] Initial ejecta temperature, ancient-warm-Moon (Fernandes & Artemieva 2012)
+
+    # Thermal module
+    specific_heat_coeffs: tuple = (-3.6125, 2.7431, 2.3616e-3, -1.2340e-5, 8.9093e-9)  # c0 to c4 (Hayne et al., 2017)
 
     # Secondary crater scaling (Singer et al, 2020)
     ## Regression values from Table 2 (Singer et al., 2020)
