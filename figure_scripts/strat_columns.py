@@ -3,6 +3,7 @@ Stratigraphy column plots
 A. Madera
 Last updated: 11/29/2021 (CJTU)
 """
+import json
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -16,8 +17,14 @@ FIGDIR = ''  # Full path or '' for default (moonpies/figs)
 DATADIR = ''  # Full path or '' for default (moonpies/data)
 SEED = '65106'  # Set seed as string or '' to pick first seed from datadir
 COI = 'Faustini'  # Set coldtrap of interest or '' for default ("Haworth")
-RUNNAME = ''  # append runname to filename
+RUNNAME = '_bsed'  # append runname to filename
+SAVELITH = True  # Save lith key (to use same layers for multiple runs)
 MIN_THICKNESS = 10  # [m] minimum layer thickness
+
+if RUNNAME == '_bsed':
+    DATADIR = '/home/cjtu/projects/moonpies/data/out/211201_bsed'
+elif RUNNAME == '_no_bsed':
+    DATADIR = '/home/cjtu/projects/moonpies/data/out/211201_no_bsed'
 
 # Set default config
 CFG = default_config.Cfg()
@@ -43,13 +50,25 @@ if not COI:
 COI_CSV = OUTDIR / f'strat_{COI}.csv'
 
 # Set output paths
-OUT_STRAT = FIGDIR / f'strat_{COI}_{SEED}{"_"+RUNNAME}.png'
-OUT_KEY = FIGDIR / f'strat_{COI}_{SEED}_key{"_"+RUNNAME}.png'
+OUT_LITHKEY = FIGDIR / f'lith_key_{COI}_{SEED}.json'
+OUT_STRAT = FIGDIR / f'strat_{COI}_{SEED}{RUNNAME}.png'
+OUT_KEY = FIGDIR / f'strat_{COI}_{SEED}_key.png'
 
-plt.rcParams['font.size'] = 14
-plt.rcParams['axes.labelsize'] = 20
-plt.rcParams['figure.titlesize'] = 20
+plt.rcParams['font.size'] = 12
+plt.rcParams['axes.labelsize'] = 14
+plt.rcParams['figure.titlesize'] = 14
 
+# Make lithology style dictionary
+HATCHES = [
+    "/", "O", "\\", "+", 
+    "//", "||", "-\\", "-", 
+    "\\\\", "x", "O|", "\\|",
+    "o","--","++","OO",
+    "..","xx","O.", "|"][::-1]
+
+# Make diverging ice% colormap (gray, white, blue)
+COLORS = ['#8b8c8d', '#ffffff', '#3c8df0']
+COLORS = ['#ffffff', '#3c8df0']
 
 def get_continuous_cmap(hex_list, locs=None):
     """
@@ -90,62 +109,34 @@ def get_continuous_cmap(hex_list, locs=None):
     cmp = mcolors.LinearSegmentedColormap('my_cmp', segmentdata=cdict, N=256)
     return cmp
 
-# Make lithology style dictionary
-hatches = [
-    "/", "O", "\\", "+", 
-    "//", "||", "-\\", "-", 
-    "\\\\", "x", "O|", "\\|"
-    "o","|","++","OO",
-    "xx","..","--","xx","O."]
+ICE_CM = get_continuous_cmap(COLORS)
+# ICE_CM = mpl.cm.get_cmap('Blues')
 
-# Make diverging ice% colormap (gray, white, blue)
-colors = ['#8b8c8d', '#ffffff', '#3c8df0']
-ICE_CM = get_continuous_cmap(colors)
-
-
-def get_lith_key(lithology, cmap=ICE_CM):
-    """Return dict of dict of lithology to label, hatch style and color"""
-    norm = mpl.colors.Normalize(vmin=0, vmax=100)
-    ice_key = len(lithology) + 1
-    ice_c = cmap(norm(100))
-    lith_key = {
-        ice_key: {"lith": "Ice", "lith_num": -2, "hatch": ".", "color": ice_c}
-    }
-    for i, label in enumerate(lithology[lithology != "Ice"]):
-        ice_pct = coi_strat.iloc[i].icepct
-        color = cmap(norm(ice_pct))
-        lith_key[i] = {'lith': label, 'hatch': hatches[i % len(hatches)], 
-                        'color':color, 'ice_pct': ice_pct}
-    return lith_key
-
-
-def makekey(lith_key, savepath):
-    """Plot lithology legend"""
-    x = [0, 1]
-    y = [1, 0]
-
-    ncols = 3
-    nrows = int(np.ceil(len(lith_key.keys())/4))
-    xsize = 9
-    ysize = nrows * 1.5
-    fig, axes = plt.subplots(ncols=ncols, nrows=nrows, sharex=True, sharey=True, 
-                             figsize=(xsize, ysize), 
-                             subplot_kw={'xticks':[], 'yticks':[]})
-
-    for ax, (_, v) in zip(axes.flat, lith_key.items()):
-        title = v["lith"]
-        if "Ice" == title:
-            pass
+def get_lith_key(strat, cmap=ICE_CM, savepath=None):
+    """Return dict of dict of lithology to label, hatch style and ice_pct"""
+    lith_key = {}
+    if savepath is not None and Path(savepath).exists():
+        with open(savepath, 'r') as f:
+            lith_key_saved = json.load(f)
+    # Loop through every second row in strat (since strat is lith edges)
+    for i, row in strat.iloc[1::2].iterrows():
+        label = row.label
+        ice_pct = row.icepct
+        if label == "Ice":
+            lith_id = -1
+            hatch = '.'
+            ice_pct = 100
         else:
-            title += f" Ejecta ({v['ice_pct']:.0f}% ice)"
-        ax.plot(x, y, linewidth=0)
-        ax.fill_betweenx(y, 0, 1, facecolor=v["color"], hatch=v["hatch"])
-        ax.set_xlim(0, 0.1)
-        ax.set_ylim(0, 1)
-        ax.set_title(title, size=12)
-    fig.tight_layout()
-    fig.savefig(savepath, bbox_inches='tight', dpi=300)
-    print(f"Saved key to {savepath}")
+            if label in lith_key_saved:
+                hatch = lith_key_saved[label]['hatch']
+            else:
+                hatch = HATCHES[i%len(HATCHES)]
+            lith_id = i    
+        lith_key[label] = {'lith': lith_id, 'hatch': hatch, 'ice_pct': ice_pct}
+    if savepath is not None:
+        with open(savepath, 'w') as f:
+            json.dump(lith_key, f)
+    return lith_key
 
 
 #Setting up definitions for strat columns
@@ -177,7 +168,7 @@ def get_strat_col_ranges(strat_col, savefile=None):
     return strat
 
 
-def makeplot(strat, savepath, coi=COI, cmap=ICE_CM):
+def makeplot(strat, savepath, coi=COI, cmap=ICE_CM, lith_depth_labels=False):
     """Plot strat columns"""
     # Get the depth boundaries of each distinct layer in strat
     adj_check = (strat.label != strat.label.shift()).cumsum()
@@ -193,29 +184,37 @@ def makeplot(strat, savepath, coi=COI, cmap=ICE_CM):
     bot_depth = yticks_depth.max()
 
     # Init strat col plot
-    fig, (ax1, cax) = plt.subplots(2, figsize=(4.5, 10),
+    fig, (ax1, cax) = plt.subplots(2, figsize=(2.5, 9),
                                   gridspec_kw={"height_ratios":[1, 0.05]})
-    fig.suptitle(f"{coi} Stratigraphy")
+    
     ax1.set_xlim(0, 1)
     ax2 = ax1.twinx()
 
     # Plot strat layers
+    norm = mpl.colors.Normalize(vmin=0, vmax=100)
     for k, v in lith_key.items():
-        ax1.fill_betweenx(strat["depth"], 0, 1, where=(strat["lith"] == k), 
-                          facecolor=v["color"], hatch=v["hatch"])
+        color = cmap(norm(v['ice_pct']))
+        ax1.fill_betweenx(strat["depth"], 0, 1, where=(strat["lith"] == v['lith']), 
+                          facecolor=color, hatch=v["hatch"])
 
     # Configure axes (ax1 = absolute depth [m], ax2 = lith depth [m])
-    ax1.set_ylabel('Depth [m]', labelpad=10)
+    ax1.set_title(f"{coi}")
+    ax1.set_ylabel('Depth [m]', labelpad=5)
     ax1.grid(False)
-    ax1.tick_params(axis='y', width=3)
+    ax1.tick_params(axis='y', length=8, width=0.5, direction='inout')
     
-    ax2.set_ylabel('Lithology Depths [m]', labelpad=25, rotation=-90)
-    ax2.set_ylim(bot_depth, top_depth)
+    # Draw lines between strat layers
     ax2.set_yticks(yticks_depth)
     ax2.grid(which="major", color="black", linestyle="-", linewidth=2)
 
+    if lith_depth_labels:
+        ax2.set_ylabel('Lithology Depths [m]', labelpad=25, rotation=-90)
+    else:
+        ax2.set_yticklabels([])
+
     for ax in [ax1, ax2]:
-        ax.set_ylim(bot_depth, top_depth)
+        ax.set_ylim(860, top_depth)
+        # ax.set_ylim(bot_depth, top_depth)
         ax.tick_params(axis='y', width=3)
         ax.xaxis.set_visible(False)
         ax.spines["top"].set_position(("axes", 1.0))
@@ -228,14 +227,49 @@ def makeplot(strat, savepath, coi=COI, cmap=ICE_CM):
     fig.colorbar(sm, cax=cax, orientation='horizontal', label='Ice in Layer [%]')
     fig.tight_layout()
     fig.subplots_adjust(hspace=0.01)
-    fig.savefig(savepath, bbox_inches="tight")
+    fig.savefig(savepath, bbox_inches="tight", dpi=300)
     print(f"Saved strat col plot to {savepath}")
+
+
+def makekey(lith_key, savepath, ncols=1, show_ict_pct=False, key_color='white', cmap=ICE_CM):
+    """Plot lithology legend"""
+    x = [0, 1]
+    y = [1, 0]
+
+    # Set up rows / cols and axes
+    nrows = int(np.ceil(len(lith_key)/ncols))
+    xsize = 1.5*ncols
+    ysize = 9 #nrows * 1.5
+    fig, axes = plt.subplots(ncols=ncols, nrows=nrows, sharex=True, sharey=True, 
+                             figsize=(xsize, ysize), 
+                             subplot_kw={'xticks':[], 'yticks':[]})
+    
+    norm = mpl.colors.Normalize(vmin=0, vmax=100)
+    for i, (ax, (label, v)) in enumerate(zip(axes.flat, lith_key.items())):
+        if label != "Ice" and show_ict_pct:
+            label += f" Ejecta ({v['ice_pct']:.0f}% ice)"
+        if key_color != 'white':
+            key_color = cmap(norm(v['ice_pct']))
+        ax.plot(x, y, linewidth=0)
+        ax.fill_betweenx(y, 0, 1, facecolor=key_color, hatch=v["hatch"])
+        ax.set_xlim(0, 0.1)
+        ax.set_ylim(0, 1)
+        # Turn off invisible axes
+        if i >= len(lith_key):
+            for a in ax.spines.values():
+                a.set_visible(False)
+        ax.set_title(label, size=10)
+    fig.tight_layout()
+    fig.savefig(savepath, bbox_inches='tight', dpi=300)
+    print(f"Saved key to {savepath}")
+
 
 if __name__ == "__main__":
     # Read strat and initialize
     coi_strat = pd.read_csv(COI_CSV)
     cfg = default_config.Cfg(seed=float(SEED))
-    crater_list = mp.get_crater_list(cfg=cfg)
+    rng = mp.get_rng(cfg)
+    crater_list = mp.get_crater_list(cfg=cfg, rng=rng)
 
     # Truncate strat to its formation age
     formation_age = crater_list[crater_list.cname == COI].age.values[0]
@@ -246,8 +280,8 @@ if __name__ == "__main__":
     strat = get_strat_col_ranges(coi_strat)
 
     #Get lith key and dict of lithology:numerical key
-    lith_key = get_lith_key(coi_strat.sort_values('depth').label.unique())
-    lith2key = {v["lith"]: k for k, v in lith_key.items()}
+    lith_key = get_lith_key(strat, savepath=OUT_LITHKEY)
+    lith2key = {k:v["lith"] for k, v in lith_key.items()}
     strat["lith"] = strat["label"].map(lith2key)
 
     makeplot(strat, OUT_STRAT, COI, ICE_CM)

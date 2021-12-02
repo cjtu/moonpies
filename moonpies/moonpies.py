@@ -41,6 +41,7 @@ def main(cfg=CFG):
     # Setup time and crater list
     time_arr = get_time_array(cfg)
     df = get_crater_list(cfg.ejecta_basins, cfg, rng)
+    print(df[df.cname == 'Faustini'])
 
     # Init strat columns dict based for all cfg.coldtrap_names
     strat_cols = init_strat_columns(time_arr, df, cfg)
