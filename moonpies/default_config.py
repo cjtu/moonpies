@@ -37,7 +37,7 @@ MODE_DEFAULTS = {
 COLDTRAP_DEFAULTS = {
     's': {
         'ballistic_hop_effcy': 0.054,  # Cannon et al. (2020)
-        'volc_dep_effcy': 0.258,  # 25.8% Spole (Wilcoski et al., 2021)
+        'volc_dep_effcy': 0.26,  # 25.8% Spole (Wilcoski et al., 2021)
         'coldtrap_names': (
             'Haworth', 'Shoemaker', 'Faustini', 'Shackleton', 'Slater', 
             'Amundsen', 'Cabeus', 'Sverdrup', 'de Gerlache', "Idel'son L", 
@@ -46,7 +46,7 @@ COLDTRAP_DEFAULTS = {
     },
     'n': {
         'ballistic_hop_effcy': 0.027,  # Cannon et al. (2020)
-        'volc_dep_effcy': 0.152,  # 15.2% Npole (Wilcoski et al., 2021)
+        'volc_dep_effcy': 0.15,  # 15.2% Npole (Wilcoski et al., 2021)
         'coldtrap_names': ('Fibiger', 'Hermite', 'Hermite A', 'Hevesy', 
             'Lovelace', 'Nansen A', 'Nansen F', 'Rozhdestvenskiy U', 
             'Rozhdestvenskiy W', 'Sylvester')
@@ -265,7 +265,7 @@ class Cfg:
     faint_young_sun: bool = True  # use faint young sun (Bahcall et al., 2001)
 
     # Impact gardening module Costello et al. (2020)
-    overturn_depth_present: float = 0.2  # [m] Present day overturn depth for 1 overturn by secondaries at 99%
+    overturn_depth_present: float = 0.1  # [m] Present day overturn depth for 1 overturn by secondaries at 99%
     overturn_ancient_slope: float = 1.6e-9  # [m/yr] Slope of overturn depth at higher early impact flux
     overturn_ancient_t0: float = 3e9  # [yrs] Time to start applying higher impact flux
 

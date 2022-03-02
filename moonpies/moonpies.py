@@ -41,7 +41,6 @@ def main(cfg=CFG):
     # Setup time and crater list
     time_arr = get_time_array(cfg)
     df = get_crater_list(cfg.ejecta_basins, cfg, rng)
-    print(df[df.cname == 'Faustini'])
 
     # Init strat columns dict based for all cfg.coldtrap_names
     strat_cols = init_strat_columns(time_arr, df, cfg)
@@ -382,22 +381,22 @@ def get_ejecta_thickness(distance, radius, cfg=CFG):
     """
     Return ejecta thickness as a function of distance given crater radius.
 
-    Complex craters McGetchin 1973
+    
     """
     rad_v = radius[:, np.newaxis]  # radius as column vector for broadcasting
     thick = np.zeros_like(distance*rad_v)
     exp = cfg.ejecta_thickness_order
 
     # Simple craters
-    is_s = radius < cfg.simple2complex
+    is_s = radius < cfg.simple2complex / 2
     thick[is_s] = get_ej_thick_simple(distance[is_s], rad_v[is_s], exp)
     
     # Complex craters
-    is_c = (cfg.simple2complex < radius) & (radius < cfg.complex2peakring)
+    is_c = (cfg.simple2complex / 2 < radius) & (radius < cfg.complex2peakring / 2)
     thick[is_c] = get_ej_thick_complex(distance[is_c], rad_v[is_c], exp)
 
     # Basins
-    is_pr = radius >= cfg.complex2peakring
+    is_pr = radius >= cfg.complex2peakring / 2
     t_radius = final2transient(rad_v*2, cfg) / 2
     thick[is_pr] = get_ej_thick_basin(distance[is_pr], t_radius[is_pr], exp, cfg.rad_moon)
     thick[np.isnan(thick)] = 0
@@ -419,7 +418,7 @@ def get_ej_thick_simple(distance, radius, order=-3):
 
 def get_ej_thick_complex(distance, radius, order=-3):
     """
-    Return ejecta thickness with distance from a complex crater (Kring 1995).
+    Return ejecta thickness with distance from a complex crater (McGetchin 1973).
 
     Parameters
     ----------
@@ -620,7 +619,7 @@ def get_polar_ice(time_arr, t, cfg=CFG, rng=None):
         if cfg.impact_ice_comets:
             # comet_ice is run every time for repro, but only add if needed
             # Scale impact ice to ast frac, add comet ice * comet frac
-            impact_ice *= (1 - cfg.comet_ast_frac)
+            impact_ice *= (1 - cfg.comet_ast_frac) 
             impact_ice += comet_ice
 
         # Sum all ice sources and cache result
@@ -1311,8 +1310,6 @@ def get_ice_stochastic(time_arr, regime, cfg=CFG, rng=None):
     return ice_t
 
 
-
-
 @lru_cache(1)
 def read_ballistic_hop_csv(bhop_csv):
     """
@@ -1326,6 +1323,22 @@ def read_ballistic_hop_csv(bhop_csv):
             ballistic_hop_coldtraps[coldtrap] = float(bhop) * 1e6 / 100
     return ballistic_hop_coldtraps
 
+
+def get_ballistic_hop_efficiency(coldtrap, cfg=CFG):
+    """
+    Return ballistic hop efficiency of coldtrap.
+
+    Parameters
+    ----------
+    coldtrap (str): Coldtrap to get ballistic hop efficiency of.
+    cfg (instance): Configuration object.
+
+    Returns
+    -------
+    bhop (float): Ballistic hop efficiency of coldtrap.
+    """
+    bhop = read_ballistic_hop_csv(cfg.bhop_csv)
+    return bhop[coldtrap]
 
 def get_ice_coldtrap(ice_polar, ice_volcanic, coldtrap, cfg=CFG):
     """
@@ -1420,7 +1433,7 @@ def ice_large_craters(crater_diams, impactor_speeds, regime, cfg=CFG):
     impactor_masses = diam2vol(impactor_diams) * cfg.impactor_density  # [kg]
 
     # Find ice mass assuming hydration wt% and retention based on speed
-    ice_retention = ice_retention_factor(impactor_speeds, cfg.mode)
+    ice_retention = ice_retention_factor(impactor_speeds, cfg)
     ice_masses = impactor_masses * cfg.hydrated_wt_pct * ice_retention
     return np.sum(ice_masses)
 
@@ -1445,7 +1458,7 @@ def ice_basins(df_basins, time_arr, cfg=CFG, rng=None):
     return basin_ice_t
 
 
-def ice_retention_factor(speeds, mode='moonpies'):
+def ice_retention_factor(speeds, cfg):
     """
     Return ice retained in impact, given impactor speeds (Ong et al. 2010).
 
@@ -1453,16 +1466,15 @@ def ice_retention_factor(speeds, mode='moonpies'):
     For speeds >= 10 km/s, use fit Fig 2 (Ong et al. 2010 via Cannon 2020)
     """
     speeds = speeds * 1e-3  # [m/s] -> [km/s]
-    retained = np.zeros_like(speeds)
-    retained[speeds < 10] = 0.5
-    if mode == 'cannon':
+    retained = np.ones_like(speeds)
+    if cfg.mode == 'cannon':
         # Cannon et al. (2020) ds02
         retained[speeds >= 10] = 36.26 * np.exp(-0.3464 * speeds[speeds >= 10])
-    elif mode == 'moonpies':
+    elif cfg.mode == 'moonpies':
         # Fit to Fig 2. (Ong et al. 2010), negligible retention > 45 km/s
         retained[speeds >= 10] = 1.66e4 * speeds[speeds >= 10] ** -4.16
-        retained[speeds > 45] = 0
-        retained[retained > 0.5] = 0.5  # Cap at 50% retained
+    if not cfg.impact_speed_comet:
+        retained[speeds < 10] = 0.5  # Cap at 50% retained for asteroids
     retained[retained < 0] = 0
     return retained
 

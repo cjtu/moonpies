@@ -15,16 +15,17 @@ from moonpies import default_config
 
 FIGDIR = ''  # Full path or '' for default (moonpies/figs)
 DATADIR = ''  # Full path or '' for default (moonpies/data)
-SEED = '65106'  # Set seed as string or '' to pick first seed from datadir
+SEED = '00100'  # Set seed as string or '' to pick first seed from datadir
 COI = 'Faustini'  # Set coldtrap of interest or '' for default ("Haworth")
-RUNNAME = '_no_bsed'  # append runname to filename
-SAVELITH = True  # Save lith key (to use same layers for multiple runs)
-MIN_THICKNESS = 10  # [m] minimum layer thickness
+RUNNAME = '_bsed'  # append runname to filename
+SAVELITH = False  # Save lith key (to use same layers for multiple runs)
+MIN_THICKNESS = 5  # [m] minimum layer thickness
+SHOW_HATCHES = False
 
 if RUNNAME == '_bsed':
-    DATADIR = '/home/cjtu/projects/moonpies/data/out/211201_bsed'
+    DATADIR = '/home/cjtu/projects/moonpies/data/out/220224_mpies/'
 elif RUNNAME == '_no_bsed':
-    DATADIR = '/home/cjtu/projects/moonpies/data/out/211201_no_bsed'
+    DATADIR = '/home/cjtu/projects/moonpies/data/out/220221_nobsed/'
 
 # Set default config
 CFG = default_config.Cfg()
@@ -68,7 +69,7 @@ HATCHES = [
 
 # Make diverging ice% colormap (gray, white, blue)
 # COLORS = ['#8b8c8d', '#ffffff', '#3c8df0']
-COLORS = ['#ffffff', '#3c8df0']
+COLORS = ['#ffffff', '#1f77b4']
 
 def get_continuous_cmap(hex_list, locs=None):
     """
@@ -169,7 +170,7 @@ def get_strat_col_ranges(strat_col, savefile=None):
     return strat
 
 
-def makeplot(strat, savepath, coi=COI, cmap=ICE_CM, lith_depth_labels=False):
+def makeplot(strat, savepath, coi=COI, cmap=ICE_CM, lith_depth_labels=False, show_hatches=True):
     """Plot strat columns"""
     # Get the depth boundaries of each distinct layer in strat
     adj_check = (strat.label != strat.label.shift()).cumsum()
@@ -195,8 +196,9 @@ def makeplot(strat, savepath, coi=COI, cmap=ICE_CM, lith_depth_labels=False):
     norm = mpl.colors.Normalize(vmin=0, vmax=100)
     for k, v in lith_key.items():
         color = cmap(norm(v['ice_pct']))
+        hatch = v['hatch'] if show_hatches else None
         ax1.fill_betweenx(strat["depth"], 0, 1, where=(strat["lith"] == v['lith']), 
-                          facecolor=color, hatch=v["hatch"])
+                          facecolor=color, hatch=hatch)
 
     # Configure axes (ax1 = absolute depth [m], ax2 = lith depth [m])
     ax1.set_title(f"{coi}")
@@ -214,7 +216,7 @@ def makeplot(strat, savepath, coi=COI, cmap=ICE_CM, lith_depth_labels=False):
         ax2.set_yticklabels([])
 
     for ax in [ax1, ax2]:
-        ax.set_ylim(860, top_depth)
+        ax.set_ylim(bot_depth, top_depth)
         # ax.set_ylim(bot_depth, top_depth)
         ax.tick_params(axis='y', width=3)
         ax.xaxis.set_visible(False)
@@ -285,5 +287,5 @@ if __name__ == "__main__":
     lith2key = {k:v["lith"] for k, v in lith_key.items()}
     strat["lith"] = strat["label"].map(lith2key)
 
-    makeplot(strat, OUT_STRAT, COI, ICE_CM)
+    makeplot(strat, OUT_STRAT, COI, ICE_CM, show_hatches=SHOW_HATCHES)
     makekey(lith_key, OUT_KEY)

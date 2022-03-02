@@ -164,5 +164,5 @@ for mode in ('MoonPIES', 'Cannon'):
     # ax.set_title(mode + ' Ice Thickness by Module')
     # ax.set_xlabel('Lunar Geologic Era')
     # mp.plot_version(cfg_mp, loc='ul')
-    f.savefig(FIGDIR + f'plot_by_mod_{mode}.png')
+    f.savefig(FIGDIR + f'plot_by_mod_{mode}.pdf')
 

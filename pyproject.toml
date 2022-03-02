@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "moonpies"
-version = "0.12.0"
+version = "0.13.0"
 description = "Moon Polar Ice and Ejecta Stratigraphy model"
 authors = ["Christian J. Tai Udovicic <cjtu@nau.edu>", "Katelyn R. Frizzell", "Kristen M. Luchsinger", "Alissa Madera", "Tyler G. Paladino"]
 license = "MIT"
@@ -22,6 +22,7 @@ Sphinx = "^4.1.2"
 sphinx-rtd-theme = "^0.5.2"
 myst-parser = "^0.15.1"
 numpydoc = "^1.1.0"
+seaborn = "^0.11.2"
 
 [tool.black]
 line-length=79

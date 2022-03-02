@@ -3,7 +3,6 @@ Plots ice from basin impactors
 K. Frizzell
 Last updated 11/16/21 (CJTU)
 """
-from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt 
 from moonpies import moonpies as mp

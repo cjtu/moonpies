@@ -1,5 +1,4 @@
 """Script to find and compile ice_cols from mixing.py runs into one plot."""
-from dataclasses import dataclass
 import sys
 from pathlib import Path
 import pandas as pd
