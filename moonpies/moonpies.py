@@ -4,6 +4,7 @@
 :Authors: K.R. Frizzell, K.M. Luchsinger, A. Madera, T.G. Paladino and C.J. Tai Udovicic
 :Acknowledgements: Translated & extended MATLAB model by Cannon et al. (2020).
 """
+from lib2to3.pgen2.pgen import DFAState
 import os
 import gc
 from functools import lru_cache, _lru_cache_wrapper
@@ -193,9 +194,11 @@ def get_crater_list(basins=False, cfg=CFG, rng=None):
     if 'crater_list' not in CACHE:
         df_craters = read_crater_list(cfg)
         df_craters['isbasin'] = False
+        df_craters['icy_impactor'] = 'no'
         
         df_basins = read_basin_list(cfg)
         df_basins['isbasin'] = True
+        df_basins = random_icy_basins(df_basins, cfg, rng)
 
         # Combine DataFrames and randomize ages
         df = pd.concat([df_craters, df_basins])
@@ -204,6 +207,29 @@ def get_crater_list(basins=False, cfg=CFG, rng=None):
     df = CACHE['crater_list']
     if not basins:
         df = df[df.isbasin == False].reset_index(drop=True)
+    return df
+
+
+def random_icy_basins(df, cfg=CFG, rng=None):
+    """
+    Randomly assign each basin an icy_impactor type (hyd_ctype, comet, or no).
+
+    Parameters
+    ----------
+    df (DataFrame): Basin DataFrame
+    cfg (Cfg): Configuration object
+    rng (int or np.RandomState): Random number generator
+
+    Returns
+    -------
+    df (DataFrame): Crater DataFrame
+    """
+    df['icy_impactor'] = 'no'
+    ctype, comet = get_random_hydrated_basins(len(df), cfg, rng)
+    if cfg.impact_ice_basins:
+        df.loc[ctype, 'icy_impactor'] = 'hyd_ctype'
+        if cfg.impact_ice_comets:
+            df.loc[comet, 'icy_impactor'] = 'comet'
     return df
 
 
@@ -1166,6 +1192,20 @@ def get_impact_ice(time_arr, cfg=CFG, rng=None):
     return impact_ice_t
 
 
+def get_comet_cfg(cfg):
+    """
+    Return comet config.
+    """
+    # Define comet_cfg with comet parameters to supply to get_impact_ice
+    comet_cfg_dict = cfg.to_dict()
+    comet_cfg_dict['impact_speed_comet'] = True  # Use comet impact speeds
+    comet_cfg_dict['hydrated_wt_pct'] = cfg.comet_hydrated_wt_pct
+    comet_cfg_dict['impactor_density'] = cfg.comet_density
+    comet_cfg_dict['impact_mass_retained'] = cfg.comet_mass_retained
+    comet_cfg_dict['impact_ice_basins'] = False  # Manually add basins
+    return default_config.from_dict(comet_cfg_dict)
+
+
 def get_impact_ice_comet(time_arr, cfg, rng=None):
     """
     Return ice thickness [m] delivered to pole due to comet impacts vs time.
@@ -1174,19 +1214,12 @@ def get_impact_ice_comet(time_arr, cfg, rng=None):
     -------
     impact_ice_t (arr): Ice thickness [m] delivered to pole at each time.
     """
-    # Define comet_cfg with comet parameters to supply to get_impact_ice
-    comet_cfg_dict = cfg.to_dict()
-    comet_cfg_dict['impact_speed_comet'] = True  # Use comet impact speeds
-    comet_cfg_dict['ctype_frac'] = 1  # All comets hydrated
-    comet_cfg_dict['ctype_hydrated'] = 1  # All comets hydrated
-    comet_cfg_dict['hydrated_wt_pct'] = cfg.comet_hydrated_wt_pct
-    comet_cfg_dict['impactor_density'] = cfg.comet_density
-    comet_cfg_dict['impact_mass_retained'] = cfg.comet_mass_retained
-    comet_cfg = default_config.from_dict(comet_cfg_dict)
+    comet_cfg = get_comet_cfg(cfg)
     comet_ice_t = get_impact_ice(time_arr, comet_cfg, rng)
 
     # Cludge: Scale all regimes by ast_comet_frac, except make mm 100% cometary
     ice_mm = get_micrometeorite_ice(time_arr, comet_cfg)
+    ice_basins = get_basin_ice(time_arr, comet_cfg, rng)
     comet_ice_t = (comet_ice_t - ice_mm) * cfg.comet_ast_frac + ice_mm
     return comet_ice_t
 
@@ -1303,7 +1336,6 @@ def get_ice_stochastic(time_arr, regime, cfg=CFG, rng=None):
         hyd = get_random_hydrated_craters(len(rand_diams), cfg, rng)
         hyd_diams = rand_diams[hyd]
 
-        # TODO: comet_speed here
         speeds = get_random_impactor_speeds(len(hyd_diams), cfg, rng)
         ice_mass = ice_large_craters(hyd_diams, speeds, regime, cfg)
         ice_t[i] = get_ice_thickness(ice_mass, cfg)
@@ -1526,11 +1558,33 @@ def get_random_hydrated_craters(n, cfg=CFG, rng=None):
     """
     Return crater diams of hydrated craters from random distribution.
     """
-    # Randomly include only craters formed by hydrated, Ctype asteroids
     rng = _rng(rng)
     rand_arr = rng.random(size=n)
-    hydrated_inds = rand_arr < (cfg.ctype_frac * cfg.ctype_hydrated)
+    if cfg.impact_speed_comet:
+        # Get fraction of cometary impactors (assumed always hydrated)
+        hydration_prob = cfg.comet_ast_frac
+    else:
+        # Get fraction of ctype asteroids time prob of being hydrated
+        hydration_prob = cfg.ctype_frac * cfg.ctype_hydrated
+    hydrated_inds = rand_arr < hydration_prob
     return hydrated_inds
+
+
+def get_random_hydrated_basins(n, cfg=CFG, rng=None):
+    """
+    Return indicess of hydrated basins from random distribution with asteroids
+    and comets mutually exclusive.
+    """
+    rng = _rng(rng)
+    rand_arr = rng.random(size=n)
+    # Fraction of ctype hydrated basin impactors
+    hydration_prob = cfg.ctype_frac * cfg.ctype_hydrated
+    ctype_inds = rand_arr < hydration_prob
+    
+    # Fraction of cometary basins (use same rand_arr and pick unique inds)
+    hydration_prob = cfg.comet_ast_frac
+    comet_inds = rand_arr > (1 - hydration_prob)
+    return ctype_inds, comet_inds
 
 
 def get_random_impactor_speeds(n, cfg=CFG, rng=None):
