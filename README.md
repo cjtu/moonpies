@@ -41,6 +41,14 @@ See more info about managing conda environments [here](https://conda.io/projects
 
 **Note:** While the model will run on Windows, we recommend Windows users install the Windows Subsystem for Linux (WSL), particularly to simplify running the model in parallel. See WSL installation guide [here](https://docs.microsoft.com/en-us/windows/wsl/install-win10).
 
+Finally, before running the model, you must install and activate a poetry shell environment in your terminal, by running:
+
+'poetry install'
+
+Followed by:
+
+'poetry shell'
+
 ## Model Installation
 
 The model is packaged as a `.zip` file and can be downloaded from *TBD*. Once downloaded, extract all contents of the `.zip` to a directory of your choice (e.g. by right-clicking the .zip and choosing "extract here"). The unzipped package has the following structure:
