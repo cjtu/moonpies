@@ -1,6 +1,6 @@
 .vscode
 docs/_build/
-**/out/
+**/out
 data/tmp/
 dist/
 figures/
