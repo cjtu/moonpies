@@ -644,8 +644,6 @@ def get_polar_ice(time_arr, t, cfg=CFG, rng=None):
         comet_ice = get_impact_ice_comet(time_arr, cfg, rng)
         if cfg.impact_ice_comets:
             # comet_ice is run every time for repro, but only add if needed
-            # Scale impact ice to ast frac, add comet ice * comet frac
-            impact_ice *= (1 - cfg.comet_ast_frac) 
             impact_ice += comet_ice
 
         # Sum all ice sources and cache result
@@ -1408,10 +1406,14 @@ def ice_micrometeorites(time, cfg=CFG):
     # Scale by impact flux relative to today
     mm_mass_t = cfg.mm_mass_rate * impact_flux_scaling(time)
 
-    # Account for comet hydration and mass retined
-    if cfg.impact_ice_comets:
+    if cfg.impact_speed_comet:
+        # When comet micrometeorites (100% comets)
         ice_ret = cfg.comet_hydrated_wt_pct * cfg.comet_mass_retained
+    elif cfg.impact_ice_comets:
+        # When asteroid micrometeorites but comets included
+        ice_ret = 0
     else:
+        # When asteroid micrometeorites but comets excluded (100% asteroids)
         ice_ret = cfg.hydrated_wt_pct * cfg.impact_mass_retained
     mm_ice_t = mm_mass_t * ice_ret * cfg.timestep
     return mm_ice_t
@@ -1431,6 +1433,12 @@ def ice_small_impactors(diams, impactors_t, cfg=CFG):
         cfg.hydrated_wt_pct,
         cfg.impact_mass_retained,
     )
+    if cfg.impact_speed_comet:
+        # When comet micrometeorites (comet fraction)
+        impactor_ice_t *= cfg.comet_ast_frac
+    elif cfg.impact_ice_comets:
+        # When asteroid micrometeorites but comets included
+        impactor_ice_t *= 1 - cfg.comet_ast_frac
     return impactor_ice_t
 
 
@@ -1453,6 +1461,12 @@ def ice_small_craters(
         cfg.hydrated_wt_pct,
         cfg.impact_mass_retained,
     )
+    if cfg.impact_speed_comet:
+        # When comet micrometeorites (comet fraction)
+        total_impactor_water *= cfg.comet_ast_frac
+    elif cfg.impact_ice_comets:
+        # When asteroid micrometeorites but comets included
+        total_impactor_water *= 1 - cfg.comet_ast_frac
     return total_impactor_water
 
 
@@ -1563,6 +1577,10 @@ def get_random_hydrated_craters(n, cfg=CFG, rng=None):
     if cfg.impact_speed_comet:
         # Get fraction of cometary impactors (assumed always hydrated)
         hydration_prob = cfg.comet_ast_frac
+    elif cfg.impact_ice_comets:
+        # Get fraction of asteroids, in runs that contain comets
+        ast_frac = 1 - cfg.comet_ast_frac
+        hydration_prob = ast_frac * cfg.ctype_frac * cfg.ctype_hydrated
     else:
         # Get fraction of ctype asteroids time prob of being hydrated
         hydration_prob = cfg.ctype_frac * cfg.ctype_hydrated
@@ -1578,7 +1596,11 @@ def get_random_hydrated_basins(n, cfg=CFG, rng=None):
     rng = _rng(rng)
     rand_arr = rng.random(size=n)
     # Fraction of ctype hydrated basin impactors
-    hydration_prob = cfg.ctype_frac * cfg.ctype_hydrated
+    if cfg.impact_ice_comets:
+        ast_frac = 1 - cfg.comet_ast_frac
+        hydration_prob = ast_frac * cfg.ctype_frac * cfg.ctype_hydrated
+    else:
+        hydration_prob = cfg.ctype_frac * cfg.ctype_hydrated
     ctype_inds = rand_arr < hydration_prob
     
     # Fraction of cometary basins (use same rand_arr and pick unique inds)

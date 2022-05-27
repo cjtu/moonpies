@@ -230,7 +230,7 @@ class Cfg:
 
     # Comet constants
     impact_speed_comet: bool = False  # Use comet impact speed distribution
-    comet_ast_frac: float = 0.1  # 5-17% TODO: check citation (Joy et al 2012) 
+    comet_ast_frac: float = 0.05  # 5-17% (Joy et al 2012) 
     comet_density: float = 1300  # [kg/m^3]
     comet_hydrated_wt_pct: float = 0.5  # 50% of comet mass is hydrated
     comet_mass_retained: float = 0.065  # asteroid mass retained (Ong et al., 2011)
