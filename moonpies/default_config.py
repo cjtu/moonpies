@@ -213,6 +213,9 @@ class Cfg:
     ctype_hydrated: float = 2/3  # 2/3 of c-types are hydrated (Rivkin, 2012)
     hydrated_wt_pct: float = 0.1  # impactors wt% H2O (Cannon 2020)
     impact_mass_retained: float = 0.165  # asteroid mass retained in impact (Ong et al., 2011)
+    brown_c0: float = 1.568  # Brown et al. (2002)
+    brown_d0: float = 2.7  # Brown et al. (2002)
+    earth_moon_ratio: float = 22.5  # Earth-Moon impact ratio Mazrouei et al. (2019)
     diam_range: dict = field(default_factory = lambda: ({
         # regime: (rad_min, rad_max, step)
         'a': (0, 0.01, None),  # micrometeorites (<1 mm)
@@ -229,7 +232,7 @@ class Cfg:
     }))
 
     # Comet constants
-    impact_speed_comet: bool = False  # Use comet impact speed distribution
+    is_comet: bool = False  # Use comet properties for impacts
     comet_ast_frac: float = 0.05  # 5-17% (Joy et al 2012) 
     comet_density: float = 1300  # [kg/m^3]
     comet_hydrated_wt_pct: float = 0.5  # 50% of comet mass is hydrated
@@ -426,10 +429,8 @@ def _get_outpath(cfg):
             outpath = path.dirname(path.normpath(outpath))
         outpath = path.join(outpath, run_seed)
     elif outpath == '':
-        # Default outpath is datapath/out/yymmdd_runname/seed/
-        datapath = cfg.datapath
-        run_dir = f'{cfg.run_date}_{cfg.run_name}'
-        outpath = path.join(datapath, 'out', run_dir, run_seed)
+        # Default outpath is datapath/out/yymmdd/runname/seed/
+        outpath = path.join(cfg.datapath, 'out', cfg.run_date, cfg.run_name, run_seed)
     return outpath + sep
 
 

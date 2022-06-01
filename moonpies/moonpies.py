@@ -4,11 +4,11 @@
 :Authors: K.R. Frizzell, K.M. Luchsinger, A. Madera, T.G. Paladino and C.J. Tai Udovicic
 :Acknowledgements: Translated & extended MATLAB model by Cannon et al. (2020).
 """
-from lib2to3.pgen2.pgen import DFAState
 import os
 import gc
 from functools import lru_cache, _lru_cache_wrapper
 import numpy as np
+from scipy import stats
 import pandas as pd
 
 try:
@@ -49,7 +49,7 @@ def main(cfg=CFG):
     # Main loop over time
     vprint("Starting main loop...")
     for t in range(len(time_arr)):
-        strat_cols = update_strat_cols(strat_cols, time_arr, t, cfg, rng)
+        strat_cols = update_strat_cols(strat_cols, df, time_arr, t, cfg, rng)
 
     # Format and save outputs
     outputs = format_save_outputs(strat_cols, time_arr, df, cfg, vprint)
@@ -144,7 +144,7 @@ def update_ice_col(cols, t, new_ice, overturn_depth, bsed_depth, bsed_frac, cfg=
     return ice_col
 
 
-def update_strat_cols(strat_cols, time_arr, t, cfg=CFG, rng=None):
+def update_strat_cols(strat_cols, df, time_arr, t, cfg=CFG, rng=None):
     """
     Update ice_cols new ice added and ice eroded.
 
@@ -157,7 +157,7 @@ def update_strat_cols(strat_cols, time_arr, t, cfg=CFG, rng=None):
     rng (seed or np.random.rng): Random number generator.
     """
     # Get ice modification for this timestep
-    bsed_depth, bsed_frac = get_ballistic_sed_depths(time_arr, t, cfg)
+    bsed_depth, bsed_frac = get_ballistic_sed_depths(df, time_arr, t, cfg)
     polar_ice = get_polar_ice(time_arr, t, cfg, rng)
     volc_ice = get_volcanic_ice_t(time_arr, t, cfg)
     overturn_d = get_overturn_depth(time_arr, t, cfg)
@@ -202,7 +202,7 @@ def get_crater_list(basins=False, cfg=CFG, rng=None):
 
         # Combine DataFrames and randomize ages
         df = pd.concat([df_craters, df_basins])
-        df = randomize_crater_ages(df, cfg.timestep, cfg.dtype, rng)
+        df = randomize_crater_ages(df, cfg.timestep, rng)
         CACHE['crater_list'] = df
     df = CACHE['crater_list']
     if not basins:
@@ -375,6 +375,8 @@ def get_coldtrap_dists(df, cfg=CFG):
     -------
     dist (2D array): great circle distances from df craters to coldtraps
     """
+    if 'coldtrap_dists' in CACHE:
+        return CACHE['coldtrap_dists']
     ej_threshold = cfg.ej_threshold
     if ej_threshold < 0:
         ej_threshold = np.inf
@@ -394,12 +396,13 @@ def get_coldtrap_dists(df, cfg=CFG):
             if d <= src_rad:
                 # Cut out distances within the crater
                 dist[i, j] = np.nan
-            elif dist[i, j] > (ej_threshold * src_rad):
+            elif d > (ej_threshold * src_rad):
                 # Cut off distances > ej_threshold crater radii
                 dist[i, j] = np.nan
             else:
                 dist[i, j] = d
     dist[dist <= 0] = np.nan
+    CACHE['coldtrap_dists'] = dist
     return dist
 
 
@@ -939,13 +942,12 @@ def read_ballistic_melt_frac(bsed_csv, cfg=CFG):
     return df
 
 
-def get_ballistic_sed_depths(time_arr, t, cfg=CFG):
+def get_ballistic_sed_depths(df, time_arr, t, cfg=CFG):
     """
     Return ballistic sedimentation depth for each coldtrap at t.
     """
     global CACHE
     if "bsed_depths" not in CACHE:
-        df = CACHE['crater_list']  # Must exist before calling this function
         bsed_depths, bsed_fracs = bsed_depth_petro_pieters(time_arr, df, cfg)
         CACHE["bsed_depths"] = bsed_depths
         CACHE["bsed_fracs"] = bsed_fracs
@@ -1196,11 +1198,10 @@ def get_comet_cfg(cfg):
     """
     # Define comet_cfg with comet parameters to supply to get_impact_ice
     comet_cfg_dict = cfg.to_dict()
-    comet_cfg_dict['impact_speed_comet'] = True  # Use comet impact speeds
+    comet_cfg_dict['is_comet'] = True  # Use comet impact speeds
     comet_cfg_dict['hydrated_wt_pct'] = cfg.comet_hydrated_wt_pct
     comet_cfg_dict['impactor_density'] = cfg.comet_density
     comet_cfg_dict['impact_mass_retained'] = cfg.comet_mass_retained
-    comet_cfg_dict['impact_ice_basins'] = False  # Manually add basins
     return default_config.from_dict(comet_cfg_dict)
 
 
@@ -1214,11 +1215,6 @@ def get_impact_ice_comet(time_arr, cfg, rng=None):
     """
     comet_cfg = get_comet_cfg(cfg)
     comet_ice_t = get_impact_ice(time_arr, comet_cfg, rng)
-
-    # Cludge: Scale all regimes by ast_comet_frac, except make mm 100% cometary
-    ice_mm = get_micrometeorite_ice(time_arr, comet_cfg)
-    ice_basins = get_basin_ice(time_arr, comet_cfg, rng)
-    comet_ice_t = (comet_ice_t - ice_mm) * cfg.comet_ast_frac + ice_mm
     return comet_ice_t
 
 
@@ -1406,7 +1402,7 @@ def ice_micrometeorites(time, cfg=CFG):
     # Scale by impact flux relative to today
     mm_mass_t = cfg.mm_mass_rate * impact_flux_scaling(time)
 
-    if cfg.impact_speed_comet:
+    if cfg.is_comet:
         # When comet micrometeorites (100% comets)
         ice_ret = cfg.comet_hydrated_wt_pct * cfg.comet_mass_retained
     elif cfg.impact_ice_comets:
@@ -1426,19 +1422,7 @@ def ice_small_impactors(diams, impactors_t, cfg=CFG):
     """
     impactor_masses = diam2vol(diams) * cfg.impactor_density
     impactor_mass_t = np.sum(impactors_t * impactor_masses, axis=1)
-    impactor_ice_t = impactor_mass2water(
-        impactor_mass_t,
-        cfg.ctype_frac,
-        cfg.ctype_hydrated,
-        cfg.hydrated_wt_pct,
-        cfg.impact_mass_retained,
-    )
-    if cfg.impact_speed_comet:
-        # When comet micrometeorites (comet fraction)
-        impactor_ice_t *= cfg.comet_ast_frac
-    elif cfg.impact_ice_comets:
-        # When asteroid micrometeorites but comets included
-        impactor_ice_t *= 1 - cfg.comet_ast_frac
+    impactor_ice_t = impactor_mass2water(impactor_mass_t, cfg)
     return impactor_ice_t
 
 
@@ -1454,19 +1438,7 @@ def ice_small_craters(
     impactor_diams = diam2len(crater_diams, cfg.impact_speed_mean, regime, cfg)
     impactor_masses = diam2vol(impactor_diams) * cfg.impactor_density  # [kg]
     total_impactor_mass = np.sum(impactor_masses * ncraters, axis=1)
-    total_impactor_water = impactor_mass2water(
-        total_impactor_mass,
-        cfg.ctype_frac,
-        cfg.ctype_hydrated,
-        cfg.hydrated_wt_pct,
-        cfg.impact_mass_retained,
-    )
-    if cfg.impact_speed_comet:
-        # When comet micrometeorites (comet fraction)
-        total_impactor_water *= cfg.comet_ast_frac
-    elif cfg.impact_ice_comets:
-        # When asteroid micrometeorites but comets included
-        total_impactor_water *= 1 - cfg.comet_ast_frac
+    total_impactor_water = impactor_mass2water(total_impactor_mass, cfg)
     return total_impactor_water
 
 
@@ -1519,32 +1491,33 @@ def ice_retention_factor(speeds, cfg):
     elif cfg.mode == 'moonpies':
         # Fit to Fig 2. (Ong et al. 2010), negligible retention > 45 km/s
         retained[speeds >= 10] = 1.66e4 * speeds[speeds >= 10] ** -4.16
-    if not cfg.impact_speed_comet:
+    if not cfg.is_comet:
         retained[speeds < 10] = 0.5  # Cap at 50% retained for asteroids
     retained[retained < 0] = 0
     return retained
 
 
-def impactor_mass2water(
-    impactor_mass,
-    ctype_frac=0.36,
-    ctype_hyd=2 / 3,
-    hyd_wt_pct=0.1,
-    mass_retained=0.165,
-):
+def impactor_mass2water(impactor_mass, cfg):
     """
     Return water [kg] from impactor mass [kg] using assumptions of Cannon 2020:
         - 36% of impactors are C-type (Jedicke et al., 2018)
         - 2/3 of C-types are hydrated (Rivkin, 2012)
         - Hydrated impactors are 10% water by mass (Cannon et al., 2020)
         - 16% of asteroid mass retained on impact (Ong et al. 2011)
+     for comets:
+        - assume 50% of comet hydrated
+        - 6.5% of comet mass retained on impact (Ong et al. 2011)
     """
-    return ctype_frac * ctype_hyd * hyd_wt_pct * impactor_mass * mass_retained
+    if cfg.is_comet:
+        mass_h2o = cfg.comet_hydrated_wt_pct * impactor_mass * cfg.comet_mass_retained
+    else:
+        mass_h2o = cfg.ctype_frac * cfg.ctype_hydrated * cfg.hydrated_wt_pct * impactor_mass * cfg.impact_mass_retained
+    return mass_h2o
 
 
 # Stochasticity and randomness
 def _rng(rng):
-    """"""
+    """Shorthand wrapper for np.random.default_rng."""
     return np.random.default_rng(rng)
 
 
@@ -1553,17 +1526,20 @@ def get_rng(cfg=CFG):
     return _rng(cfg.seed)
 
 
-def randomize_crater_ages(df, timestep, dtype=None, rng=None):
+def randomize_crater_ages(df, timestep, rng=None):
     """
-    Return ages randomized uniformly between agelow, ageupp.
+    Return ages randomized with a truncated Gaussian between agelow, ageupp.
     """
     rng = _rng(rng)
-    # TODO: make sure ages are unique to each timestep?
-    ages, agelow, ageupp = df[["age", "age_low", "age_upp"]].values.T
-    new_ages = np.zeros(len(df), dtype=dtype)
-    for i, (age, low, upp) in enumerate(zip(ages, agelow, ageupp)):
-        new_ages[i] = round_to_ts(rng.uniform(age - low, age + upp), timestep)
-    df["age"] = new_ages
+
+    # Set standard deviation and get scaling params for truncnorm
+    sig = df[['age_low', 'age_upp']].mean(axis=1)/2
+    a = -df.age_low/sig
+    b = df.age_upp/sig
+
+    # Truncated normal, returns vector of randomized ages
+    new_ages = stats.truncnorm.rvs(a, b, df.age, sig, random_state=rng)
+    df["age"] = round_to_ts(new_ages, timestep)
     df = df.sort_values("age", ascending=False).reset_index(drop=True)
     return df
 
@@ -1574,12 +1550,12 @@ def get_random_hydrated_craters(n, cfg=CFG, rng=None):
     """
     rng = _rng(rng)
     rand_arr = rng.random(size=n)
-    if cfg.impact_speed_comet:
+    if cfg.is_comet:
         # Get fraction of cometary impactors (assumed always hydrated)
         hydration_prob = cfg.comet_ast_frac
     elif cfg.impact_ice_comets:
         # Get fraction of asteroids, in runs that contain comets
-        ast_frac = 1 - cfg.comet_ast_frac
+        ast_frac = (1 - cfg.comet_ast_frac)
         hydration_prob = ast_frac * cfg.ctype_frac * cfg.ctype_hydrated
     else:
         # Get fraction of ctype asteroids time prob of being hydrated
@@ -1615,7 +1591,7 @@ def get_random_impactor_speeds(n, cfg=CFG, rng=None):
     """
     # Randomize impactor speeds with Gaussian around mean, sd
     rng = _rng(rng)
-    if cfg.impact_speed_comet:
+    if cfg.is_comet:
         speeds = get_comet_speeds(n, cfg, rng)
     else:
         speeds = rng.normal(cfg.impact_speed_mean, cfg.impact_speed_sd, n)
@@ -1682,16 +1658,20 @@ def n_cumulative(diam, a, b):
     return a * diam ** b
 
 
-@lru_cache(1)
-def get_impactors_brown(mindiam, maxdiam, timestep, c0=1.568, d0=2.7):
+def get_impactors_brown(mindiam, maxdiam, timestep, cfg=CFG):
     """
     Return number of impactors per yr in range mindiam, maxdiam (Brown et al.
     2002) and scale by Earth-Moon impact ratio (Mazrouei et al. 2019).
     """
+    c0, d0 = cfg.brown_c0, cfg.brown_d0
     n_impactors_gt_low = 10 ** (c0 - d0 * np.log10(mindiam))  # [yr^-1]
     n_impactors_gt_high = 10 ** (c0 - d0 * np.log10(maxdiam))  # [yr^-1]
     n_impactors_earth_yr = n_impactors_gt_low - n_impactors_gt_high
-    n_impactors_moon = n_impactors_earth_yr * timestep / 22.5
+    n_impactors_moon = n_impactors_earth_yr * timestep / cfg.earth_moon_ratio
+    if cfg.is_comet:
+        n_impactors_moon = n_impactors_moon * cfg.comet_ast_frac
+    elif cfg.impact_ice_comets:
+        n_impactors_moon = n_impactors_moon * (1 - cfg.comet_ast_frac)
     return n_impactors_moon
 
 
@@ -1704,6 +1684,10 @@ def get_crater_pop(time_arr, regime, cfg=CFG):
     diams, sfd_prob = get_crater_sfd(mindiam, maxdiam, step, slope, cfg.dtype)
     num_craters_t = num_craters_chronology(mindiam, maxdiam, time_arr, cfg)
     num_craters_t = np.atleast_1d(num_craters_t)[:, np.newaxis]  # make col vec
+    if cfg.is_comet:
+        num_craters_t = num_craters_t * cfg.comet_ast_frac
+    elif cfg.impact_ice_comets:
+        num_craters_t = num_craters_t * (1 - cfg.comet_ast_frac)
     return diams, num_craters_t, sfd_prob
 
 
@@ -1775,7 +1759,6 @@ def impact_flux_scaling(time):
     -------
     scaling_factor (num): Impact flux scaling factor.
     """
-    # Pass tuple to leverage lru_cache (doesn't work on arrays)
     scaling_factor = impact_flux(time) / impact_flux(0)
     return scaling_factor
 
