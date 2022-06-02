@@ -1,4 +1,5 @@
 # Aggregate Monte Carlo runs into a single csv
+import sys
 import pickle
 from pathlib import Path
 from multiprocessing import Process, Queue
@@ -6,14 +7,14 @@ import pandas as pd
 from moonpies import moonpies as mp
 from moonpies import default_config
 
-RUNDATE = '220408'
-DATADIR = '/home/ctaiudovicic/projects/moonpies/data/out/'
+DATEDIR = Path(sys.argv[1])  # data/out/yymmdd/
+# DATEDIR = Path('/home/ctaiudovicic/projects/moonpies/data/out/220601/')
+TMPDIR = DATEDIR / 'tmp'
+OUTDIR = DATEDIR.parent
 RUN_NAMES = {
-    'Ballistic Sedimentation': f'{RUNDATE}_mpies',
-    'No Ballistic Sedimentation': f'{RUNDATE}_no_bsed' 
+    'mpies': 'Ballistic Sedimentation',
+    'no_bsed': 'No Ballistic Sedimentation'
 }
-
-TMPDIR = DATADIR + f'tmp/{RUNDATE}/' 
 
 # Set ice columns
 COLDTRAPS = default_config.Cfg().coldtrap_names
@@ -28,14 +29,14 @@ def get_coldtrap_age(coldtrap, fcfg):
     return craters[craters.cname==coldtrap].age.values[0]
 
 
-def agg_coldtrap(coldtrap):
+def agg_coldtrap(coldtrap, outdir=TMPDIR):
     """
     Aggregate all Monte Carlo runs for a given coldtrap as ice layers and 
     depths, and total run ice.
     """
     data = {}
-    for isbsed, run_name in RUN_NAMES.items():
-        rundir = f'{DATADIR}{run_name}/'
+    for run_name, isbsed in RUN_NAMES.items():
+        rundir = DATEDIR / run_name
         csvs = Path(rundir).rglob(f'strat_{coldtrap}.csv')
         ices, depths, times,  = [], [], []
         ice_tot, ice_6m, ice_10m, ice_100m, maxdepth = [], [], [], [], []
@@ -46,6 +47,8 @@ def agg_coldtrap(coldtrap):
             
             # Pull ices and depths after coldtrap formed
             ice, time, depth = pd.read_csv(csv, usecols=[0, 3, 4]).values.T
+            if (time<=age).sum() == 0:  # no layers after coldtrap formed, skip
+                continue
             ices.extend(ice[time<=age])
             depths.extend(depth[time<=age])
             times.extend(time[time<=age])
@@ -59,13 +62,14 @@ def agg_coldtrap(coldtrap):
         data[isbsed] = (ices, depths, times, ice_tot, ice_6m, ice_10m, ice_100m, maxdepth)
 
     # Make TMPDIR if it doesn't exist
-    Path(TMPDIR).mkdir(parents=True, exist_ok=True)
-    fout = TMPDIR + f"{coldtrap}.pickle"
+    outdir = Path(outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
+    fout = outdir / f"{coldtrap}.pickle"
     with open(fout, 'wb') as f:
         pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
 
 
-def pickles_to_csv(tmpdir=TMPDIR, outdir=DATADIR):
+def pickles_to_csv(tmpdir=TMPDIR, outdir=DATEDIR):
     """
     Read aggregated pickles from tmpdir and write csvs to outdir.
     """
@@ -90,20 +94,23 @@ def pickles_to_csv(tmpdir=TMPDIR, outdir=DATADIR):
         
     layers_df = pd.DataFrame(layers)
     runs_df = pd.DataFrame(runs)
-    layers_df.to_csv(f'{outdir}{RUNDATE}_layers.csv', index=False)
-    runs_df.to_csv(f'{outdir}{RUNDATE}_runs.csv', index=False)
+    layers_df.to_csv(outdir / 'layers.csv', index=False)
+    runs_df.to_csv(outdir / 'runs.csv', index=False)
 
 if __name__ == '__main__':
+    # for coldtrap in COLDTRAPS[2:]:
+        # agg_coldtrap(coldtrap)
+
     # Run agg_coldtrap in parallel (10 mins for 10k runs)
     queue = Queue()
     processes = [
         Process(target=agg_coldtrap, args=(coldtrap,)) for coldtrap in COLDTRAPS
     ]
     print('Starting processes...')
-    for p in processes:
-        p.start()
-    for p in processes:
-        p.join()
+    for proc in processes:
+        proc.start()
+    for proc in processes:
+        proc.join()
     print('Done aggregating. Converting to csv...')
     
     # Convert pickles to csv (30 secs for 10k runs)

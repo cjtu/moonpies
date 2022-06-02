@@ -393,13 +393,8 @@ def get_coldtrap_dists(df, cfg=CFG):
             dst_lon = df[df.cname == cname].psr_lon.values
             dst_lat = df[df.cname == cname].psr_lat.values
             d = gc_dist(src_lon, src_lat, dst_lon, dst_lat)
-            if d <= src_rad:
-                # Cut out distances within the crater
-                dist[i, j] = np.nan
-            elif d > (ej_threshold * src_rad):
-                # Cut off distances > ej_threshold crater radii
-                dist[i, j] = np.nan
-            else:
+            # Only keep distances outside crater radius and less than thresh
+            if (d > src_rad) and (d < ej_threshold * src_rad):
                 dist[i, j] = d
     dist[dist <= 0] = np.nan
     CACHE['coldtrap_dists'] = dist
@@ -1714,7 +1709,7 @@ def get_small_impactor_pop(time_arr, cfg=CFG):
     min_d, max_d, step = cfg.diam_range["b"]
     sfd_slope = cfg.sfd_slopes["b"]
     diams, sfd_prob = get_crater_sfd(min_d, max_d, step, sfd_slope, cfg.dtype)
-    n_impactors = get_impactors_brown(min_d, max_d, cfg.timestep)
+    n_impactors = get_impactors_brown(min_d, max_d, cfg.timestep, cfg)
 
     # Scale n_impactors by historical impact flux, csfd shape: (NT, Ndiams)
     flux_scaling = impact_flux_scaling(time_arr)

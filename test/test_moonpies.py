@@ -1,14 +1,15 @@
 """Test MoonPIES module."""
-import sys
-from pathlib import Path
-sys.path.insert(0, Path(__file__).parents[1].joinpath('moonpies').as_posix())
-
 from unittest.mock import patch
 import numpy as np
-import default_config
-import moonpies as mp
+from moonpies import moonpies as mp
+from moonpies import default_config
 
-CFG = default_config.from_dict({'mode': 'cannon'})
+CFG = default_config.from_dict({
+    'mode': 'cannon',
+    'seed': 0,
+    'write': False,
+    'write_npy': False
+    })
 
 def test_volcanic_ice_head():
     """Test volcanic_ice_head()."""
@@ -73,7 +74,7 @@ def test_get_impactors_brown():
     mindiam = 0.01
     maxdiam = 3
     ts = 10e6
-    actual = mp.get_impactors_brown(mindiam, maxdiam, ts)
+    actual = mp.get_impactors_brown(mindiam, maxdiam, ts, CFG)
     # Cannon 2020 ds02 Regime B: small impactors
     c = 1.568
     d = 2.7
@@ -95,7 +96,7 @@ def test_ice_small_impactors():
     # Brown (tested above)
     mindiam = diams[0]
     maxdiam = diams[-1]
-    impactorNum = mp.get_impactors_brown(mindiam, maxdiam, CFG.timestep)
+    impactorNum = mp.get_impactors_brown(mindiam, maxdiam, CFG.timestep, CFG)
     impactorDiams = diams
 
     # Cannon 2020 ds02 Regime B: small impactors
@@ -153,7 +154,7 @@ def test_ice_small_craters():
 def test_ice_large_craters_D():
     """Test ice_large_craters regime D."""
     regime = "d"
-    rng = 0
+    rng = mp.get_rng(CFG)
 
     # Cannon 2020: Regime D
     def cannon_D(crater_diams, impactor_speeds):
@@ -196,7 +197,7 @@ def test_ice_large_craters_D():
 def test_ice_large_craters_E():
     """Test ice_large_craters regime E."""
     regime = "e"
-    rng = 0
+    rng = mp.get_rng(CFG)
 
     # Cannon 2020 Regime E
     def cannon_E(crater_diams, impactor_speeds):
@@ -490,8 +491,8 @@ def test_garden_ice_column():
 
 
 # Acceptance test for Cannon ds01
-@patch('moonpies.get_ejecta_thickness_time')
-@patch('moonpies.get_impact_ice')
+@patch('moonpies.moonpies.get_ejecta_thickness_time')
+@patch('moonpies.moonpies.get_impact_ice')
 def test_cannon_ds01(mock_get_impact_ice, mock_ej_thick_time):
     """
     Test Cannon mode produces same ice cols as main Cannon model.
@@ -573,23 +574,14 @@ def test_cannon_ds01(mock_get_impact_ice, mock_ej_thick_time):
     np.testing.assert_approx_equal(expected[0], 4.3474, 4)
 
 
-@patch('moonpies.diam2len')    
+@patch('moonpies.moonpies.diam2len')    
 def test_cannon_ds02(mock_diam2len):
     """
     Test Cannon mode produces same impact ice as main Cannon model regimes.
     """
     cfg = CFG
-    rng = mp._rng(92855)
     time_arr = np.array([4.25e9, 4.0e9, 3.5e9, 2.0e9, 1.0e9])
 
-    # # Test regimes a, b, c
-    # for t in range(0,len(time_array)):
-    #     microice[t] = mp.ice_micrometeorites(time_array[t])
-    #     impactor_diams, impactors = mp.get_small_impactor_pop(time_array[t], CFG)
-    #     smallice[t] = mp.ice_small_impactors(impactor_diams, impactors, cfg).flatten()
-    #     crater_diams, craters, sfd_prob = mp.get_crater_pop(time_array[t], "c", cfg)
-    #     regimecice[t] = mp.ice_small_craters(crater_diams, craters, "c", cfg)
-    
     # Test regime a: micrometeorite ice
     microice = mp.ice_micrometeorites(time_arr, cfg)
     np.testing.assert_approx_equal(microice[0], 4.5897e+14, 4)
@@ -645,4 +637,5 @@ def test_moonpies_mode():
 
 if __name__ == '__main__':
     import pytest
+    from pathlib import Path
     pytest.main([Path(__file__).as_posix()])
