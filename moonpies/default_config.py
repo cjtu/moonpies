@@ -1,5 +1,6 @@
 """DO NOT EDIT. Default config for moonpies (see README for config guide)."""
-import ast, pprint
+import ast
+import pprint
 from os import path, sep, environ, getcwd
 from dataclasses import dataclass, fields, field, asdict
 import numpy as np
@@ -288,6 +289,7 @@ class Cfg:
 
     @property
     def version(self) -> str:
+        """Return the version of the model."""
         return self._version
 
 
@@ -296,44 +298,14 @@ class Cfg:
         return asdict(self)
 
 
-    def to_string(self, fdict={}):
+    def to_string(self):
         """Return representation of self as dict formatted python string."""
-        if not fdict:
-            fdict = self.to_dict()
-        try:
-            s = pprint.pformat(fdict, compact=True, sort_dicts=False)
-        except TypeError:
-            # Cancel sorting on Python < 3.8
-            pprint._sorted = lambda x:x  # Python 3.6
-            pprint.sorted = lambda x, key=None: x  # Python 3.7
-            s = pprint.pformat(fdict, compact=True)
-        return s
+        return _dict2str(self.to_dict())
 
 
-    def to_py(self, outpath, fstring=''):
-        """Write dataclass to dict at outpath."""
-        if not fstring:
-            fstring = self.to_string()
-        with open(outpath, 'w') as f:
-            f.write(fstring)
-
-
-    def to_default(self, outpath):
-        """Write defaults to my_config.py"""
-        ddict = self.to_dict()
-        del ddict['seed']
-        del ddict['run_time']
-        del ddict['run_date']
-        for k in MODE_DEFAULTS['cannon'].keys():
-            del ddict[k]
-        for k, v in ddict.copy().items():
-            if 'path' in k:
-                ddict[k] = ''
-            elif k[-3:] == '_in' in k[-4:] == '_out':
-                ddict[k] = path.basename(v)
-        self.to_py(outpath, self.to_string(ddict))
-
-
+    def to_py(self, outpath):
+        """Write cfg to python file at outpath."""
+        _str2py(str(self), outpath)
 
 
 # Config helper functions
@@ -370,13 +342,13 @@ def _set_coldtrap_defaults(cfg, pole, ice_species, defaults=COLDTRAP_DEFAULTS):
 
 def _get_modelpath(cfg):
     """
-    Return path to directory containing mixing.py assuming following structure:
+    Return path to moonpies.py. If not installed, assume following structure:
 
     /project
         /data
         /moonpies
             - config.py (this file)
-            - mixing.py
+            - moonpies.py
         /figs
         /test
 
@@ -434,41 +406,60 @@ def _get_outpath(cfg):
     return outpath + sep
 
 
-def _enforce_dataclass_type(cfg, field):
+def _enforce_dataclass_type(cfg, cfg_field):
     """
     Force set all dataclass types from their type hint, raise error if invalid.
     
     Since scientific notation is float in Python, this forces int specified in 
     scientific notation to be int in the code.
     """
-    value = getattr(cfg, field.name)
+    value = getattr(cfg, cfg_field.name)
     try:
-        setattr(cfg, field.name, field.type(value))
-    except ValueError:
-        msg = f'Type mismatch for {field.name} in config.py: ' 
-        msg += f'Expected: {field.type}. Got: {type(value)}.'
-        raise ValueError(msg)
+        setattr(cfg, cfg_field.name, cfg_field.type(value))
+    except ValueError as e:
+        msg = f'Type mismatch for {cfg_field.name} in config.py: ' 
+        msg += f'Expected: {cfg_field.type}. Got: {type(value)}.'
+        raise ValueError(msg) from e
 
 
-def _make_paths_absolute(cfg, field, datapath, outpath):
+def _make_paths_absolute(cfg, cfg_field, datapath, outpath):
     """
     Make all file paths absolute. 
     
-    Prepend datapath to all fields ending with "_in".
-    Prepend outpath to all fields ending with "_out".
+    Prepend datapath to all cfg_fields ending with "_in".
+    Prepend outpath to all cfg_fields ending with "_out".
     """
-    value = getattr(cfg, field.name)
+    value = getattr(cfg, cfg_field.name)
     newpath = ''
-    if field.name[-3:] == '_in':
+    if cfg_field.name[-3:] == '_in':
         newpath = path.join(datapath, value)
-    elif field.name[-4:] == '_out':
+    elif cfg_field.name[-4:] == '_out':
         # Recompute path to _out files in case outpath changed (e.g. appending seed dir)
         newpath = path.join(outpath, path.basename(value))
-    elif 'path' in field.name:
+    elif 'path' in cfg_field.name:
         newpath = value
 
     if newpath:
-        setattr(cfg, field.name, path.abspath(path.expanduser(newpath)))
+        setattr(cfg, cfg_field.name, path.abspath(path.expanduser(newpath)))
+
+
+def _dict2str(d):
+    """Convert dictionary to pretty printed string."""
+    try:
+        s = pprint.pformat(d, compact=True, sort_dicts=False)
+    except TypeError:
+        # Cancel sorting on Python < 3.8
+        pprint._sorted = lambda x:x  # Python 3.6
+        pprint.sorted = lambda x, key=None: x  # Python 3.7
+        s = pprint.pformat(d, compact=True)
+    return s
+
+
+def _str2py(s, outpath):
+    """Write dict representation of dataclass to python file at outpath."""
+    with open(outpath, 'w', encoding="utf8") as f:
+        f.write(s)
+    print(f'Wrote to {outpath}')
 
 
 def read_custom_cfg(cfg_path):
@@ -477,7 +468,7 @@ def read_custom_cfg(cfg_path):
     """
     if cfg_path is None:
         return {}
-    with open(path.abspath(cfg_path), 'r') as f:
+    with open(path.abspath(cfg_path), 'r', encoding='utf8') as f:
         cfg_dict = ast.literal_eval(f.read())
     return cfg_dict
 
@@ -487,6 +478,23 @@ def from_dict(cdict):
     return Cfg(**cdict)
 
 
+def make_default_cfg(outpath=''):
+    """Write default cfg file to outpath."""
+    if not outpath:
+        outpath = path.join(getcwd(), 'myconfig.py')
+    ddict = asdict(Cfg())
+    del ddict['seed']
+    del ddict['run_time']
+    del ddict['run_date']
+    for k in MODE_DEFAULTS['moonpies']:
+        del ddict[k]
+    for k, v in ddict.copy().items():
+        if 'path' in k:
+            ddict[k] = ''
+        elif k[-3:] == '_in' or k[-4:] == '_out':
+            ddict[k] = path.basename(v)
+    _str2py(_dict2str(ddict), outpath)
+
+
 if __name__ == '__main__':
-    Cfg().to_default('my_config.py')
-    print('Wrote my_config.py')
+    make_default_cfg()

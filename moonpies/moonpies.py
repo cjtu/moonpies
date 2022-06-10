@@ -34,8 +34,7 @@ def main(cfg=CFG):
     >>> strat_dfs['Faustini'].head()
     """
     # Setup phase
-    vprint = print if cfg.verbose else lambda *a, **k: None
-    vprint("Initializing run...")
+    vprint(cfg, "Initializing run...")
     clear_cache()
     rng = get_rng(cfg)
 
@@ -47,12 +46,12 @@ def main(cfg=CFG):
     strat_cols = init_strat_columns(time_arr, df, cfg)
 
     # Main loop over time
-    vprint("Starting main loop...")
+    vprint(cfg, "Starting main loop...")
     for t in range(len(time_arr)):
         strat_cols = update_strat_cols(strat_cols, df, time_arr, t, cfg, rng)
 
     # Format and save outputs
-    outputs = format_save_outputs(strat_cols, time_arr, df, cfg, vprint)
+    outputs = format_save_outputs(strat_cols, time_arr, df, cfg)
     return outputs
 
 
@@ -190,7 +189,6 @@ def get_crater_list(basins=False, cfg=CFG, rng=None):
     -------
     df (DataFrame): Crater DataFrame
     """
-    global CACHE
     if 'crater_list' not in CACHE:
         df_craters = read_crater_list(cfg)
         df_craters['isbasin'] = False
@@ -206,7 +204,7 @@ def get_crater_list(basins=False, cfg=CFG, rng=None):
         CACHE['crater_list'] = df
     df = CACHE['crater_list']
     if not basins:
-        df = df[df.isbasin == False].reset_index(drop=True)
+        df = df[~df.isbasin].reset_index(drop=True)
     return df
 
 
@@ -585,12 +583,8 @@ def get_grid_outputs(df, grdx, grdy, cfg=CFG):
     dist_grid = get_gc_dist_grid(df, grdx, grdy, cfg.dtype)
 
     # Ejecta thickness produced by each crater on grid (3D array: NX, NY, NC)
-    ej_thick_grid = get_ejecta_thickness(
-        dist_grid,
-        df.rad.values[:, np.newaxis],
-        cfg.simple2complex,
-        cfg.ejecta_thickness_order,
-    )
+    radii = df.rad.values[:, np.newaxis]
+    ej_thick_grid = get_ejecta_thickness(dist_grid, radii, cfg)
     # TODO: ballistic sed depth, kinetic energy, etc
     return age_grid, ej_thick_grid
 
@@ -635,7 +629,6 @@ def get_polar_ice(time_arr, t, cfg=CFG, rng=None):
     -------
     polar_ice (float): Ice thickness [m] delivered to the pole vs time.
     """
-    global CACHE
     if "polar_ice_time" not in CACHE:
         polar_ice = []
         impact_ice = get_impact_ice(time_arr, cfg, rng)
@@ -730,7 +723,6 @@ def get_volcanic_ice_t(time_arr, t, cfg=CFG):
     """
     Return ice thickness [m] delivered at time t from cached get_volcanic_ice.
     """
-    global CACHE
     if "volcanic_ice_time" not in CACHE:
         CACHE["volcanic_ice_time"] = get_volcanic_ice(time_arr, cfg)
     return CACHE["volcanic_ice_time"][t]
@@ -941,7 +933,6 @@ def get_ballistic_sed_depths(df, time_arr, t, cfg=CFG):
     """
     Return ballistic sedimentation depth for each coldtrap at t.
     """
-    global CACHE
     if "bsed_depths" not in CACHE:
         bsed_depths, bsed_fracs = bsed_depth_petro_pieters(time_arr, df, cfg)
         CACHE["bsed_depths"] = bsed_depths
@@ -1122,7 +1113,6 @@ def get_overturn_depth(time_arr, t, cfg=CFG):
     -------
     overturn_depth (float): Overturn_depth [m] at t.
     """
-    global CACHE
     if "overturn_depth_time" not in CACHE:
         CACHE["overturn_depth_time"] = overturn_depth_time(time_arr, cfg)
     return CACHE["overturn_depth_time"][t]
@@ -1337,7 +1327,7 @@ def read_ballistic_hop_csv(bhop_csv):
     Return dict of ballistic hop efficiency of each coldtrap in bhop_csv.
     """
     ballistic_hop_coldtraps = {}
-    with open(bhop_csv, "r") as f:
+    with open(bhop_csv, "r", encoding="utf8") as f:
         for line in f.readlines():
             coldtrap, bhop = line.strip().split(",")
             # TODO: our bhop efficiency is per km^2 so we * 1e6 / 100 to make it % like cannon (should change bhop_csv)
@@ -1358,8 +1348,9 @@ def get_ballistic_hop_efficiency(coldtrap, cfg=CFG):
     -------
     bhop (float): Ballistic hop efficiency of coldtrap.
     """
-    bhop = read_ballistic_hop_csv(cfg.bhop_csv)
+    bhop = read_ballistic_hop_csv(cfg.bhop_csv_in)
     return bhop[coldtrap]
+
 
 def get_ice_coldtrap(ice_polar, ice_volcanic, coldtrap, cfg=CFG):
     """
@@ -1377,7 +1368,7 @@ def get_ice_coldtrap(ice_polar, ice_volcanic, coldtrap, cfg=CFG):
     
     # Rescale by ballistic hop efficiency per coldtrap
     if cfg.ballistic_hop_moores:
-        bhop_effcy_coldtrap = read_ballistic_hop_csv(cfg.bhop_csv_in)[coldtrap]
+        bhop_effcy_coldtrap = get_ballistic_hop_efficiency(coldtrap, cfg)
         ice_polar *= bhop_effcy_coldtrap / cfg.ballistic_hop_effcy
     coldtrap_ice = ice_polar + ice_volcanic
     return coldtrap_ice
@@ -2136,15 +2127,15 @@ def get_all_labels(label_array):
     return all_labels
 
 
-def format_save_outputs(strat_cols, time_arr, df, cfg=CFG, vprint=print):
+def format_save_outputs(strat_cols, time_arr, df, cfg=CFG):
     """
     Format dataframes and save outputs based on write / write_npy in cfg.
     """
-    vprint("Formatting outputs")
+    vprint(cfg, "Formatting outputs")
     ej_df, ice_df, strat_dfs = format_csv_outputs(strat_cols, time_arr)
     if cfg.write:
         # Save config file
-        vprint(f"Saving outputs to {cfg.outpath}")
+        vprint(cfg, f"Saving outputs to {cfg.outpath}")
         save_outputs([cfg], [cfg.config_py_out])
 
         # Save coldtrap strat column dataframes
@@ -2162,11 +2153,11 @@ def format_save_outputs(strat_cols, time_arr, df, cfg=CFG, vprint=print):
     if cfg.write_npy:
         # Note: Only compute these on demand (expensive to do every run)
         # Age grid is age of most recent impact (2D array: NX, NY)
-        vprint("Computing gridded outputs...")
+        vprint(cfg, "Computing gridded outputs...")
         grdy, grdx = get_grid_arrays(cfg)
         grd_outputs = get_grid_outputs(df, grdx, grdy, cfg)
         npy_fnames = (cfg.agegrd_npy_out, cfg.ejmatrix_npy_out)
-        vprint(f"Saving npy outputs to {cfg.outpath}")
+        vprint(cfg, f"Saving npy outputs to {cfg.outpath}")
         save_outputs(grd_outputs, npy_fnames)
     return ej_df, ice_df, strat_dfs
 
@@ -2339,6 +2330,12 @@ def km2m(x):
     return x * 1000
 
 
+def vprint(cfg, *args, **kwargs):
+    """Print if verbose."""
+    if cfg.verbose:
+        print(*args, **kwargs)
+
+
 def clear_cache():
     """Reset CACHE and lru_cache."""
     global CACHE
@@ -2348,7 +2345,7 @@ def clear_cache():
         if isinstance(obj, _lru_cache_wrapper):
             obj.cache_clear()
 
-
+# Plot helpers
 def plot_version(cfg=CFG, xy=None, ha='left', va='bottom', loc='ll', ax=None, 
                  **kwargs):
     """Add version label """

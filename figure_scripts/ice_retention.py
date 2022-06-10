@@ -18,8 +18,8 @@ FIGDIR = str(Path(FIGDIR).resolve() / "_")[:-1]  # add trailing slash
 # Set config
 cfg_c = default_config.Cfg(mode='cannon')
 cfg_m_asteroid = default_config.Cfg(mode='moonpies')
-cfg_m_comet = default_config.Cfg(mode='moonpies', impact_speed_comet=True)
-print(cfg_m_comet.impact_speed_comet)
+cfg_m_comet = default_config.Cfg(mode='moonpies', is_comet=True)
+print(cfg_m_comet.is_comet)
 
 # Data from Ong et al. (2010)
 ong_x = [10, 15, 30, 45, 60]
