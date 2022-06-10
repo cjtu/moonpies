@@ -11,7 +11,7 @@ from moonpies import default_config
 
 FIGDIR = ''  # Set or leave blank to use default (moonpies/figs)
 if not FIGDIR:
-    FIGDIR = default_config.Cfg().figspath
+    FIGDIR = default_config.Cfg().figs_path
 FIGDIR = str(Path(FIGDIR).resolve() / "_")[:-1]  # add trailing slash
 
 

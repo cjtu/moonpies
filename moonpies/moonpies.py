@@ -653,9 +653,13 @@ def get_ice_thickness(global_ice_mass, cfg=CFG):
         polar_ice_mass to volume with cfg.ice_density,
         volume to thickness with coldtrap_area of cfg.ice_species at cfg.pole.
     """
+    if cfg.ice_species == "H2O":
+        coldtrap_area = cfg.coldtrap_area_H2O
+    elif cfg.ice_species == "CO2":
+        coldtrap_area = cfg.coldtrap_area_CO2
     polar_ice_mass = global_ice_mass * cfg.ballistic_hop_effcy  # [kg]
     ice_volume = polar_ice_mass / cfg.ice_density  # [m^3]
-    ice_thickness = ice_volume / cfg.coldtrap_area
+    ice_thickness = ice_volume / coldtrap_area
     return ice_thickness
 
 
@@ -1665,8 +1669,7 @@ def get_crater_pop(time_arr, regime, cfg=CFG):
     """
     Return crater population assuming continuous (non-stochastic, regime c).
     """
-    mindiam, maxdiam, step = cfg.diam_range[regime]
-    slope = cfg.sfd_slopes[regime]
+    mindiam, maxdiam, step, slope = getattr(cfg.impact_regimes, regime)
     diams, sfd_prob = get_crater_sfd(mindiam, maxdiam, step, slope, cfg.dtype)
     num_craters_t = num_craters_chronology(mindiam, maxdiam, time_arr, cfg)
     num_craters_t = np.atleast_1d(num_craters_t)[:, np.newaxis]  # make col vec
@@ -1697,8 +1700,7 @@ def get_small_impactor_pop(time_arr, cfg=CFG):
 
     Use constants and eqn. 3 from Brown et al. (2002) to compute N craters.
     """
-    min_d, max_d, step = cfg.diam_range["b"]
-    sfd_slope = cfg.sfd_slopes["b"]
+    min_d, max_d, step, sfd_slope = cfg.impact_regimes.b
     diams, sfd_prob = get_crater_sfd(min_d, max_d, step, sfd_slope, cfg.dtype)
     n_impactors = get_impactors_brown(min_d, max_d, cfg.timestep, cfg)
 
@@ -1727,7 +1729,7 @@ def get_sfd_prob(diams, sfd_slope):
 
 
 def get_diam_array(dmin, dmax, step, dtype=None):
-    """Return array of diameters based on diameters in diam_range."""
+    """Return array of diameters based on diameters from dmin, dmax, dstep."""
     n = int((dmax - dmin) / step)
     return np.linspace(dmin, dmax, n + 1, dtype=dtype)
 
@@ -2135,20 +2137,20 @@ def format_save_outputs(strat_cols, time_arr, df, cfg=CFG):
     ej_df, ice_df, strat_dfs = format_csv_outputs(strat_cols, time_arr)
     if cfg.write:
         # Save config file
-        vprint(cfg, f"Saving outputs to {cfg.outpath}")
+        vprint(cfg, f"Saving outputs to {cfg.out_path}")
         save_outputs([cfg], [cfg.config_py_out])
 
         # Save coldtrap strat column dataframes
         fnames = []
         dfs = []
         for coldtrap, strat in strat_dfs.items():
-            fnames.append(os.path.join(cfg.outpath, f"strat_{coldtrap}.csv"))
+            fnames.append(os.path.join(cfg.out_path, f"strat_{coldtrap}.csv"))
             dfs.append(strat)
         save_outputs(dfs, fnames)
 
         # Save raw ice and ejecta column vs time dataframes
         save_outputs([ej_df, ice_df], [cfg.ej_t_csv_out, cfg.ice_t_csv_out])
-        print(f"Outputs saved to {cfg.outpath}")
+        print(f"Outputs saved to {cfg.out_path}")
 
     if cfg.write_npy:
         # Note: Only compute these on demand (expensive to do every run)
@@ -2157,7 +2159,7 @@ def format_save_outputs(strat_cols, time_arr, df, cfg=CFG):
         grdy, grdx = get_grid_arrays(cfg)
         grd_outputs = get_grid_outputs(df, grdx, grdy, cfg)
         npy_fnames = (cfg.agegrd_npy_out, cfg.ejmatrix_npy_out)
-        vprint(cfg, f"Saving npy outputs to {cfg.outpath}")
+        vprint(cfg, f"Saving npy outputs to {cfg.out_path}")
         save_outputs(grd_outputs, npy_fnames)
     return ej_df, ice_df, strat_dfs
 

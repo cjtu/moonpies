@@ -2,13 +2,14 @@
 import ast
 import pprint
 from os import path, sep, environ, getcwd
+from datetime import datetime
 from dataclasses import dataclass, fields, field, asdict
 import numpy as np
-import pandas as pd
 try:
     from ._version import __version__
 except ImportError:
     from _version import __version__
+_sudo_setattr = object.__setattr__  # Set attrs of frozen dataclass fields
 
 MODE_DEFAULTS = {
     'cannon': {
@@ -29,16 +30,18 @@ MODE_DEFAULTS = {
         'impact_ice_basins': True,
         'impact_ice_comets': True,
         'use_volc_dep_effcy': True, # Use volc_dep_efficiency instead of ballistic_hop_efficiency
-        'ballistic_sed': True, # TODO: improvements in progress
+        'ballistic_sed': True,
         'impact_gardening_costello': True,
         'impact_speed_mean': 17e3,  # [m/s] 
     }
 }
 
-COLDTRAP_DEFAULTS = {
+POLE_DEFAULTS = {
     's': {
         'ballistic_hop_effcy': 0.054,  # Cannon et al. (2020)
         'volc_dep_effcy': 0.26,  # 25.8% Spole (Wilcoski et al., 2021)
+        'coldtrap_area_H2O': 1.3e4 * 1e6,  # [m^2], (Williams et al., 2019) (1.7e4 * 1e6 Shorghofer 2020)
+        'coldtrap_area_CO2': 104 * 1e6, # [m^2], (<60 K max summer T, Williams et al., 2019)
         'coldtrap_names': (
             'Haworth', 'Shoemaker', 'Faustini', 'Shackleton', 'Slater', 
             'Amundsen', 'Cabeus', 'Sverdrup', 'de Gerlache', "Idel'son L", 
@@ -48,34 +51,33 @@ COLDTRAP_DEFAULTS = {
     'n': {
         'ballistic_hop_effcy': 0.027,  # Cannon et al. (2020)
         'volc_dep_effcy': 0.15,  # 15.2% Npole (Wilcoski et al., 2021)
+        'coldtrap_area_H2O': 5.3e3 * 1e6,  # [m^2], (Williams et al., 2019) (1.7e4 * 1e6 Shorghofer 2020)
+        'coldtrap_area_CO2': 0,  # [m^2], TODO: compute
         'coldtrap_names': ('Fibiger', 'Hermite', 'Hermite A', 'Hevesy', 
             'Lovelace', 'Nansen A', 'Nansen F', 'Rozhdestvenskiy U', 
             'Rozhdestvenskiy W', 'Sylvester')
     },
-    'coldtrap_max_temp':{
-        'H2O': 110,  # [K]
-        'CO2': 60  # [K]
-    },
-    'coldtrap_area': {
-        's': {
-            'H2O': 1.3e4 * 1e6,  # [m^2], (Williams et al., 2019) (1.7e4 * 1e6 Shorghofer 2020)
-            'CO2': 104 * 1e6, # [m^2], (<60 K max summer T, Williams et al., 2019)
-        },
-        'n': {
-            'H2O': 5.3e3 * 1e6,  # [m^2], (Williams et al., 2019)
-            'CO2': 0  # [m^2], TODO: compute
-        },
-    }
 }
 
-@dataclass
+@dataclass(frozen=True)
+class ImpactRegimes:
+    """Impactor size regimes. Regime: (rad_min, rad_max, step, sfd_slope)."""
+    a: tuple = (0, 0.01, None, None)  # micrometeorites (<1 mm)
+    b: tuple = (0.01, 3, 1e-4, -3.7)  # small impactors (10 mm - 3 m)
+    c: tuple = (100, 1.5e3, 1, -3.82)  # simple craters, steep sfd (100 m - 1.5 km)
+    d: tuple = (1.5e3, 15e3, 1e2, -1.8)  # simple craters, shallow sfd (1.5 km - 15 km)
+    e: tuple = (15e3, 300e3, 1e3, -1.8)  # complex craters, shallow sfd (15 km - 300 km)
+
+@dataclass(frozen=True)
 class Cfg:
     """Class to configure a mixing model run."""
-    seed: int = 0  # Note: Should not be set here - set when model is run only
     run_name: str = 'mpies'  # Name of the current run
-    _version: str = __version__  # Current version of MoonPIES
-    run_date: str = pd.Timestamp.now().strftime("%y%m%d")
-    run_time: str = pd.Timestamp.now().strftime("%H:%M:%S")
+    version: str = __version__  # Current version of MoonPIES
+
+    # Set in post_init
+    seed: int = 0  # Note: Should not be set here - set when model is run only
+    run_date: str = field(default='', compare=False)
+    run_time: str = field(default='', compare=False)
 
     # Model output behavior
     verbose: bool = False  # Print info as model is running
@@ -83,10 +85,11 @@ class Cfg:
     write_npy: bool = False  # Write large arrays to files - slow! (age_grid, ej_thickness)
     plot: bool = False  # Save strat column plots - slow!
     
-    # Setup Cannon vs MoonPIES config modes
+    # Setup Cannon vs MoonPIES config mode and lunar pole
     mode: str = 'moonpies'  # ['moonpies', 'cannon']
+    pole: str = 's'  # ['s', 'n'] TODO: only s is currently supported
 
-    # set in __post_init__ by _set_mode_defaults(self, self.mode, MODE_DEFAULTS)
+    # Mode options set in __post_init__ by _set_mode_defaults()
     solar_wind_ice: bool = None
     ballistic_hop_moores: bool = None  # hop_effcy per crater (Moores et al 2016)
     ejecta_basins: bool = None
@@ -96,24 +99,20 @@ class Cfg:
     ballistic_sed: bool = None
     impact_gardening_costello: bool = None
 
-    # Lunar pole and coldtrap defaults
-    pole: str = 's'  # ['s', 'n'] TODO: only s is currently supported
-    ice_species = 'H2O'  # ['H2O', 'CO2']
-    
-    # set in __post_init__ by _set_coldtrap_defaults(self, self.pole, self.ice_species, COLDTRAP_DEFAULTS)
+    # Pole options set in __post_init__ by _set_pole_defaults()
     ballistic_hop_effcy: float = None
     volc_dep_effcy: float = None
-    coldtrap_area: float = None
+    coldtrap_area_H2O: float = None  # Depends on pole
+    coldtrap_area_CO2: float = None  # Depends on pole
     coldtrap_names: tuple = None
-    coldtrap_max_temp: float = None
 
-    # Paths set in post_init if not specified in custom config
-    modelpath: str = ''  # path to mixing.py
-    datapath: str = ''  # path to import data
-    outpath: str = ''  # path to save outputs
-    figspath: str = ''  # path to save figures
+    # Paths set in post_init if not given (attr name must end with "_path")
+    model_path: str = ''  # path to moonpies.py
+    data_path: str = ''  # path to import data
+    out_path: str = ''  # path to save outputs
+    figs_path: str = ''  # path to save figures
     
-    # Files to import from datapath (attr name must end with "_in")
+    # Files to import from data_path (attr name must end with "_in")
     crater_csv_in: str = 'crater_list.csv'
     basin_csv_in: str = 'basin_list.csv'
     nk_csv_in: str = 'needham_kring_2017_s3.csv'
@@ -123,7 +122,7 @@ class Cfg:
     bsed_frac_mean_in: str = 'ballistic_sed_frac_melted_mean.csv'
     bsed_frac_std_in: str = 'ballistic_sed_frac_melted_std.csv'
 
-    # Files to export to outpath (attr name must end with "_out")
+    # Files to export to out_path (attr name must end with "_out")
     ej_t_csv_out: str = f'ej_columns_{run_name}.csv'
     ice_t_csv_out: str = f'ice_columns_{run_name}.csv'
     config_py_out: str = f'run_config_{run_name}.py'
@@ -164,6 +163,9 @@ class Cfg:
     neukum_pf_a_1983: tuple = (-3.0768, -3.6269, 0.4366, 0.7935, 0.0865, -0.2649, -0.0664, 0.0379, 0.0106, -0.0022, -5.18e-4, 3.97e-5)
 
     # Ice constants
+    # coldtrap_max_temp_H2O: float = 110  # [K]
+    # coldtrap_max_temp_CO2: float = 60  # [K]
+    ice_species = 'H2O'  # ['H2O', 'CO2']  # TODO: currently only H2O supported
     ice_density: float = 934  # [kg m^-3], (Cannon 2020)
     ice_melt_temp: float = 273  # [k]
     ice_latent_heat: float = 334e3  # [j/kg] latent heat of h2o ice
@@ -217,20 +219,7 @@ class Cfg:
     brown_c0: float = 1.568  # Brown et al. (2002)
     brown_d0: float = 2.7  # Brown et al. (2002)
     earth_moon_ratio: float = 22.5  # Earth-Moon impact ratio Mazrouei et al. (2019)
-    diam_range: dict = field(default_factory = lambda: ({
-        # regime: (rad_min, rad_max, step)
-        'a': (0, 0.01, None),  # micrometeorites (<1 mm)
-        'b': (0.01, 3, 1e-4),  # small impactors (10 mm - 3 m)
-        'c': (100, 1.5e3, 1),  # simple craters, steep sfd (100 m - 1.5 km)
-        'd': (1.5e3, 15e3, 1e2),  # simple craters, shallow sfd (1.5 km - 15 km)
-        'e': (15e3, 300e3, 1e3),  # complex craters, shallow sfd (15 km - 300 km)
-    }))
-    sfd_slopes: dict = field(default_factory = lambda: ({
-        'b': -3.70,  # small impactors
-        'c': -3.82,  # simple craters 'steep' branch
-        'd': -1.80,  # simple craters 'shallow' branch
-        'e': -1.80,  # complex craters 'shallow' branch
-    }))
+    impact_regimes: ImpactRegimes = ImpactRegimes()
 
     # Comet constants
     is_comet: bool = False  # Use comet properties for impacts
@@ -273,26 +262,84 @@ class Cfg:
     overturn_ancient_slope: float = 1.6e-9  # [m/yr] Slope of overturn depth at higher early impact flux
     overturn_ancient_t0: float = 3e9  # [yrs] Time to start applying higher impact flux
 
+    # Private post_init methods
+    def _set_seed_time(self, seed):
+        """Set seed, date and time"""
+        _sudo_setattr(self, 'seed', _get_random_seed(seed))
+        _sudo_setattr(self, 'run_date', _get_date())
+        _sudo_setattr(self, 'run_time', _get_time())
+
+
+    def _set_mode_defaults(self, mode):
+        """Set flags in config object for mode ['cannon', 'moonpies']."""
+        for param in MODE_DEFAULTS[mode]:
+            if getattr(self, param) is None:
+                _sudo_setattr(self, param, MODE_DEFAULTS[mode][param])
+
+
+    def _set_pole_defaults(self, pole):
+        """Set defaults for lunar pole ['n', 's']."""
+        for param in POLE_DEFAULTS[pole]:
+            if getattr(self, param) is None:
+                _sudo_setattr(self, param, POLE_DEFAULTS[pole][param])
+
+    def _set_path_defaults(self):
+        """Set defaults for paths."""
+        _sudo_setattr(self, 'model_path', _get_model_path(self.model_path))
+        _sudo_setattr(self, 'data_path', _get_data_path(self.data_path, self.model_path))
+        _sudo_setattr(self, 'out_path', _get_out_path(self.out_path, self.data_path, self.seed, self.run_date, self.run_name))
+        _sudo_setattr(self, 'figs_path', _get_figs_path(self.figs_path, self.model_path))
+    
+    
+    def _make_paths_absolute(self, data_path, out_path):
+        """
+        Make all file paths absolute. 
+        
+        Prepend data_path to all cfg_fields ending with "_in".
+        Prepend out_path to all cfg_fields ending with "_out".
+        """
+        for cfg_field in fields(self):
+            value = getattr(self, cfg_field.name)
+            if not isinstance(value, str):
+                continue
+            newpath = None
+            if cfg_field.name.endswith('_in'):
+                newpath = path.join(data_path, path.basename(value))
+            elif cfg_field.name.endswith('_out'):
+                newpath = path.join(out_path, path.basename(value))
+            elif cfg_field.name.endswith('_path'):
+                newpath = value
+            if newpath is not None:
+                newpath = path.abspath(path.expanduser(newpath))
+                _sudo_setattr(self, cfg_field.name, newpath)
+
+    def _enforce_dataclass_types(self):
+        """
+        Force all dataclass types to their type hint, raise error if invalid.
+        
+        If typehint is int and value specified in scientific notation (float), 
+        converts value to int (e.g., '1e6' -> 1000000).
+        """
+        for cfg_field in fields(self):
+            value = getattr(self, cfg_field.name)
+            try:
+                if not isinstance(value, cfg_field.type):
+                    _sudo_setattr(self, cfg_field.name, cfg_field.type(value))
+            except ValueError as e:
+                msg = f'Type mismatch for {cfg_field.name} in config: ' 
+                msg += f'Expected: {cfg_field.type}. Got: {type(value)}.'
+                raise ValueError(msg) from e
+
     def __post_init__(self):
         """Set paths, model defaults and raise error if invalid type supplied."""
-        setattr(self, 'seed', _get_random_seed(self))
-        setattr(self, 'modelpath', _get_modelpath(self))
-        setattr(self, 'datapath', _get_datapath(self))
-        setattr(self, 'outpath', _get_outpath(self))
-        setattr(self, 'figspath', _get_figspath(self))
-        _set_mode_defaults(self, self.mode)
-        _set_coldtrap_defaults(self, self.pole, self.ice_species)
-        for cfg_field in fields(self):
-            _make_paths_absolute(self, cfg_field, self.datapath, self.outpath)
-            _enforce_dataclass_type(self, cfg_field)
+        self._set_seed_time(self.seed)
+        self._set_mode_defaults(self.mode)
+        self._set_pole_defaults(self.pole)
+        self._set_path_defaults()
+        self._make_paths_absolute(self.data_path, self.out_path)
+        self._enforce_dataclass_types()
 
-
-    @property
-    def version(self) -> str:
-        """Return the version of the model."""
-        return self._version
-
-
+    # Public methods
     def to_dict(self):
         """Return dict representation of dataclass."""
         return asdict(self)
@@ -303,44 +350,31 @@ class Cfg:
         return _dict2str(self.to_dict())
 
 
-    def to_py(self, outpath):
-        """Write cfg to python file at outpath."""
-        _str2py(str(self), outpath)
+    def to_py(self, out_path):
+        """Write cfg to python file at out_path."""
+        _str2py(str(self), out_path)
 
 
 # Config helper functions
-def _get_random_seed(cfg):
+def _get_random_seed(seed):
     """Return random_seed in (1, 99999) if not set in cfg."""
     try:
-        seed = int(cfg.seed)
+        seed = int(seed)
     except (TypeError, ValueError):
         seed = 0
     if not seed:
         seed = np.random.randint(1, 99999)
     return seed
 
+def _get_date(fmt="%y%m%d"):
+    """Return current date as string."""
+    return datetime.now().strftime(fmt)
 
-def _set_mode_defaults(cfg, mode, defaults=MODE_DEFAULTS):
-    """Set flags in config object for mode ['cannon', 'moonpies']."""
-    for param in defaults[mode]:
-        if getattr(cfg, param) is None:
-            setattr(cfg, param, defaults[mode][param])
+def _get_time(fmt="%H:%M:%S"):
+    """Return current time as string."""
+    return datetime.now().strftime(fmt)
 
-
-def _set_coldtrap_defaults(cfg, pole, ice_species, defaults=COLDTRAP_DEFAULTS):
-    """
-    Set coldtrap defaults for pole ['n', 's'] and species ['H2O', 'CO2'].
-    """
-    for param in defaults[pole]:
-        if getattr(cfg, param) is None:
-            setattr(cfg, param, defaults[pole][param])
-    if getattr(cfg, 'coldtrap_max_temp') is None:
-        setattr(cfg, 'coldtrap_max_temp', defaults['coldtrap_max_temp'][ice_species]) 
-    if getattr(cfg, 'coldtrap_area') is None:
-        setattr(cfg, 'coldtrap_area', defaults['coldtrap_area'][pole][ice_species]) 
-
-
-def _get_modelpath(cfg):
+def _get_model_path(model_path):
     """
     Return path to moonpies.py. If not installed, assume following structure:
 
@@ -353,8 +387,8 @@ def _get_modelpath(cfg):
         /test
 
     """
-    if cfg.modelpath != '':
-        return cfg.modelpath
+    if model_path != '':
+        return model_path
     # Try to import absolute path from installed moonpies module
     try:  # Python > 3.7
         import importlib.resources as pkg_resources
@@ -362,85 +396,43 @@ def _get_modelpath(cfg):
         import importlib_resources as pkg_resources
     try:
         with pkg_resources.path('moonpies', 'moonpies.py') as fpath:
-            modelpath = fpath.parent.as_posix()
+            model_path = fpath.parent.as_posix()
     except (TypeError, ModuleNotFoundError):
         # If module not installed, get path from current file
         if "JPY_PARENT_PID" in environ:  # Jupyter (assume user used chdir)
-            modelpath = getcwd()
+            model_path = getcwd()
         else:  # Non-notebook - assume user is running the .py script directly
-            modelpath = path.abspath(path.dirname(__file__))
-    return modelpath + sep
+            model_path = path.abspath(path.dirname(__file__))
+    return model_path + sep
 
 
-def _get_datapath(cfg):
-    """Return default datapath if not specified in cfg."""
-    datapath = cfg.datapath
-    if datapath == '':
-        modelpath = getattr(cfg, 'modelpath')
-        datapath = path.abspath(path.join(modelpath, '..', 'data')) + sep
-    return datapath
+def _get_data_path(data_path, model_path):
+    """Return default data_path if not specified in cfg."""
+    if data_path == '':
+        data_path = path.abspath(path.join(model_path, '..', 'data')) + sep
+    return data_path
 
 
-def _get_figspath(cfg):
-    """Return default datapath if not specified in cfg."""
-    figspath = cfg.figspath
-    if figspath == '':
-        modelpath = getattr(cfg, 'modelpath')
-        figspath = path.abspath(path.join(modelpath, '..', 'figures')) + sep
-    return figspath
+def _get_figs_path(figs_path, model_path):
+    """Return default data_path if not specified in cfg."""
+    if figs_path == '':
+        figs_path = path.abspath(path.join(model_path, '..', 'figures')) + sep
+    return figs_path
 
 
-def _get_outpath(cfg):
-    """Return default outpath if not specified in cfg."""
-    outpath = cfg.outpath
-    run_seed = f'{cfg.seed:05d}'
-    if outpath != '' and run_seed not in outpath:
-        # Prevent overwrites by appending run_seed/ dir to end of outpath
-        if path.basename(path.normpath(outpath)).isnumeric():
+def _get_out_path(out_path, data_path, seed, run_date, run_name):
+    """Return default out_path if not specified in cfg."""
+    run_seed = f'{seed:05d}'
+    if out_path != '' and run_seed not in out_path:
+        # Prevent overwrites by appending run_seed/ dir to end of out_path
+        if path.basename(path.normpath(out_path)).isnumeric():
             # Trim previous seed path if it exists
-            outpath = path.dirname(path.normpath(outpath))
-        outpath = path.join(outpath, run_seed)
-    elif outpath == '':
-        # Default outpath is datapath/out/yymmdd/runname/seed/
-        outpath = path.join(cfg.datapath, 'out', cfg.run_date, cfg.run_name, run_seed)
-    return outpath + sep
-
-
-def _enforce_dataclass_type(cfg, cfg_field):
-    """
-    Force set all dataclass types from their type hint, raise error if invalid.
-    
-    Since scientific notation is float in Python, this forces int specified in 
-    scientific notation to be int in the code.
-    """
-    value = getattr(cfg, cfg_field.name)
-    try:
-        setattr(cfg, cfg_field.name, cfg_field.type(value))
-    except ValueError as e:
-        msg = f'Type mismatch for {cfg_field.name} in config.py: ' 
-        msg += f'Expected: {cfg_field.type}. Got: {type(value)}.'
-        raise ValueError(msg) from e
-
-
-def _make_paths_absolute(cfg, cfg_field, datapath, outpath):
-    """
-    Make all file paths absolute. 
-    
-    Prepend datapath to all cfg_fields ending with "_in".
-    Prepend outpath to all cfg_fields ending with "_out".
-    """
-    value = getattr(cfg, cfg_field.name)
-    newpath = ''
-    if cfg_field.name[-3:] == '_in':
-        newpath = path.join(datapath, value)
-    elif cfg_field.name[-4:] == '_out':
-        # Recompute path to _out files in case outpath changed (e.g. appending seed dir)
-        newpath = path.join(outpath, path.basename(value))
-    elif 'path' in cfg_field.name:
-        newpath = value
-
-    if newpath:
-        setattr(cfg, cfg_field.name, path.abspath(path.expanduser(newpath)))
+            out_path = path.dirname(path.normpath(out_path))
+        out_path = path.join(out_path, run_seed)
+    elif out_path == '':
+        # Default out_path is data_path/out/yymmdd/runname/seed/
+        out_path = path.join(data_path, 'out', run_date, run_name, run_seed)
+    return out_path + sep
 
 
 def _dict2str(d):
@@ -455,22 +447,25 @@ def _dict2str(d):
     return s
 
 
-def _str2py(s, outpath):
-    """Write dict representation of dataclass to python file at outpath."""
-    with open(outpath, 'w', encoding="utf8") as f:
+def _str2py(s, out_path):
+    """Write dict representation of dataclass to python file at out_path."""
+    with open(out_path, 'w', encoding="utf8") as f:
         f.write(s)
-    print(f'Wrote to {outpath}')
+    print(f'Wrote to {out_path}')
 
 
-def read_custom_cfg(cfg_path):
+def read_custom_cfg(cfg_path=None, seed=None):
     """
-    Return dictionary from custom config.py file.
+    Return Cfg from custom config file at cfg_path. Overwrite seed if given.
     """
     if cfg_path is None:
-        return {}
-    with open(path.abspath(cfg_path), 'r', encoding='utf8') as f:
-        cfg_dict = ast.literal_eval(f.read())
-    return cfg_dict
+        cfg_dict = {}
+    else:
+        with open(path.abspath(cfg_path), 'r', encoding='utf8') as f:
+            cfg_dict = ast.literal_eval(f.read())
+    if seed is not None:
+        cfg_dict['seed'] = seed
+    return from_dict(cfg_dict)
 
 
 def from_dict(cdict):
@@ -478,10 +473,10 @@ def from_dict(cdict):
     return Cfg(**cdict)
 
 
-def make_default_cfg(outpath=''):
-    """Write default cfg file to outpath."""
-    if not outpath:
-        outpath = path.join(getcwd(), 'myconfig.py')
+def make_default_cfg(out_path=''):
+    """Write default cfg file to out_path."""
+    if not out_path:
+        out_path = path.join(getcwd(), 'myconfig.py')
     ddict = asdict(Cfg())
     del ddict['seed']
     del ddict['run_time']
@@ -493,7 +488,7 @@ def make_default_cfg(outpath=''):
             ddict[k] = ''
         elif k[-3:] == '_in' or k[-4:] == '_out':
             ddict[k] = path.basename(v)
-    _str2py(_dict2str(ddict), outpath)
+    _str2py(_dict2str(ddict), out_path)
 
 
 if __name__ == '__main__':

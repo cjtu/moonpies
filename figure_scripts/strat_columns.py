@@ -32,12 +32,12 @@ CFG = default_config.Cfg()
 
 # Set Fig paths
 if not FIGDIR:
-    FIGDIR = CFG.figspath
+    FIGDIR = CFG.figs_path
 FIGDIR = Path(FIGDIR).resolve()
 
 # Set data path
 if not DATADIR:
-    DATADIR = Path(CFG.outpath).parents[0]
+    DATADIR = Path(CFG.out_path).parents[0]
 DATADIR = Path(DATADIR)
 
 # Set output path

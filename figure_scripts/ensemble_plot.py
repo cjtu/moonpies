@@ -17,9 +17,9 @@ if len(sys.argv) > 1:   # 1st cmd-line arg is path to custom cfg
     cfg_dict = default_config.read_custom_cfg(sys.argv[1]) 
 cfg = default_config.Cfg(**cfg_dict)
 if not data_dir:
-    data_dir = Path(cfg.outpath).parent
+    data_dir = Path(cfg.out_path).parent
 figname = f'ensemble_ice_{cfg.run_name}_{cfg.run_date}.png'
-figpath = Path(cfg.figspath).joinpath(figname).as_posix()
+figpath = Path(cfg.figs_path).joinpath(figname).as_posix()
 
 # Init plot
 plt.style.use('tableau-colorblind10')

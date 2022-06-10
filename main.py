@@ -14,20 +14,16 @@ parser.add_argument(
     "seed",
     type=int,
     nargs="?",
-    help="random seed for this run - superceeds cfg.seed",
+    help="random seed for this run - superceeds seed in config file",
 )
 parser.add_argument(
     "--cfg", "-c", nargs="?", type=str, help="path to custom my_config.py"
 )
 args = parser.parse_args()
 
-# Use custom cfg from file if provided, else return default_config.Cfg
-cfg_dict = default_config.read_custom_cfg(args.cfg)
-
-# If seed given, it takes precedence over seed set in custom cfg
-if args.seed is not None:
-    cfg_dict["seed"] = args.seed
-custom_cfg = default_config.from_dict(cfg_dict)
+# Get Cfg from file if provided with seed if provided
+# else return the default Cfg()
+cfg = default_config.read_custom_cfg(args.cfg, args.seed)
 
 # Run model with chosen config options
-mp.main(custom_cfg)
+mp.main(cfg)

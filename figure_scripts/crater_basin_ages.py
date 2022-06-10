@@ -9,7 +9,7 @@ from moonpies import moonpies as mp
 from moonpies import default_config
 
 CFG = default_config.Cfg()
-outpath = CFG.figspath + '/crater_basin_ages.pdf'
+outpath = CFG.figs_path + '/crater_basin_ages.pdf'
 # outpath.replace('.pdf', '.png')
 
 # Read crater and basin list

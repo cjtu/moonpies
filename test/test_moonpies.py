@@ -388,7 +388,7 @@ def test_erode_ice_cannon_thick_ejecta_on_top():
 def test_get_diam_array():
     """Test get_diam_array"""
     for regime in ("b", "c", "d", "e"):
-        low, upp, step = CFG.diam_range[regime]
+        low, upp, step, _ = getattr(CFG.impact_regimes, regime)
         actual = mp.get_diam_array(low, upp, step)
         expected = np.linspace(low, upp, int((upp - low) / step) + 1)
         np.testing.assert_array_almost_equal(actual, expected)
