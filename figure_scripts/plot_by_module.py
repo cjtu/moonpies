@@ -54,7 +54,7 @@ t_now = [2, 45, 175, len(TIME_ARR) - 1]
 time_val = [round(TIME_ARR[t_now[0]]/1e9, 2), round(TIME_ARR[t_now[1]]/1e9, 2), round(TIME_ARR[t_now[2]]/1e9, 2), round(TIME_ARR[t_now[3]]/1e9, 2)] 
 
 
-def get_ice_by_module(coi, time_arr, cfg, rng):
+def get_ice_by_module(coi, time_arr, df, cfg, rng):
     """Returns tuple of all modules present in MoonPies."""
     # Get ice from each source
     volc_ice = mp.get_volcanic_ice(time_arr, cfg)
@@ -69,7 +69,7 @@ def get_ice_by_module(coi, time_arr, cfg, rng):
     rng = mp.get_rng(cfg)
     large_complex_craters_ice = mp.get_complex_crater_ice(time_arr, cfg, rng)
     rng = mp.get_rng(cfg)
-    basin_ice = mp.get_basin_ice(time_arr, cfg, rng)
+    basin_ice = mp.get_basin_ice(time_arr, df,  cfg, rng)
     if cfg.mode == 'cannon':
         basin_ice = basin_ice*0
 
@@ -80,7 +80,7 @@ def get_ice_by_module(coi, time_arr, cfg, rng):
 
     # Ballistic sed
     rng = mp.get_rng(cfg)
-    df = mp.get_crater_list(True, cfg, rng)
+    df = mp.get_crater_basin_list(cfg, rng)
     bsed_d, bsed_frac = mp.bsed_depth_petro_pieters(time_arr, df, cfg)
     bsed_all = bsed_d*bsed_frac
     bsed = bsed_all[:, np.array(cfg.coldtrap_names) == coi].flatten()
@@ -116,8 +116,10 @@ def ice_by_era(ice, geo_ages, geo_labels, agg=np.mean, sum_impact_regimes=False)
         idf = idf.drop(['Micrometeorite ice', 'Small impactor ice', 'Small simple crater ice', 'Large simple crater ice', 'Large complex crater ice'], axis=1)
     return idf
 
-ice_mp = get_ice_by_module(COI, TIME_ARR, cfg_mp, rng_mp)
-ice_cn = get_ice_by_module(COI, TIME_ARR, cfg_cn, rng_cn)
+df_cb_mp = mp.get_crater_basin_list(cfg_mp)
+ice_mp = get_ice_by_module(COI, TIME_ARR, df_cb_mp, cfg_mp, rng_mp)
+df_cb_cn = mp.get_crater_basin_list(cfg_cn)
+ice_cn = get_ice_by_module(COI, TIME_ARR, df_cb_cn, cfg_cn, rng_cn)
 
 df_mp = ice_by_era(ice_mp, geo_ages, geo_labels_abbr_long, np.mean, True)
 df_cn = ice_by_era(ice_cn,  geo_ages, geo_labels_abbr_long, np.mean, True)

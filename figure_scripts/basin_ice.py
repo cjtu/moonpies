@@ -19,7 +19,7 @@ def_cfg = default_config.Cfg(mode = 'moonpies', ctype_frac=1, ctype_hydrated=1)
 
 df = mp.read_basin_list(def_cfg)
 time_arr = mp.get_time_array(def_cfg)
-b_ice_t = mp.get_basin_ice(time_arr,def_cfg)
+b_ice_t = mp.get_basin_ice(time_arr, df, def_cfg)
 
 i=0
 n = 100
@@ -30,7 +30,7 @@ mean_basin_ice = np.zeros_like(time_arr)
 for i in range(n):
     mp.clear_cache()
     time_arr = mp.get_time_array(def_cfg)
-    b_ice_t = mp.get_basin_ice(time_arr,def_cfg)
+    b_ice_t = mp.get_basin_ice(time_arr, df, def_cfg)
     all_basin_ice[:,i] = b_ice_t
     y = b_ice_t
     x = time_arr/1e9

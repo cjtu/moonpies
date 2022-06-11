@@ -219,8 +219,15 @@ class Cfg:
     brown_c0: float = 1.568  # Brown et al. (2002)
     brown_d0: float = 2.7  # Brown et al. (2002)
     earth_moon_ratio: float = 22.5  # Earth-Moon impact ratio Mazrouei et al. (2019)
-    impact_regimes: ImpactRegimes = ImpactRegimes()
-
+    # impact_regimes: ImpactRegimes = ImpactRegimes()
+    impact_regimes: dict = field(default_factory = lambda: ({
+        # regime: (rad_min, rad_max, step, sfd_slope)
+        'a': (0, 0.01, None, None),  # micrometeorites (<1 mm)
+        'b': (0.01, 3, 1e-4, -3.7),  # small impactors (10 mm - 3 m)
+        'c': (100, 1.5e3, 1, -3.82),  # simple craters, steep sfd (100 m - 1.5 km)
+        'd': (1.5e3, 15e3, 1e2, -1.8),  # simple craters, shallow sfd (1.5 km - 15 km)
+        'e': (15e3, 300e3, 1e3, -1.8),  # complex craters, shallow sfd (15 km - 300 km)
+    }), compare=False)
     # Comet constants
     is_comet: bool = False  # Use comet properties for impacts
     comet_ast_frac: float = 0.05  # 5-17% (Joy et al 2012) 

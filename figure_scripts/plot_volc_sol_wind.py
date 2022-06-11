@@ -54,9 +54,9 @@ fig1.savefig(out_dir + 'volc_time_w_inset.png')
 
 fig2,ax2 = plt.subplots(figsize=(8, 5))
 
-solar_wind_ice_fys = mp.solar_wind_ice(TIME_ARR, cfg)
+solar_wind_ice_fys = mp.solar_wind_ice_mass(TIME_ARR, cfg)
 cfg.faint_young_sun = False
-solar_wind_ice_fys_off = mp.solar_wind_ice(TIME_ARR, cfg)
+solar_wind_ice_fys_off = mp.solar_wind_ice_mass(TIME_ARR, cfg)
 
 plt.plot(TIME_ARR/1e9, solar_wind_ice_fys, label='Faint Young Sun Scenario')
 plt.plot(TIME_ARR/1e9,solar_wind_ice_fys_off, label='Constant Scenario')
@@ -75,9 +75,9 @@ fig2.savefig(out_dir + 'sol_wind.png')
 # Solar wind volatile mass through time w/ volc mass plotted on top. 
 fig3,ax3 = plt.subplots(figsize=(8, 5))
 
-solar_wind_ice_fys = mp.solar_wind_ice(TIME_ARR, cfg)
+solar_wind_ice_fys = mp.solar_wind_ice_mass(TIME_ARR, cfg)
 cfg.faint_young_sun = False
-solar_wind_ice_fys_off = mp.solar_wind_ice(TIME_ARR, cfg)
+solar_wind_ice_fys_off = mp.solar_wind_ice_mass(TIME_ARR, cfg)
 
 plt.plot(TIME_ARR/1e9, solar_wind_ice_fys, label='Faint Young Sun = True')
 plt.plot(TIME_ARR/1e9,solar_wind_ice_fys_off, label='Faint Young Sun = False')
