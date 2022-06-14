@@ -7,8 +7,12 @@ import pandas as pd
 from moonpies import moonpies as mp
 from moonpies import default_config
 
-DATEDIR = Path(sys.argv[1])  # data/out/yymmdd/
-# DATEDIR = Path('/home/ctaiudovicic/projects/moonpies/data/out/220601/')
+# DATEDIR = "~/moonpies/data/out/yymmdd/""
+DEBUG = False
+if DEBUG:
+    DATEDIR = Path('/home/ctaiudovicic/projects/moonpies/data/out/220610/')
+else:
+    DATEDIR = Path(sys.argv[1])
 TMPDIR = DATEDIR / 'tmp'
 OUTDIR = DATEDIR.parent
 RUN_NAMES = {
@@ -24,8 +28,8 @@ def get_coldtrap_age(coldtrap, fcfg):
     Return coldtrap age given a run config file.
     """
     mp.clear_cache()
-    cfg = default_config.Cfg(**default_config.read_custom_cfg(fcfg))
-    craters = mp.get_crater_list(cfg=cfg, rng=mp.get_rng(cfg))
+    cfg = default_config.read_custom_cfg(fcfg)
+    craters = mp.get_crater_basin_list(cfg=cfg, rng=mp.get_rng(cfg))
     return craters[craters.cname==coldtrap].age.values[0]
 
 
@@ -98,8 +102,12 @@ def pickles_to_csv(tmpdir=TMPDIR, outdir=DATEDIR):
     runs_df.to_csv(outdir / 'runs.csv', index=False)
 
 if __name__ == '__main__':
-    # for coldtrap in COLDTRAPS[2:]:
-        # agg_coldtrap(coldtrap)
+    # TODO: remove DEBUG
+    if DEBUG:
+        print('RUNNING IN DEBUG MODE')
+        for coldtrap in COLDTRAPS[2:]:
+            agg_coldtrap(coldtrap)
+        quit()
 
     # Run agg_coldtrap in parallel (10 mins for 10k runs)
     queue = Queue()

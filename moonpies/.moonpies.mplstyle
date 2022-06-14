@@ -1,0 +1,52 @@
+### MoonPIES Figure stylesheet
+# See https://matplotlib.org/stable/tutorials/introductory/customizing.html
+
+## FONT
+# font.family:     sans-serif
+# font.sans-serif: Myriad Pro, Arial, Helvetica, sans-serif
+font.size:       10
+
+## FIGURE
+figure.figsize:     7.2, 5.4  # inches (Nature full width is 7.2in, mpl default aspect is 4x3)
+figure.facecolor:   white
+figure.titlesize:   14
+figure.titleweight: bold
+
+## SAVING FIGURES
+savefig.dpi:       300      # figure dots per inch
+savefig.bbox:      tight    # {tight, standard}
+
+## LEGEND
+legend.fontsize:       10
+legend.title_fontsize: 10
+
+## TICKS
+xtick.top:           True   # draw ticks on the top side
+xtick.bottom:        True   # draw ticks on the bottom side
+xtick.direction:     in     # direction: {in, out, inout}
+xtick.labelsize:     10
+
+ytick.left:          True   # draw ticks on the left side
+ytick.right:         True   # draw ticks on the right side
+ytick.direction:     in     # direction: {in, out, inout}
+ytick.labelsize:     10
+
+## AXES
+axes.grid: False
+axes.facecolor: white
+axes.formatter.limits: -3, 3  # use scientific notation unless min < log10 < max
+axes.formatter.min_exponent: 3  # minimum exponent to use scientific notation
+axes.titlesize: 12
+axes.labelsize: 12
+axes.spines.top: True
+axes.spines.right: True
+#axes.prop_cycle: cycler(
+#    'color', ['0072B2', '009E73', 'D55E00', 'CC79A7', 'F0E442', '56B4E9']
+#)
+
+## IMAGES
+image.interpolation: none  # see help(imshow) for options
+image.cmap:   viridis      # A colormap name, gray etc...
+
+## HISTOGRAM PLOTS
+hist.bins: auto  # The default number of histogram bins or 'auto'.

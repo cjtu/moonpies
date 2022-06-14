@@ -8,7 +8,7 @@ import os
 import gc
 from functools import lru_cache, _lru_cache_wrapper
 import numpy as np
-from scipy import stats
+from scipy import stats, interpolate
 import pandas as pd
 
 try:
@@ -1538,24 +1538,45 @@ def get_random_impactor_speeds(n, cfg=CFG, rng=None):
 
 def get_comet_speeds(n, cfg=CFG, rng=None):
     """
-    Returns comet speed modeled after results from Pokorny et al. 2019, with 
-    two gaussian distributions.
+    Returns comet speed modeled after results from Pokorny et al. (2019), with 
+    two gaussian distributions. Uses inverse transform sampling.
     
     Parameters
     ----------
-    n (num): number of speeds to pull
-    std (num): standard deviation for gaussians
-    mu1 (num): mean for poisson
-    mu2, mu3 (num): mean for gaussians
+    n (int): Number of speeds to generate
     """
     rng = _rng(rng)
-    x = np.linspace(0, 70000, 70)
-    halley_speeds = gaussian(x, cfg.halley_mean_speed, cfg.halley_sd_speed**2) 
-    oort_speeds = gaussian(x, cfg.oort_mean_speed, cfg.oort_sd_speed**2)
-    speeds = cfg.halley_to_oort_ratio * halley_speeds + oort_speeds
-    speed_prob = speeds / np.sum(speeds)
-    impactor_speeds = rng.choice(x, n, p=speed_prob)
-    return impactor_speeds
+    # Pass uniform distribution to inverse cdf (inverse transform sampling)
+    icdf = get_comet_speed_icdf(cfg)
+    return icdf(rng.uniform(size=n))
+
+
+@lru_cache(1)
+def get_comet_speed_icdf(cfg=CFG):
+    """
+    Return comet speed inverse cumulative distribution function.
+    
+    Defines comet pdf as weighted sum of two gaussians: Halley and Oort comet 
+    speed pdfs. Use inverse transform sampling by passing a uniform 
+    distribution.
+
+    See https://towardsdatascience.com/random-sampling-using-scipy-and-numpy-part-i-f3ce8c78812e
+    """
+    maxvel = cfg.oort_mean_speed + 6*cfg.oort_sd_speed  # 6 sigma
+
+    # Generate pdf
+    x = np.linspace(0, maxvel, int(1e6))  # 1e6 is fast and smooth
+    h = stats.norm.pdf(x, loc=cfg.halley_mean_speed, scale=cfg.halley_sd_speed)
+    o = stats.norm.pdf(x, loc=cfg.oort_mean_speed, scale=cfg.oort_sd_speed)
+    pdf = cfg.halley_frac * h + cfg.oort_frac * o  # Weighted sum
+    # pdf /= integrate.simpson(pdf, x)  # Not needed, already normalized
+
+    # Generate cdf
+    cdf = np.cumsum(pdf)
+    cdf /= cdf[-1]  # Ensure max(cdf) is 1 since cdf must be in [0,1]
+
+    # Invert cdf to get ppf
+    return interpolate.interp1d(cdf, x, fill_value="extrapolate")
 
 
 # Crater/impactor size-frequency helpers
@@ -2293,37 +2314,6 @@ def clear_cache():
         if isinstance(obj, _lru_cache_wrapper):
             obj.cache_clear()
 
-# Plot helpers
-def plot_version(cfg=CFG, xy=None, ha='left', va='bottom', loc='ll', ax=None, 
-                 **kwargs):
-    """Add version label """
-    import matplotlib.pyplot as plt
-    if ax is None:
-        ax = plt.gca()
-    if xy is None:
-        xoff = 0.02
-        yoff = 0.03
-        if loc == 'll':
-            xy = (xoff, yoff)
-            ha = 'left'
-            va = 'bottom'
-        elif loc == 'lr':
-            xy = (1 - xoff, yoff)
-            ha = 'right'
-            va = 'bottom'
-        elif loc == 'ul':
-            xy = (xoff, 1 - yoff)
-            ha = 'left'
-            va = 'top'
-        elif loc == 'ur':
-            xy = (1 - xoff, 1 - yoff)
-            ha = 'right'
-            va = 'top'
-    
-    ax.annotate(f'MoonPIES v{cfg.version}', xy, ha=ha, va=va, 
-                xycoords='axes fraction', bbox=dict(boxstyle="round", fc="w"),  
-                **kwargs)
-    
 
 if __name__ == "__main__":
     # Run model with default CFG

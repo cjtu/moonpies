@@ -234,11 +234,12 @@ class Cfg:
     comet_density: float = 1300  # [kg/m^3]
     comet_hydrated_wt_pct: float = 0.5  # 50% of comet mass is hydrated
     comet_mass_retained: float = 0.065  # asteroid mass retained (Ong et al., 2011)
-    halley_to_oort_ratio: float = 3  # N_Halley / N_Oort
     halley_mean_speed: float = 20e3  # [m/s] (Chyba et al., 1994; Ong et al., 2011)
     halley_sd_speed: float = 5e3  # [m/s]
+    halley_frac: float = 0.75  # 3:1 Halley : Oort ratio
     oort_mean_speed: float = 54e3  # [m/s] (Jeffers et al., 2001; Ong et al., 2011)
     oort_sd_speed: float = 5e3  # [m/s]
+    oort_frac: float = 0.25  # 3:1 Halley : Oort ratio
 
     # Volcanic ice module
     volc_mode: str = 'Head'  # ['Head', 'NK']
@@ -359,7 +360,7 @@ class Cfg:
 
     def to_py(self, out_path):
         """Write cfg to python file at out_path."""
-        _str2py(str(self), out_path)
+        _str2py(self.to_string(), out_path)
 
 
 # Config helper functions
@@ -397,11 +398,8 @@ def _get_model_path(model_path):
     if model_path != '':
         return model_path
     # Try to import absolute path from installed moonpies module
-    try:  # Python > 3.7
-        import importlib.resources as pkg_resources
-    except ImportError:  # Python < 3.7
-        import importlib_resources as pkg_resources
     try:
+        import importlib.resources as pkg_resources
         with pkg_resources.path('moonpies', 'moonpies.py') as fpath:
             model_path = fpath.parent.as_posix()
     except (TypeError, ModuleNotFoundError):
@@ -444,14 +442,7 @@ def _get_out_path(out_path, data_path, seed, run_date, run_name):
 
 def _dict2str(d):
     """Convert dictionary to pretty printed string."""
-    try:
-        s = pprint.pformat(d, compact=True, sort_dicts=False)
-    except TypeError:
-        # Cancel sorting on Python < 3.8
-        pprint._sorted = lambda x:x  # Python 3.6
-        pprint.sorted = lambda x, key=None: x  # Python 3.7
-        s = pprint.pformat(d, compact=True)
-    return s
+    return pprint.pformat(d, compact=True, sort_dicts=False)
 
 
 def _str2py(s, out_path):
