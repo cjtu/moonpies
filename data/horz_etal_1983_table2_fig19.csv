@@ -1,0 +1,10 @@
+﻿Core,Range (km),Range (crater radii),Thickness,Crater material (wt%),Mixing ratio (target/crater),Notes
+A,16.5,1.27,80,89,0.12,"Core A Thickness >80 m, contact misinterpreted"
+B,19,1.46,34,29,2.45,"Core, Range, Thickness from Table 2, Hörz et al. (1983)"
+C,23,1.77,76,24.5,3.08,"Crater material wt% from Fig 29b, Hörz et al. (1983)"
+D,25.5,1.96,52,10,9.00,"Range (crater radii) assumes Ries radius = 13 km"
+E,26.8,2.06,84,24,3.17,"Mixing ratio (target/crater) computed as (100 - crater material)/(crater material)"
+F,27.5,2.12,47,16,5.25,"Verified fit to mixing ratio by comparing to Fig 30, Hörz et al. (1983)"
+G,32,2.46,21,7,13.29,
+H,35.2,2.71,28,17,4.88,
+I,36.5,2.81,17,10.5,8.52,

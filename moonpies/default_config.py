@@ -58,16 +58,6 @@ POLE_DEFAULTS = {
             'Rozhdestvenskiy W', 'Sylvester')
     },
 }
-
-@dataclass(frozen=True)
-class ImpactRegimes:
-    """Impactor size regimes. Regime: (rad_min, rad_max, step, sfd_slope)."""
-    a: tuple = (0, 0.01, None, None)  # micrometeorites (<1 mm)
-    b: tuple = (0.01, 3, 1e-4, -3.7)  # small impactors (10 mm - 3 m)
-    c: tuple = (100, 1.5e3, 1, -3.82)  # simple craters, steep sfd (100 m - 1.5 km)
-    d: tuple = (1.5e3, 15e3, 1e2, -1.8)  # simple craters, shallow sfd (1.5 km - 15 km)
-    e: tuple = (15e3, 300e3, 1e3, -1.8)  # complex craters, shallow sfd (15 km - 300 km)
-
 @dataclass(frozen=True)
 class Cfg:
     """Class to configure a mixing model run."""
@@ -152,7 +142,7 @@ class Cfg:
     impact_speed_mean: float = 20e3  # [m/s] mean impact speed (Cannon 2020)
     impact_speed_sd: float = 6e3  # [m/s] standard deviation impact speed (Cannon 2020)
     escape_vel: float = 2.38e3  # [m/s] lunar escape velocity
-    impact_angle: float = 45  # [deg]  average impact velocity
+    impact_angle: float = 45  # [deg]  average impact angle
     target_density: float = 1500  # [kg m^-3] (Cannon 2020)
     bulk_density: float = 2700  # [kg m^-3] simple to complex (Melosh)
     ice_erosion_rate: float = 0.1 # [m], 10 cm / 10 ma (Cannon 2020)
@@ -215,11 +205,10 @@ class Cfg:
     ctype_frac: float = 0.36  # 36% of impactors are c-type (Jedicke et al., 2018)
     ctype_hydrated: float = 2/3  # 2/3 of c-types are hydrated (Rivkin, 2012)
     hydrated_wt_pct: float = 0.1  # impactors wt% H2O (Cannon 2020)
-    impact_mass_retained: float = 0.165  # asteroid mass retained in impact (Ong et al., 2011)
+    impact_mass_retained: float = 0.165  # asteroid mass retained in impact (Ong et al., 2010)
     brown_c0: float = 1.568  # Brown et al. (2002)
     brown_d0: float = 2.7  # Brown et al. (2002)
     earth_moon_ratio: float = 22.5  # Earth-Moon impact ratio Mazrouei et al. (2019)
-    # impact_regimes: ImpactRegimes = ImpactRegimes()
     impact_regimes: dict = field(default_factory = lambda: ({
         # regime: (rad_min, rad_max, step, sfd_slope)
         'a': (0, 0.01, None, None),  # micrometeorites (<1 mm)
@@ -227,19 +216,21 @@ class Cfg:
         'c': (100, 1.5e3, 1, -3.82),  # simple craters, steep sfd (100 m - 1.5 km)
         'd': (1.5e3, 15e3, 1e2, -1.8),  # simple craters, shallow sfd (1.5 km - 15 km)
         'e': (15e3, 300e3, 1e3, -1.8),  # complex craters, shallow sfd (15 km - 300 km)
-    }), compare=False)
+    }), compare=False)  # TODO Cludge: compare=False allows Cfg to be hashable with dict attr. Should make this immutable
     # Comet constants
     is_comet: bool = False  # Use comet properties for impacts
     comet_ast_frac: float = 0.05  # 5-17% (Joy et al 2012) 
     comet_density: float = 1300  # [kg/m^3]
-    comet_hydrated_wt_pct: float = 0.5  # 50% of comet mass is hydrated
-    comet_mass_retained: float = 0.065  # asteroid mass retained (Ong et al., 2011)
-    halley_mean_speed: float = 20e3  # [m/s] (Chyba et al., 1994; Ong et al., 2011)
-    halley_sd_speed: float = 5e3  # [m/s]
-    halley_frac: float = 0.75  # 3:1 Halley : Oort ratio
-    oort_mean_speed: float = 54e3  # [m/s] (Jeffers et al., 2001; Ong et al., 2011)
-    oort_sd_speed: float = 5e3  # [m/s]
-    oort_frac: float = 0.25  # 3:1 Halley : Oort ratio
+    comet_hydrated_wt_pct: float = 0.5  # 50% of comet mass is hydrated (Whipple, 1950; Ong et al., 2010)
+    comet_mass_retained: float = 0.065  # asteroid mass retained (Ong et al., 2010)
+    comet_speed_min: float = 10.2e3  # [km/s] minimum lunar impact speed for comet (Ong et al., 2010)
+    comet_speed_max: float = 72e3  # [km/s] maximum lunar impact speed for comet (Ong et al., 2010)
+    jfc_speed_mean: float = 20e3  # [m/s] (Chyba et al., 1994; Ong et al., 2010)
+    jfc_speed_sd: float = 5e3  # [m/s] (Chyba et al., 1994; Ong et al., 2010)
+    jfc_frac: float = 0.875  # ~7 JFC : LPC (HPC+OOC) ratio (Carrillo-Sánchez et al., 2016; Pokorný et al., 2019)
+    lpc_speed_mean: float = 54e3  # [m/s] (Jeffers et al., 2001; Ong et al., 2010)
+    lpc_speed_sd: float = 5e3  # [m/s] (Jeffers et al., 2001; Ong et al., 2010)
+    lpc_frac: float = 0.125  # ~7 JFC : LPC (HPC+OOC) ratio (Carrillo-Sánchez et al., 2016; Pokorný et al., 2019)
 
     # Volcanic ice module
     volc_mode: str = 'Head'  # ['Head', 'NK']

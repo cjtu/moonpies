@@ -2,7 +2,7 @@
 import sys
 import pickle
 from pathlib import Path
-from multiprocessing import Process, Queue
+from multiprocessing import Process
 import pandas as pd
 from moonpies import moonpies as mp
 from moonpies import default_config
@@ -110,7 +110,6 @@ if __name__ == '__main__':
         quit()
 
     # Run agg_coldtrap in parallel (10 mins for 10k runs)
-    queue = Queue()
     processes = [
         Process(target=agg_coldtrap, args=(coldtrap,)) for coldtrap in COLDTRAPS
     ]

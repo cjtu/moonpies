@@ -414,7 +414,7 @@ def get_ejecta_thickness(distance, radius, cfg=CFG):
     # Basins
     is_pr = radius >= cfg.complex2peakring / 2
     t_radius = final2transient(rad_v*2, cfg) / 2
-    thick[is_pr] = get_ej_thick_basin(distance[is_pr], t_radius[is_pr], exp, cfg.rad_moon)
+    thick[is_pr] = get_ej_thick_basin(distance[is_pr], t_radius[is_pr], cfg)
     thick[np.isnan(thick)] = 0
     return thick
 
@@ -445,7 +445,7 @@ def get_ej_thick_complex(distance, radius, order=-3):
     return 0.14 * (radius ** 0.74)  * (distance / radius) ** order
     
 
-def get_ej_thick_basin(distance, t_radius, order=-3, R0=1737.1e3):
+def get_ej_thick_basin(distance, t_radius, cfg=CFG):
     """
     Return ejecta thickness with distance from a basin (Zhang et al., 2021).
 
@@ -458,12 +458,12 @@ def get_ej_thick_basin(distance, t_radius, order=-3, R0=1737.1e3):
     order (int): Negative exponent (-3 +/- 0.5)
 
     """
-    def r_flat(r_t, R, g=1.62/1e3, theta=45):
+    def r_flat(r_t, R, g, theta):
         """Return distance on flat surface, r' (eq S3, Zhang et al., 2021)"""
         v = ballistic_velocity(r_t*1e3) / 1e3
         return R + (v**2 * np.sin(2*np.deg2rad(theta))) / g
 
-    def r_soi(r, R, R0=1737.1e3):
+    def r_soi(r, R, R0):
         """Return distance to SOI (eq S4/S5, Zhang et al., 2021)."""
         tanr = np.tan((r - R) / (2 * R0))
         return R + (2 * R0 * tanr) / (tanr + 1)
@@ -472,11 +472,11 @@ def get_ej_thick_basin(distance, t_radius, order=-3, R0=1737.1e3):
         """Return area of flat SOI (eq S6, Zhang et al., 2021)."""
         return np.pi * (r_outer_sph ** 2 - r_inner_sph ** 2)
 
-    def s_spherical(r_inner, r_outer, R0=1737.1e3):
+    def s_spherical(r_inner, r_outer, R0):
         """Return area of spherical SOI (eq S7, Zhang et al., 2021)."""
         return 2 * np.pi * R0**2 * (np.cos(r_inner/R0) - np.cos(r_outer/R0))
 
-    def area_corr(distance, radius, R0=1737.1e3):
+    def area_corr(distance, radius, R0):
         """Return correction for area of SOI (eq S8, Zhang et al., 2021)."""
         r_inner = distance - radius / 8
         r_outer = distance + radius / 8
@@ -487,11 +487,14 @@ def get_ej_thick_basin(distance, t_radius, order=-3, R0=1737.1e3):
         return area_flat / area_sph
     
     # Compute dist and area corrections and return thickness
+    order = cfg.ejecta_thickness_order
     radius = t_radius * 1e-3  # [m] -> [km]
     distance *= 1e-3  # [m] -> [km]
-    R0 = R0 * 1e-3  # [m] -> [km]
+    R0 = cfg.rad_moon * 1e-3  # [m] -> [km]
+    grav = cfg.grav_moon * 1e-3  # [m] -> [km]
+    theta = cfg.impact_angle  # [deg]
     r_t = distance - radius
-    rflat = r_flat(r_t, radius)
+    rflat = r_flat(r_t, radius, grav, theta)
     with np.errstate(divide='ignore', over='ignore'):
         acorr = area_corr(distance, radius, R0)
         thickness = 0.033 * radius * np.power(rflat / radius, order) * acorr
@@ -1439,10 +1442,10 @@ def impactor_mass2water(impactor_mass, cfg):
         - 36% of impactors are C-type (Jedicke et al., 2018)
         - 2/3 of C-types are hydrated (Rivkin, 2012)
         - Hydrated impactors are 10% water by mass (Cannon et al., 2020)
-        - 16% of asteroid mass retained on impact (Ong et al. 2011)
+        - 16% of asteroid mass retained on impact (Ong et al., 2010)
      for comets:
         - assume 50% of comet hydrated
-        - 6.5% of comet mass retained on impact (Ong et al. 2011)
+        - 6.5% of comet mass retained on impact (Ong et al., 2010)
     """
     if cfg.is_comet:
         mass_h2o = cfg.comet_hydrated_wt_pct * impactor_mass * cfg.comet_mass_retained
@@ -1527,13 +1530,35 @@ def get_random_impactor_speeds(n, cfg=CFG, rng=None):
     """
     # Randomize impactor speeds with Gaussian around mean, sd
     rng = _rng(rng)
-    if cfg.is_comet:
-        speeds = get_comet_speeds(n, cfg, rng)
-    else:
-        speeds = rng.normal(cfg.impact_speed_mean, cfg.impact_speed_sd, n)
-    # Minimum possible impact speed is escape velocity
-    speeds[speeds < cfg.escape_vel] = cfg.escape_vel
-    return speeds
+    rv = comet_speed_rv(cfg) if cfg.is_comet else asteroid_speed_rv(cfg)
+    return rv.rvs(size=n, random_state=rng)
+
+
+@lru_cache(maxsize=1)
+def asteroid_speed_rv(cfg=CFG):
+    """
+    Return asteroid speed random variable object from scipy.stats.truncnorm.
+    """
+    # Set scaling param for stats.truncnorm (min impact speed is escape vel)
+    a = (cfg.escape_vel-cfg.impact_speed_mean)/cfg.impact_speed_sd 
+    b = np.inf
+    return stats.truncnorm(a, b, cfg.impact_speed_mean, cfg.impact_speed_sd)
+
+
+@lru_cache(maxsize=1)
+def comet_speed_rv(cfg=CFG):
+    """
+    Return comet speed random variable object from scipy.stats.truncnorm.
+    """
+    # Set scaling param for stats.truncnorm
+    a = -cfg.comet_speed_min/cfg.jfc_speed_sd
+    b = cfg.comet_speed_max/cfg.jfc_speed_sd
+    jfc = stats.truncnorm(a, b, loc=cfg.jfc_speed_mean, scale=cfg.jfc_speed_sd)
+    a = -cfg.comet_speed_min/cfg.lpc_speed_sd
+    b = cfg.comet_speed_max/cfg.lpc_speed_sd
+    lpc = stats.truncnorm(a, b, loc=cfg.lpc_speed_mean, scale=cfg.lpc_speed_sd)
+    w = [cfg.jfc_frac, cfg.lpc_frac]
+    return rv_mixture([jfc, lpc], weights=w)
 
 
 def get_comet_speeds(n, cfg=CFG, rng=None):
@@ -1556,19 +1581,17 @@ def get_comet_speed_icdf(cfg=CFG):
     """
     Return comet speed inverse cumulative distribution function.
     
-    Defines comet pdf as weighted sum of two gaussians: Halley and Oort comet 
+    Defines comet pdf as weighted sum of two gaussians: JFC and LPC comet 
     speed pdfs. Use inverse transform sampling by passing a uniform 
     distribution.
 
     See https://towardsdatascience.com/random-sampling-using-scipy-and-numpy-part-i-f3ce8c78812e
     """
-    maxvel = cfg.oort_mean_speed + 6*cfg.oort_sd_speed  # 6 sigma
-
-    # Generate pdf
-    x = np.linspace(0, maxvel, int(1e6))  # 1e6 is fast and smooth
-    h = stats.norm.pdf(x, loc=cfg.halley_mean_speed, scale=cfg.halley_sd_speed)
-    o = stats.norm.pdf(x, loc=cfg.oort_mean_speed, scale=cfg.oort_sd_speed)
-    pdf = cfg.halley_frac * h + cfg.oort_frac * o  # Weighted sum
+    # Generate pdf (1e6 points is fast and smooth)
+    x = np.linspace(cfg.comet_min_speed, cfg.comet_max_speed, int(1e6))
+    h = stats.norm.pdf(x, loc=cfg.jfc_speed_mean, scale=cfg.jfc_speed_sd)
+    o = stats.norm.pdf(x, loc=cfg.lpc_speed_mean, scale=cfg.lpc_speed_sd)
+    pdf = cfg.jfc_frac * h + cfg.lpc_frac * o  # Weighted sum
     # pdf /= integrate.simpson(pdf, x)  # Not needed, already normalized
 
     # Generate cdf
@@ -2314,6 +2337,52 @@ def clear_cache():
         if isinstance(obj, _lru_cache_wrapper):
             obj.cache_clear()
 
+# Classes
+class rv_mixture(stats.rv_continuous):
+    """Return mixture of scipy.stats.rv_continuous models."""
+    def __init__(self, submodels, *args, weights=None, **kwargs):
+        """
+        Return mixture of scipy.stats rv submodels weighted by weights.
+
+        Submodels must be instance of scipy.stats.rv_continuous. May not work
+        for all stats.rv_continuous submodels. Tested on norm and truncnorm.
+
+        Parameters
+        ----------
+        submodels (list of scipy.stats.rv_continuous): List of submodels
+        weights (list of float): List of weights for submodels
+        """
+        super().__init__(*args, **kwargs)
+        self.submodels = submodels
+        if weights is None:
+            weights = [1 for _ in submodels]
+        if len(weights) != len(submodels):
+            raise ValueError(f'Got {len(weights)} weights. Expected {len(submodels)}.')
+        self.weights = [w / sum(weights) for w in weights]
+
+    def _weighted_sum(self, vals):
+        """Return weighted sum of vals (must be same len as self.weights)."""
+        return np.sum(vals * np.array(self.weights, ndmin=2).T, axis=0)
+        
+    def _pdf(self, x, *args):
+        pdfs = [submodel.pdf(x, *args) for submodel in self.submodels]
+        return self._weighted_sum(np.array(pdfs))
+            
+    def _sf(self, x, *args):
+        sfs = [submodel.sf(x, *args) for submodel in self.submodels]
+        return self._weighted_sum(np.array(sfs))
+
+    def _cdf(self, x, *args):
+        cdfs = [submodel.cdf(x, *args) for submodel in self.submodels]
+        return self._weighted_sum(np.array(cdfs))
+
+    def _rvs(self, *args, size=None, random_state=None):
+        size = 1 if size is None else size
+        rng = np.random.default_rng() if random_state is None else random_state
+        rv_choices = rng.choice(len(self.submodels), size=size, p=self.weights)
+        rv_samples = [rv.rvs(*args, size=size, random_state=rng) for rv in self.submodels]
+        rvs = np.choose(rv_choices, rv_samples)
+        return rvs
 
 if __name__ == "__main__":
     # Run model with default CFG
