@@ -348,7 +348,6 @@ def distance_bsed(fsave='distance_bsed.pdf', figdir=FIGDIR, cfg=CFG):
     dists = mp.get_coldtrap_dists(df, cfg)
     thick = mp.get_ejecta_thickness_matrix(df, cfg)
     mixing_ratio = mp.get_mixing_ratio_oberbeck(dists, cfg)
-    # vol_frac = mp.mixing_ratio_to_volume_fraction(mixing_ratio)
     
     dist_m = ries.dist_km.values * 1e3
     mr_oberbeck = mp.get_mixing_ratio_oberbeck(dist_m, cfg)
@@ -443,6 +442,57 @@ def ejecta_bsed(fsave='ejecta_bsed.pdf', figdir=FIGDIR, cfg=CFG):
                 axs[1].annotate(f'Distance={dist/1e3:.0f} km', (rads[0]-40, bsed[0]), rotation=47)
     version = mplt.plot_version(cfg, loc='lr', xyoff=(0.01, -0.15), ax=axs[1])
     return _save_or_show(fig, ax, fsave, figdir, version)
+
+
+def melt_fraction_bsed(fsave='melt_fraction_bsed.pdf', figdir=FIGDIR, cfg=CFG):
+    """
+    Plot melt fraction as a function of ejecta thickness and ballistic mixing depth.
+    """
+    mplt.reset_plot_style()
+    dm = mp.read_ballistic_melt_frac(cfg.bsed_frac_mean_in, cfg)
+    ds = mp.read_ballistic_melt_frac(cfg.bsed_frac_std_in, cfg)
+    temps = dm.columns.to_numpy()
+    mrs = dm.index.to_numpy()
+    target_frac = mrs / (1 + mrs)  # mixing ratio -> fraction
+    ejecta_pct = 100*(1 - target_frac)
+    frac_mean = dm.to_numpy()
+    frac_std = ds.to_numpy()
+    fig = plt.figure(figsize=(7.2, 7))
+    ax_dict = fig.subplot_mosaic(
+        """
+        AB
+        CC
+        """
+    )
+    fig.subplots_adjust(hspace=0.5, wspace=0.45)
+    extent = [temps.min(), temps.max(), ejecta_pct.min(), ejecta_pct.max()]
+
+    ax = ax_dict['A']
+    p = ax.imshow(frac_mean, extent=extent, aspect='auto', interpolation='none', cmap='magma')
+    fig.colorbar(p, ax=ax, label='Fraction melted')
+    ax.set_ylabel("Ejecta fraction [%]")
+    ax.set_xlabel("Ejecta Temperature [K]")
+
+    ax = ax_dict['B']
+    p = ax.imshow(frac_std, extent=extent, aspect='auto', interpolation='none', cmap='viridis')
+    fig.colorbar(p, ax=ax, label='Standard deviation')
+    ax.set_ylabel("Ejecta fraction [%]")
+    ax.set_xlabel("Ejecta Temperature [K]")
+
+    ax = ax_dict['C']
+    axb = ax.twiny()
+    ax.errorbar(temps, frac_mean.mean(axis=0), yerr=frac_std.mean(axis=0), 
+                c='tab:blue', fmt='o', label='Melt frac vs. Temperature', capsize=4)
+    axb.errorbar(ejecta_pct, frac_mean.mean(axis=1), yerr=frac_std.mean(axis=1), 
+                c='tab:orange', fmt='^', label='Melt frac vs. Ejecta %', capsize=4)
+    ax.set_ylim(0, 1)
+    ax.set_xlabel('Ejecta Temperature [K]')
+    axb.set_xlabel("Ejecta fraction [%]")
+    ax.set_ylabel("Mean fraction melted")
+    ax.legend(loc='lower right')
+    axb.legend(loc='upper left')
+    version = mplt.plot_version(cfg, loc='lr', xyoff=(0.01, -0.21), ax=ax)
+    return _save_or_show(fig, ax_dict, fsave, figdir, version)
 
 
 def random_crater_ages(fsave='random_crater_ages.pdf', figdir=FIGDIR, cfg=CFG):

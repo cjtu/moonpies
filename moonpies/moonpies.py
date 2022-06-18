@@ -817,7 +817,7 @@ def volcanic_ice_head(time_arr, cfg=CFG):
 
 
 # Ballistic sedimentation module
-def get_melt_frac(ejecta_temps, vol_fracs, cfg=CFG):
+def get_melt_frac(ejecta_temps, mixing_ratios, cfg=CFG):
     """
     Return fraction of ice melted at given ejecta_temps and vol_fracs.
 
@@ -826,7 +826,7 @@ def get_melt_frac(ejecta_temps, vol_fracs, cfg=CFG):
     Parameters
     ----------
     ejecta_temps (arr): Ejecta temperatures [K].
-    vol_fracs (arr): Volume fractions (ejecta/target).
+    mixing_ratios (arr): Mixing ratios target:ejecta.
 
     Returns
     -------
@@ -834,14 +834,14 @@ def get_melt_frac(ejecta_temps, vol_fracs, cfg=CFG):
     """
     mdf = read_ballistic_melt_frac(cfg.bsed_frac_mean_in)
     temps = insert_unique_in_range(ejecta_temps, mdf.columns.to_numpy())
-    vfs = insert_unique_in_range(vol_fracs, mdf.index.to_numpy())
-    mdf = mdf.reindex(index=vfs, columns=temps)
+    mrs = insert_unique_in_range(mixing_ratios, mdf.index.to_numpy())
+    mdf = mdf.reindex(index=mrs, columns=temps)
     minterp = mdf.interpolate(axis=0).interpolate(axis=1)
     melt_frac = np.zeros_like(ejecta_temps)
     for i, row in enumerate(ejecta_temps):
         for j, temp in enumerate(row):
             try:
-                melt_frac[i, j] = minterp.loc[vol_fracs[i, j], temp]
+                melt_frac[i, j] = minterp.loc[mixing_ratios[i, j], temp]
             except KeyError:
                 melt_frac[i, j] = 0
     return melt_frac
@@ -965,8 +965,7 @@ def bsed_depth_petro_pieters(time_arr, df, cfg=CFG):
     ke = kinetic_energy(mass, vel)
     ej_temp = ejecta_temp(ke, mass, cfg)
     mixing_ratio = get_mixing_ratio_oberbeck(dist, cfg)
-    volume_frac = mixing_ratio_to_volume_fraction(mixing_ratio)
-    melt_frac = get_melt_frac(ej_temp, volume_frac, cfg)
+    melt_frac = get_melt_frac(ej_temp, mixing_ratio, cfg)
     
     # Convert to time array shape: (Ncrater, Ncoldtrap) -> (Ntime, Ncoldtrap)
     ejecta_thickness_t, _ = get_ejecta_thickness_time(time_arr, df, cfg)
@@ -976,24 +975,6 @@ def bsed_depth_petro_pieters(time_arr, df, cfg=CFG):
     # TODO: should we take the max melt frac with multiple events?
     melt_frac_t = ages2time(time_arr, ages, melt_frac, np.nanmax, 0) 
     return bsed_depths_t, melt_frac_t
-
-
-def mixing_ratio_to_volume_fraction(mixing_ratio):
-    """
-    Return volume fraction from mixing ratio.
-    
-    mr 66% => 66% target / 33% ejecta = 2
-    mr 90% => 90% of target material, 10% ejecta => 9
-
-    Parameters
-    ----------
-    mixing_ratio (arr): Mixing ratio (target:ejecta)
-
-    Returns
-    -------
-    volume_fraction (arr): Volume fraction (target/ejecta)
-    """
-    return mixing_ratio / (1 + mixing_ratio)
 
 
 def get_mixing_ratio_oberbeck(ej_distances, cfg=CFG):
