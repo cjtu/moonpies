@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "moonpies"
-version = "0.13.5"
+version = "0.13.6"
 description = "Moon Polar Ice and Ejecta Stratigraphy model"
 authors = ["Christian J. Tai Udovicic <cjtu@nau.edu>", "Katelyn R. Frizzell", "Kristen M. Luchsinger", "Alissa Madera", "Tyler G. Paladino"]
 license = "MIT"
@@ -13,7 +13,7 @@ matplotlib = "^3.3"
 
 [tool.poetry.dev-dependencies]
 jupyter = "^1.0.0"
-black = "^21.6b0"
+black = "^22.3.0"
 pylint = "^2.9.3"
 pytest = "^6.2.4"
 pandoc = "^1.1.0"
@@ -45,7 +45,6 @@ generated-members=["pandas.*","pd.*"]
 [tool.pylint.reports]
 output-format="colorized"
 reports="y"
-include-ids="yes"
 disable=["R0913","C0103","E1136","E1137","W0511"]
 msg-template="{msg_id}:{line:3d},{column}: {obj}: {msg}"
 

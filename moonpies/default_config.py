@@ -177,10 +177,14 @@ class Cfg:
     mixing_ratio_a: float = 0.0183  # (Oberbeck et al. 1975 via Eq 4 Zhang et al. 2021)  #2.913  # Fit to Ries crater ballistic sed, a
     mixing_ratio_b: float = 0.87  # (Oberbeck et al. 1975 via Eq 4 Zhang et al. 2021)  #-3.978  # Fit to Ries crater ballistic sed, b
     ice_frac: float = 0.056  # Fraction ice vs regolith (5.6% Colaprete 2010)
-    heat_frac: float = 0.45  # Fraction of ballistic ke used in heating vs mixing
+    ke_heat_frac: float = 0.45  # Fraction of ballistic ke used in heating vs mixing
+    ke_heat_frac_speed: float = 1.45e3  # [m/s] Minimum speed for ke_heat_frac to be applied
+    polar_ejecta_temp_init: float = 140  # [K] Typical polar subsurface temperature (Vasavada et al., 1999; Feng et al., 2021)
     basin_ejecta_temp_warm: bool = False  # Use warm ejecta temperature for basin ice
     basin_ejecta_temp_init_cold: float = 260  # [K] Initial ejecta temperature, present-cold-Moon (Fernandes & Artemieva 2012)
     basin_ejecta_temp_init_warm: float = 420  # [K] Initial ejecta temperature, ancient-warm-Moon (Fernandes & Artemieva 2012)
+    ejecta_temp_dist_params_cold: tuple = (2.032e+06, -7.658e+03, 2.520e+02)  # quadratic fit params to Fernandes & Artemieva (2012) with x in crater radii
+    ejecta_temp_dist_params_warm: tuple = (2.449e+06, -2.384e+04,  4.762e+02)  # quadratic fit params to Fernandes & Artemieva (2012) with x in crater radii
 
     # Thermal module
     specific_heat_coeffs: tuple = (-3.6125, 2.7431, 2.3616e-3, -1.2340e-5, 8.9093e-9)  # c0 to c4 (Hayne et al., 2017)
@@ -390,7 +394,7 @@ def _get_model_path(model_path):
         return model_path
     # Try to import absolute path from installed moonpies module
     try:
-        import importlib.resources as pkg_resources
+        import importlib.resources as pkg_resources  # pylint: disable=import-outside-toplevel
         with pkg_resources.path('moonpies', 'moonpies.py') as fpath:
             model_path = fpath.parent.as_posix()
     except (TypeError, ModuleNotFoundError):
