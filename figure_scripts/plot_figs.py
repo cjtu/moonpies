@@ -1,42 +1,51 @@
 """Moonpies plotting module."""
+from datetime import datetime
 from pathlib import Path
 from multiprocessing import Process
 import numpy as np
 from scipy import stats
 import pandas as pd
 import matplotlib as mpl
-import matplotlib.pyplot as plt 
+import matplotlib.pyplot as plt
 import seaborn as sns
 from moonpies import moonpies as mp
 from moonpies import default_config
 from moonpies import plotting as mplt
+import aggregate as agg
 
 # Plot helpers
 CFG = default_config.Cfg(seed=1)
-FIGDIR = str(Path(CFG.figs_path).resolve() / "_")[:-1]  # make str with trailing slash
+DATE = datetime.now().strftime("%y%m%d")
+FIGDIR = Path(CFG.figs_path) / f'{DATE}_v{CFG.version}'
 mplt.reset_plot_style()  # Sets Moonpies style
 
 # Helpers
 def _save_or_show(fig, ax, fsave, figdir, version='', **kwargs):
     """Save figure or show fig and return ax."""
     if fsave:
-        # Append version
-        fsave = Path(fsave)
-        fsave = fsave.with_name(f'{fsave.stem}_{version}{fsave.suffix}')
-        fig.savefig(Path(figdir) / fsave, **kwargs)
+        fsave = Path(figdir) / Path(fsave)  # Prepend path
+        # Append version if not already in figdir or fsave
+        if version not in fsave.as_posix():
+            fsave = fsave.with_name(f'{fsave.stem}_{version}{fsave.suffix}')
+        fsave.parent.mkdir(parents=True, exist_ok=True)  # Make dir if doesn't exist
+        fig.savefig(fsave, **kwargs)
     else:
         plt.show()
     return ax
 
 
-def generate_all():
+def _generate_all():
     """Produce all figures in figdir in parallel with default args."""
-    funcs = [ast_comet_vels, ballistic_hop, basin_ice, crater_basin_ages]
-    procs = []
-    for func in funcs:
-        procs.append(Process(target=func))
-        procs[-1].start()
+    # Get all functions in this module
+    funcs = [obj for name, obj in globals().items() if callable(obj) and 
+                obj.__module__ == __name__ and name[0] != '_']
+    
+    # Run each with defaults in its own process
+    print(f'Starting {len(funcs)} plots...')
+    procs = [Process(target=func) for func in funcs]
+    _ = [p.start() for p in procs]
     _ = [p.join() for p in procs]
+    print(f'All plots written to {FIGDIR}')
 
 
 def ast_comet_vels(fsave='comet_vels.pdf', figdir=FIGDIR, cfg=CFG):
@@ -251,10 +260,10 @@ def crater_basin_ages(fsave='crater_basin_ages.pdf', figdir=FIGDIR, cfg=CFG):
     }
 
     # Figure and main crater axis
-    fig, axc = plt.subplots(figsize=(7.2, 9))
+    fig, axc = plt.subplots(figsize=(7.2, 9.5))
 
     # Make basin inset
-    left, bottom, width, height = [0.53, 0.3, 0.35, 0.55]
+    left, bottom, width, height = [0.53, 0.35, 0.35, 0.5]
     axb = fig.add_axes([left, bottom, width, height])
 
     for ax, df in zip([axc, axb], [dc, db]):
@@ -444,6 +453,96 @@ def ejecta_bsed(fsave='ejecta_bsed.pdf', figdir=FIGDIR, cfg=CFG):
     return _save_or_show(fig, ax, fsave, figdir, version)
 
 
+def kde_layers(fsave='kde_layers.pdf', figdir=FIGDIR, cfg=CFG, datedir='', coldtraps=None):
+    """
+    Plot KDE of ejecta thickness and ballistic mixing depth.
+    """
+    mplt.reset_plot_style()
+    custom_params = {"axes.spines.right": False, "axes.spines.top": False}
+    sns.set_theme(style="ticks", rc=custom_params)
+    if coldtraps is None:
+        coldtraps = ["Haworth", "de Gerlache", "Slater", "Cabeus"]
+    pal = sns.color_palette()
+    mypal = [pal[0], pal[1]]
+    hues = ['No', 'Yes']
+    xlim = (0.05, 1000)
+    ylim = (1, 800)
+    skip = 100  # skip this many points for each coldtrap (for faster kde)
+
+    # Load aggregated layer data
+    if not datedir:  # Guess most recent date folder in outdir
+        outdir = Path(cfg.out_path).parents[2]
+        datedir = [p for p in outdir.iterdir() if p.is_dir()][-1]
+    layers, _ = agg.read_agg_dfs(datedir, flatten=True)
+    layers = agg.binary_runs(layers, 'mpies', rename='bsed')
+
+    # Clean data
+    layers.loc[layers['ice'] < 0.1, 'ice'] = np.nan
+    layers.loc[layers['depth'] < 0.1, 'depth'] = np.nan
+    layers.dropna(inplace=True)
+    layers['depth_top'] = layers['depth'] - layers['ice']
+    layers['depth_top'] = layers['depth_top'].clip(lower=0.1)
+
+    # Make plots. 4 seaborn jointgrids then put together with SeabornFig2Grid
+    fig = plt.figure(figsize=(7.2, 7.2))
+    jgs = []
+    for i, coldtrap in enumerate(coldtraps):
+        df = layers[(layers.coldtrap==coldtrap)].iloc[::skip]
+        jg = sns.JointGrid(space=0)
+        jg.ax_joint.annotate(f'{coldtrap}', xy=(0.5, 0.98), ha='center', va='top', xycoords='axes fraction')
+        g = sns.kdeplot(x='ice', y='depth_top', hue='bsed', hue_order=hues, data=df, log_scale=True, 
+                    palette=mypal, bw_adjust=1.5, thresh=0, levels=7, common_norm=False, ax=jg.ax_joint)
+        # Hist: hue_order plots in reverse order, so flip hues and mypal
+        sns.histplot(x='ice', hue='bsed', bins='sturges', common_norm=True,
+                    hue_order=hues[::-1], palette=mypal[::-1], alpha=0.3,
+                    element='step', data=df, legend=False, ax=jg.ax_marg_x)
+        sns.histplot(y='depth', hue='bsed', bins='sturges', common_norm=True,
+                    hue_order=hues[::-1], palette=mypal[::-1], alpha=0.3,
+                    element='step', data=df, legend=False, ax=jg.ax_marg_y)
+        
+        # Legend only in 1st subplot
+        handles = jg.ax_joint.legend_.get_lines()
+        jg.ax_joint.legend_.remove()
+        if i == 1:
+            # legend_labels = jg.ax_joint.legend_.get_texts()
+            title = 'Ballistic \n Sedimentation'
+            leg = jg.ax_joint.legend(handles, hues, loc="upper right", 
+                                    title=title, fontsize=10, title_fontsize=8, 
+                                    bbox_to_anchor=(1, 0.9))
+            leg.get_title().set_multialignment('center')
+
+        # Cabeus LCROSS depths and legend
+        if coldtrap == 'Cabeus':
+            jg.ax_joint.axhline(6, ls=(0, (3, 3, 1, 3)), lw=2, color='k', zorder=10, label='Luchsinger et al. (2021)')
+            jg.ax_joint.axhline(10, ls='--', color='k', lw=2, zorder=10, label='Schultz et al. (2010)')
+            jg.ax_joint.legend(loc='lower right', title=r'LCROSS Penetration Depth', fontsize=8, title_fontsize=8)
+        jgs.append(jg)
+    
+    # Set axis labels
+    for i, jg in enumerate(jgs):
+        xlabel = 'Ice layer thickness [m]' if i in (2, 3) else None
+        ylabel = 'Depth [m]' if i in (0, 2) else None
+        jg.ax_joint.set_xlabel(xlabel)
+        jg.ax_joint.set_ylabel(ylabel)
+        jg.ax_joint.set_xscale('log')
+        jg.ax_joint.set_yscale('log')
+        jg.ax_joint.set_xlim(xlim)
+        jg.ax_joint.set_ylim(ylim)
+        jg.ax_joint.invert_yaxis()
+        jg.ax_marg_x.yaxis.get_major_formatter().set_scientific(False)
+        jg.ax_marg_y.xaxis.get_major_formatter().set_scientific(False)
+        jg.ax_marg_x.xaxis.set_visible(False)
+        jg.ax_marg_y.yaxis.set_visible(False)
+
+    # Move all the jointgrids into a single gridspec figure
+    gs = mpl.gridspec.GridSpec(2, 2)
+    for jg, gs in zip(jgs, gs):
+        SeabornFig2Grid(jg, fig, gs)
+    fig.tight_layout()
+
+    # version = mplt.plot_version(cfg, loc='lr', xyoff=(0.01, -0.15), ax=fig.gca())
+    return _save_or_show(fig, gs, fsave, figdir, '')#version)   
+
 def melt_fraction_bsed(fsave='melt_fraction_bsed.pdf', figdir=FIGDIR, cfg=CFG):
     """
     Plot melt fraction as a function of ejecta thickness and ballistic mixing depth.
@@ -451,12 +550,30 @@ def melt_fraction_bsed(fsave='melt_fraction_bsed.pdf', figdir=FIGDIR, cfg=CFG):
     mplt.reset_plot_style()
     dm = mp.read_ballistic_melt_frac(cfg.bsed_frac_mean_in, cfg)
     ds = mp.read_ballistic_melt_frac(cfg.bsed_frac_std_in, cfg)
-    temps = dm.columns.to_numpy()
-    mrs = dm.index.to_numpy()
-    target_frac = mrs / (1 + mrs)  # mixing ratio -> fraction
-    ejecta_pct = 100*(1 - target_frac)
+
+    # Get data and axes
     frac_mean = dm.to_numpy()
     frac_std = ds.to_numpy()
+    temps = dm.columns.to_numpy()
+    mrs = dm.index.to_numpy()
+    ejecta_pct = 100*(1 / (1 + mrs))  # target mixing ratio -> ejecta fraction
+    extent = [temps.min(), temps.max(), ejecta_pct.min(), ejecta_pct.max()]
+
+    # Get crater and basin melt fractions
+    crater_t = cfg.polar_ejecta_temp_init
+    basin_tc = cfg.basin_ejecta_temp_init_cold
+    basin_tw = cfg.basin_ejecta_temp_init_warm
+    df = mp.get_crater_basin_list(cfg)
+    dists = mp.get_coldtrap_dists(df, cfg)
+    mr = mp.get_mixing_ratio_oberbeck(dists, cfg)
+    crater_pct = 100*(1 / (1 + mr[~df.isbasin]))
+    basin_pct = 100*(1 / (1 + mr[df.isbasin]))
+    crater_pct = crater_pct[~np.isnan(crater_pct)]
+    basin_pct = basin_pct[~np.isnan(basin_pct)]
+    crater = [[crater_t, crater_t], [crater_pct.min(), crater_pct.max()]]
+    basin_c = [[basin_tc, basin_tc], [basin_pct.min(), basin_pct.max()]]
+    basin_w = [[basin_tw, basin_tw], [basin_pct.min(), basin_pct.max()]]
+    # Plot
     fig = plt.figure(figsize=(7.2, 7))
     ax_dict = fig.subplot_mosaic(
         """
@@ -464,17 +581,23 @@ def melt_fraction_bsed(fsave='melt_fraction_bsed.pdf', figdir=FIGDIR, cfg=CFG):
         CC
         """
     )
-    fig.subplots_adjust(hspace=0.5, wspace=0.45)
-    extent = [temps.min(), temps.max(), ejecta_pct.min(), ejecta_pct.max()]
+    fig.subplots_adjust(hspace=0.5, wspace=0.45)    
 
     ax = ax_dict['A']
     p = ax.imshow(frac_mean, extent=extent, aspect='auto', interpolation='none', cmap='magma')
+    ax.plot(*crater, 'o--', ms=4, c='tab:blue', label='Crater')
+    ax.plot(*basin_c, 'o--', ms=4, c='tab:orange', label='Basin (cold)')
+    ax.plot(*basin_w, 'o--', ms=4, c='tab:red', label='Basin (warm)')
+    ax.legend()
     fig.colorbar(p, ax=ax, label='Fraction melted')
     ax.set_ylabel("Ejecta fraction [%]")
     ax.set_xlabel("Ejecta Temperature [K]")
 
     ax = ax_dict['B']
-    p = ax.imshow(frac_std, extent=extent, aspect='auto', interpolation='none', cmap='viridis')
+    p = ax.imshow(frac_std, vmax=0.1, extent=extent, aspect='auto', interpolation='none', cmap='cividis')
+    ax.plot(*crater, 'o--', ms=4, c='tab:blue', label='Crater')
+    ax.plot(*basin_c, 'o--', ms=4, c='tab:orange', label='Basin (cold)')
+    ax.plot(*basin_w, 'o--', ms=4, c='tab:red', label='Basin (warm)')
     fig.colorbar(p, ax=ax, label='Standard deviation')
     ax.set_ylabel("Ejecta fraction [%]")
     ax.set_xlabel("Ejecta Temperature [K]")
@@ -562,5 +685,59 @@ def random_crater_ages(fsave='random_crater_ages.pdf', figdir=FIGDIR, cfg=CFG):
     return _save_or_show(fig, axs, fsave, figdir, version)
 
 
+# Class helpers
+class SeabornFig2Grid():
+
+    def __init__(self, seaborngrid, fig, subplot_spec):
+        self.fig = fig
+        self.sg = seaborngrid
+        self.subplot = subplot_spec
+        if isinstance(self.sg, sns.axisgrid.FacetGrid) or \
+            isinstance(self.sg, sns.axisgrid.PairGrid):
+            self._movegrid()
+        elif isinstance(self.sg, sns.axisgrid.JointGrid):
+            self._movejointgrid()
+        self._finalize()
+
+    def _movegrid(self):
+        """ Move PairGrid or Facetgrid """
+        self._resize()
+        n = self.sg.axes.shape[0]
+        m = self.sg.axes.shape[1]
+        self.subgrid = mpl.gridspec.GridSpecFromSubplotSpec(n,m, subplot_spec=self.subplot)
+        for i in range(n):
+            for j in range(m):
+                self._moveaxes(self.sg.axes[i,j], self.subgrid[i,j])
+
+    def _movejointgrid(self):
+        """ Move Jointgrid """
+        h= self.sg.ax_joint.get_position().height
+        h2= self.sg.ax_marg_x.get_position().height
+        r = int(np.round(h/h2))
+        self._resize()
+        self.subgrid = mpl.gridspec.GridSpecFromSubplotSpec(r+1,r+1, subplot_spec=self.subplot)
+
+        self._moveaxes(self.sg.ax_joint, self.subgrid[1:, :-1])
+        self._moveaxes(self.sg.ax_marg_x, self.subgrid[0, :-1])
+        self._moveaxes(self.sg.ax_marg_y, self.subgrid[1:, -1])
+
+    def _moveaxes(self, ax, gs):
+        # https://stackoverflow.com/a/46906599/4124317
+        ax.remove()
+        ax.figure=self.fig
+        self.fig.axes.append(ax)
+        self.fig.add_axes(ax)
+        ax._subplotspec = gs
+        ax.set_position(gs.get_position(self.fig))
+        ax.set_subplotspec(gs)
+
+    def _finalize(self):
+        plt.close(self.sg.fig)
+        self.fig.canvas.mpl_connect("resize_event", self._resize)
+        self.fig.canvas.draw()
+
+    def _resize(self, evt=None):
+        self.sg.fig.set_size_inches(self.fig.get_size_inches())
+        
 if __name__ == '__main__':
-    generate_all()
+    _generate_all()

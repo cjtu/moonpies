@@ -374,15 +374,17 @@ def get_coldtrap_dists(df, cfg=CFG):
     """
     if "coldtrap_dists" in CACHE:
         return CACHE["coldtrap_dists"]
-    ej_threshold = cfg.ej_threshold
-    if ej_threshold < 0:
-        ej_threshold = np.inf
-
     dist = np.zeros((len(df), len(cfg.coldtrap_names)), dtype=cfg.dtype)
     for i, row in df.iterrows():
         src_lon = row.lon
         src_lat = row.lat
         src_rad = row.rad
+        if row.isbasin:
+            ej_threshold = cfg.basin_ej_threshold
+        else:
+            ej_threshold = cfg.ej_threshold
+        if ej_threshold < 0:
+            ej_threshold = np.inf
         for j, cname in enumerate(cfg.coldtrap_names):
             if row.cname == cname:
                 dist[i, j] = np.nan

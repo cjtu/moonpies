@@ -147,6 +147,7 @@ class Cfg:
     bulk_density: float = 2700  # [kg m^-3] simple to complex (Melosh)
     ice_erosion_rate: float = 0.1 # [m], 10 cm / 10 ma (Cannon 2020)
     ej_threshold: float = 4  # [crater radii] Radius of influence of a crater (-1: no threshold)
+    basin_ej_threshold: float = 5 # [basin radii] Radius of influence of a basin (-1: no threshold), e.g. Liu et al. (2020)
     thickness_threshold: float = 1e-3  # [m] minimum thickness to form a layer
     neukum_pf_new: bool = True  # [True=>2001, False=>1983] Neukum production function version (Neukum et al. 2001)
     neukum_pf_a_2001: tuple = (-3.0876, -3.557528, 0.781027, 1.021521, -0.156012, -0.444058, 0.019977, 0.086850, -0.005874, -0.006809, 8.25e-4, 5.54e-5)
@@ -224,7 +225,7 @@ class Cfg:
     # Comet constants
     is_comet: bool = False  # Use comet properties for impacts
     comet_ast_frac: float = 0.05  # 5-17% (Joy et al 2012) 
-    comet_density: float = 1300  # [kg/m^3]
+    comet_density: float = 600  # [kg/m^3] Comet Shoemaker-Levy 9 (Asphaug and Benz, 1994)
     comet_hydrated_wt_pct: float = 0.5  # 50% of comet mass is hydrated (Whipple, 1950; Ong et al., 2010)
     comet_mass_retained: float = 0.065  # asteroid mass retained (Ong et al., 2010)
     comet_speed_min: float = 10.2e3  # [km/s] minimum lunar impact speed for comet (Ong et al., 2010)
