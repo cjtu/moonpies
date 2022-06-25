@@ -308,29 +308,53 @@ def crater_scaling(fsave='crater_scaling.pdf', figdir=FIGDIR, cfg=CFG):
 
     speed = 20000  # [m/s]
     dfb = mp.read_basin_list(cfg)
-    label = {
+    labels = {
         'c': 'C: Small simple craters (Prieur et al., 2017)', 
         'd': 'D: Large simple craters (Collins et al., 2005)', 
         'e': 'E: Complex craters (Johnson et al., 2016)',
-        'f': 'F Basins (Johnson et al., 2016)'}
+        'f': 'F: Basins (Johnson et al., 2016)'}
     
+    # TODO: fix regimes to be continuous in impactor space. 
+    # Proposal: change c_min to 250 (i_diam=3) and e_min to 19e3 (i_diam=750)
+    new_regimes = {
+        # regime: (rad_min, rad_max, step, sfd_slope)
+        'a': (0, 0.01, None, None),  # micrometeorites (<1 mm)
+        'b': (0.01, 3, 1e-4, -3.7),  # small impactors (Cannon: 10 mm - 3 m)
+        'c': (250, 1.5e3, 1, -3.82),  # simple craters, steep sfd (Cannon: 100 m - 1.5 km)
+        'd': (1.5e3, 15e3, 1e2, -1.8),  # simple craters, shallow sfd (Cannon: 1.5 km - 15 km)
+        'e': (19e3, 300e3, 1e3, -1.8),  # complex craters, shallow sfd (Cannon: 15 km - 300 km)
+    }
+    cdict = cfg.to_dict()
+    cdict['impact_regimes'] = new_regimes
+    alt_cfg = default_config.Cfg(**cdict)
+
     # Plot regimes c - e
-    fig, ax = plt.subplots()
-    for regime, (dmin, dmax, *_) in cfg.impact_regimes.items():
-        if regime in ('a', 'b'):
-            continue
-        diams = np.linspace(dmin, dmax)
-        lengths = mp.diam2len(diams, speed, regime, cfg)
-        ax.loglog(diams/1e3, lengths, label=label[regime])
+    fig, ax = plt.subplots(figsize=(7.2, 5.5))
+    for i, rcfg in enumerate([cfg, alt_cfg]):
+        for regime, (dmin, dmax, *_) in rcfg.impact_regimes.items():
+            if regime in ('a', 'b'):
+                continue
+            diams = np.geomspace(dmin, dmax, 2)
+            lengths = mp.diam2len(diams, speed, regime, rcfg)
+            label = labels[regime] if i == 0 else ''
+            fmt = '-' if i == 0 else 'rx'
+            ax.loglog(diams/1e3, lengths, fmt, label=label)
 
     # Plot individual basins
     basin_lengths = mp.diam2len(dfb.diam, speed, 'f', cfg)
-    ax.loglog(dfb.diam/1e3, basin_lengths, 'k+', label=label['f'])
+    ax.loglog(dfb.diam/1e3, basin_lengths, 'k+', label=labels['f'])
+    ax.set_ylim(0.3, None)
     ax.set_xlabel('Crater Diameter [km]')
     ax.set_ylabel('Impactor Diameter [km]')
     ax.set_title(f'Crater to Impactor Scaling (with $v$={speed/1e3} km/s)')
+
+    # Plot transitions
+    ax.axvline(cfg.simple2complex/1e3, c='k', ls='--')
+    ax.annotate('Simple to complex', xy=(cfg.simple2complex/1e3, 1), ha='right', rotation=90)
+    ax.axvline(cfg.complex2peakring/1e3, c='k', ls='--')
+    ax.annotate('Complex to basin', xy=(cfg.complex2peakring/1e3, 1), ha='right', rotation=90)
     ax.legend(title='Regime', loc='upper left', fontsize=9)
-    version = mplt.plot_version(cfg, loc='lr', ax=ax)
+    version = mplt.plot_version(cfg, loc='ll', ax=ax)
     return _save_or_show(fig, ax, fsave, figdir, version)
 
 
@@ -355,7 +379,7 @@ def distance_bsed(fsave='distance_bsed.pdf', figdir=FIGDIR, cfg=CFG):
     coldtraps = np.array(cfg.coldtrap_names)  # Order of 2nd axis of dists
     df = mp.get_crater_basin_list(cfg)
     dists = mp.get_coldtrap_dists(df, cfg)
-    thick = mp.get_ejecta_thickness_matrix(df, cfg)
+    thick = mp.get_ejecta_thickness_matrix(df, dists, cfg)
     mixing_ratio = mp.get_mixing_ratio_oberbeck(dists, cfg)
     
     dist_m = ries.dist_km.values * 1e3
@@ -426,9 +450,9 @@ def ejecta_bsed(fsave='ejecta_bsed.pdf', figdir=FIGDIR, cfg=CFG):
     fig.subplots_adjust(hspace=0.05)
     for dist, color in zip(dist_arr, colors):
         for ctype, rads in radii.items():
-            dists = np.ones((len(rads), 1))*dist
+            dists = np.ones(len(rads))*dist
             with np.errstate(invalid='ignore'):
-                thick = mp.get_ejecta_thickness(dists, rads)
+                thick = mp.get_ejecta_thickness(dists, rads, cfg)
             thick[dist<rads] = 0
             label = None
             if color == 'tab:blue':
@@ -542,6 +566,96 @@ def kde_layers(fsave='kde_layers.pdf', figdir=FIGDIR, cfg=CFG, datedir='', coldt
 
     # version = mplt.plot_version(cfg, loc='lr', xyoff=(0.01, -0.15), ax=fig.gca())
     return _save_or_show(fig, gs, fsave, figdir, '')#version)   
+
+
+def ejecta_distance(fsave='ejecta_distance.pdf', figdir=FIGDIR, cfg=CFG):
+    """
+    Plot ejecta speed, thick, KR, mixing depth as a function of distance.
+    
+    Oberbeck (1975) Figure 16 shows 4 craters, two < 1 km with no hummocky 
+    terrain and larger Mosting C (4.2 km) and Harpalus (41.6 km) have hummocky 
+    terrain. Show Ries basin and Meteor crater for comparison.
+    """
+    mplt.reset_plot_style()
+
+    crater_diams = {
+        "Schrödinger": 326e3,  # [m]
+        "Harpalus": 41.6e3,  # [m] Harpalus (Oberbeck d)
+        "Ries Basin": 24e3,  # [m]
+        "Shackleton": 20.9e3,  # [m] smallest polar
+        "Mosting C": 4.2e3,  # [m] Mosting C (Oberbeck c)
+        "Meteor Crater": 1e3,  # [m]
+        # "Oberbeck b": 0.66e3,  # [m]
+        # "crater a": 0.56e3,  # [m]
+    }
+    # ries_max_obs = 36.5e3  # Max observed dist [m]
+    ries_max_d = crater_diams['Ries Basin']*2  # [m] 4 crater radii
+
+    # Configure cfg for terrestrial craters
+    earth_dict = cfg.to_dict()
+    earth_dict['grav_moon'] = 9.81  # [m/s^2]
+    earth_dict['rad_moon'] = 6.371e6  # [m]
+    earth_dict['target_density'] = 2700  # [kg/m^3]
+    earth_cfg = default_config.Cfg(**earth_dict)
+
+    fig, axs = plt.subplots(2, 2, figsize=(7.2, 6.8), sharex=True, 
+                            gridspec_kw={'wspace':0.35, 'hspace':0.02})
+    ax1, ax2, ax3, ax4 = axs.flatten()
+    colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+
+    d_crad = np.linspace(1, 6, 100)  # x-axis distance [crater radii]
+    for i, (crater, diam) in enumerate(crater_diams.items()):
+        ls = '-'
+        ccfg = cfg
+        plot_mixing_depth = True
+        if crater in ('Ries Basin', 'Meteor Crater'):  # Terrestrial craters
+            ls = '-.'
+            ccfg = earth_cfg
+            plot_mixing_depth = False
+
+        # Compute speed, ke, thickness, mixing depth
+        rad = diam / 2  # radius [m]
+        dist = rad * d_crad  # distance [m]
+        thick = mp.get_ejecta_thickness(dist, rad, ccfg)  # [m]
+        vel = mp.ballistic_velocity(dist, ccfg)  # [m/s]
+        mass = thick * ccfg.target_density  # [kg/m^2]
+        ke = mp.kinetic_energy(mass, vel) / 1e6  # [MJ] 
+        mr = mp.get_mixing_ratio_oberbeck(diam, ccfg)  # mixing ratio
+        depth = thick * mr  # depth [m]
+        
+        # Plot
+        label = f'{crater} (D={diam/1e3:.3g} km)'
+        ax1.semilogy(d_crad, vel, ls=ls, c=colors[i], label=label)
+        ax2.semilogy(d_crad, thick, ls=ls, c=colors[i], label=label)
+        ax3.semilogy(d_crad, ke, ls=ls, c=colors[i], label=label)
+        if plot_mixing_depth:
+            ax4.semilogy(d_crad, depth, ls=ls, c=colors[i], label=label)
+        if crater == 'Ries Basin':
+            ries = np.argmin(np.abs(dist - ries_max_d))  # Index of Ries max
+            rvel = vel[ries]
+            rthick = thick[ries]
+            rke = ke[ries]
+            ax1.axhline(rvel, ls='--', c='k')
+            ax1.annotate('Bunte Breccia $v_{max}=$'+f'{rvel:.0f} m/s', (4, rvel), xytext=(3.5, 1300), ha='center', arrowprops=dict(arrowstyle="->"))
+            ax2.axhline(rthick, ls='--', c='k')
+            ax2.annotate('Bunte Breccia\n$\delta_{min}=$'+f'{rthick:.1f} m', (4, rthick), xytext=(5.8, 30), ha='right', arrowprops=dict(arrowstyle="->"))
+            ax3.axhline(rke, ls='--', c='k')
+            ax3.annotate('Bunte Breccia   \n$KE_{min}=$'+f'{round(rke,-2):.0f} MJ/m$^2$', (4, rke), xytext=(5.8, 4.5e4), ha='right', arrowprops=dict(arrowstyle="->"))
+
+    ax1.legend(bbox_to_anchor=(0., 1.02, 2.25, .102), loc=3,
+            ncol=2, mode="expand", borderaxespad=0.)
+    ax1.set_xlim(1, 6)
+    ax1.set_ylim(20, 2000)
+
+    ax1.set_ylabel('Ejecta velocity [$\\rm m/s$]')
+    ax2.set_ylabel('Ejecta thickness [$\\rm m$]')
+    ax3.set_ylabel('Ejecta kinetic energy [$\\rm MJ / m^2$]')
+    ax4.set_ylabel('Balistic mixing depth [$\\rm m$]')
+    ax3.set_xlabel('Distance [crater radii]')
+    ax4.set_xlabel('Distance [crater radii]')
+    version = mplt.plot_version(cfg, loc='ll', xyoff=(0.02, 0), ax=ax4)
+    return _save_or_show(fig, axs, fsave, figdir, version)
+
 
 def melt_fraction_bsed(fsave='melt_fraction_bsed.pdf', figdir=FIGDIR, cfg=CFG):
     """

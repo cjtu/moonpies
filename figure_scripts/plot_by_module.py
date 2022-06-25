@@ -81,7 +81,8 @@ def get_ice_by_module(coi, time_arr, df, cfg, rng):
     # Ballistic sed
     rng = mp.get_rng(cfg)
     df = mp.get_crater_basin_list(cfg, rng)
-    bsed_d, bsed_frac = mp.bsed_depth_petro_pieters(time_arr, df, cfg)
+    ej_dists = mp.get_coldtrap_dists(df, cfg)
+    bsed_d, bsed_frac = mp.get_bsed_depth(time_arr, df, ej_dists, cfg)
     bsed_all = bsed_d*bsed_frac
     bsed = bsed_all[:, np.array(cfg.coldtrap_names) == coi].flatten()
     formation_age = df[df.cname == coi].age.values

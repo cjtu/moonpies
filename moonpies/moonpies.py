@@ -13,7 +13,6 @@ import pandas as pd
 from moonpies import default_config
 
 # Init cache and default configuration
-CACHE = {}
 CFG = default_config.Cfg()
 
 
@@ -41,10 +40,11 @@ def main(cfg=CFG):
         df[~df.isbasin].reset_index(drop=True)
 
     # Init strat columns dict based for all cfg.coldtrap_names
-    strat_cols = init_strat_columns(time_arr, df, cfg, rng)
+    ej_dists = get_coldtrap_dists(df, cfg)  # Crater -> coldtrap distances (2D)
+    strat_cols = init_strat_columns(time_arr, df, ej_dists, cfg, rng)
 
     # Get gardening and bsed time arrays
-    bsed_depth, bsed_frac = bsed_depth_petro_pieters(time_arr, df, cfg)
+    bsed_depth, bsed_frac = get_bsed_depth(time_arr, df, ej_dists, cfg)
     overturn = overturn_depth_time(time_arr, cfg)
 
     # Main loop over time
@@ -71,7 +71,7 @@ def get_time_array(cfg=CFG):
 
 
 # Strat column functions
-def init_strat_columns(time_arr, df, cfg=CFG, rng=None):
+def init_strat_columns(time_arr, df, ej_dists, cfg=CFG, rng=None):
     """
     Return initialized stratigraphy columns (ice, ej, ej_sources)
 
@@ -79,12 +79,13 @@ def init_strat_columns(time_arr, df, cfg=CFG, rng=None):
     ----------
     time_arr (arr): Time array [yr].
     df (DataFrame): DataFrame of craters and basins.
+    ej_dists (2D arr): Crater-coldtrap distances [m] (Ncrater, Ncoldtrap)
     cfg (Cfg): Config object.
     rng (int or np.RandomState): Seed or random number generator.
     """
-    ej_cols, ej_sources = get_ejecta_thickness_time(time_arr, df, cfg)
+    ej_cols, ej_srcs = get_ejecta_thickness_time(time_arr, df, ej_dists, cfg)
     ice_cols = get_ice_cols_time(time_arr, df, cfg, rng)
-    strat_columns = make_strat_columns(ej_cols, ej_sources, ice_cols, cfg)
+    strat_columns = make_strat_columns(ej_cols, ej_srcs, ice_cols, cfg)
     return strat_columns
 
 
@@ -372,8 +373,6 @@ def get_coldtrap_dists(df, cfg=CFG):
     -------
     dist (2D array): great circle distances from df craters to coldtraps
     """
-    if "coldtrap_dists" in CACHE:
-        return CACHE["coldtrap_dists"]
     dist = np.zeros((len(df), len(cfg.coldtrap_names)), dtype=cfg.dtype)
     for i, row in df.iterrows():
         src_lon = row.lon
@@ -395,8 +394,7 @@ def get_coldtrap_dists(df, cfg=CFG):
             # Only keep distances outside crater radius and less than thresh
             if src_rad < d < ej_threshold * src_rad:
                 dist[i, j] = d
-    dist[dist <= 0] = np.nan
-    CACHE["coldtrap_dists"] = dist
+    dist[dist <= 0] = np.nan  # Set zeros to NaN
     return dist
 
 
@@ -404,31 +402,41 @@ def get_ejecta_thickness(distance, radius, cfg=CFG):
     """
     Return ejecta thickness as a function of distance given crater radius.
 
+    Parameters
+    ----------
+    distance (num or arr): Distance [m] from crater to coldtrap.
+    radius (num or arr): Source crater radius [m].
+    cfg (Cfg): Configuration object.
 
+    Returns
+    -------
+    ejecta_thickness (num or arr): Ejecta thickness [m] at distance.
     """
-    rad_v = radius[:, np.newaxis]  # radius as column vector for broadcasting
-    thick = np.zeros_like(distance * rad_v)
-    exp = cfg.ejecta_thickness_order
+    dist_v = np.atleast_1d(distance)
+    rad_v = np.broadcast_to(radius, dist_v.shape)
+    thick = np.zeros_like(dist_v * rad_v)
 
     # Simple craters
-    is_s = radius < cfg.simple2complex / 2
-    thick[is_s] = get_ej_thick_simple(distance[is_s], rad_v[is_s], exp)
+    is_s = rad_v < cfg.simple2complex / 2
+    thick[is_s] = get_ej_thick_simple(dist_v[is_s], rad_v[is_s], cfg)
 
     # Complex craters
-    is_c = (cfg.simple2complex / 2 < radius) & (
-        radius < cfg.complex2peakring / 2
+    is_c = (cfg.simple2complex / 2 < rad_v) & (
+        rad_v < cfg.complex2peakring / 2
     )
-    thick[is_c] = get_ej_thick_complex(distance[is_c], rad_v[is_c], exp)
+    thick[is_c] = get_ej_thick_complex(dist_v[is_c], rad_v[is_c], cfg)
 
     # Basins
-    is_pr = radius >= cfg.complex2peakring / 2
+    is_pr = rad_v >= cfg.complex2peakring / 2
     t_radius = final2transient(rad_v * 2, cfg) / 2
-    thick[is_pr] = get_ej_thick_basin(distance[is_pr], t_radius[is_pr], cfg)
+    thick[is_pr] = get_ej_thick_basin(dist_v[is_pr], t_radius[is_pr], cfg)
     thick[np.isnan(thick)] = 0
+    if np.ndim(distance) == 0 and len(thick) == 1:
+        thick = float(thick) # Return scalar if passed a scalar
     return thick
 
 
-def get_ej_thick_simple(distance, radius, order=-3):
+def get_ej_thick_simple(distance, radius, cfg=CFG):
     """
     Return ejecta thickness with distance from a simple crater (Kring 1995).
 
@@ -438,10 +446,10 @@ def get_ej_thick_simple(distance, radius, order=-3):
     radius (arr): Simple crater final radius [m]
     order (int): Negative exponent (-3 +/- 0.5)
     """
-    return 0.04 * radius * (distance / radius) ** order
+    return 0.04 * radius * (distance / radius) ** cfg.ej_thickness_exp
 
 
-def get_ej_thick_complex(distance, radius, order=-3):
+def get_ej_thick_complex(distance, radius, cfg=CFG):
     """
     Return ejecta thickness with distance from a complex crater (McGetchin 1973).
 
@@ -451,7 +459,7 @@ def get_ej_thick_complex(distance, radius, order=-3):
     radius (arr): Complex crater final radius [m]
     order (int): Negative exponent (-3 +/- 0.5)
     """
-    return 0.14 * (radius**0.74) * (distance / radius) ** order
+    return 0.14 * (radius**0.74) * (distance / radius) ** cfg.ej_thickness_exp
 
 
 def get_ej_thick_basin(distance, t_radius, cfg=CFG):
@@ -499,7 +507,7 @@ def get_ej_thick_basin(distance, t_radius, cfg=CFG):
         return area_flat / area_sph
 
     # Compute dist and area corrections and return thickness
-    order = cfg.ejecta_thickness_order
+    exp = cfg.ej_thickness_exp
     radius = t_radius * 1e-3  # [m] -> [km]
     distance *= 1e-3  # [m] -> [km]
     R0 = cfg.rad_moon * 1e-3  # [m] -> [km]
@@ -509,21 +517,28 @@ def get_ej_thick_basin(distance, t_radius, cfg=CFG):
     rflat = r_flat(r_t, radius, grav, theta)
     with np.errstate(divide="ignore", over="ignore"):
         acorr = area_corr(distance, radius, R0)
-        thickness = 0.033 * radius * np.power(rflat / radius, order) * acorr
+        thickness = 0.033 * radius * np.power(rflat / radius, exp) * acorr
     return thickness * 1e3  # [km] -> [m]
 
 
-def get_ejecta_thickness_time(time_arr, df, cfg=CFG):
+def get_ejecta_thickness_time(time_arr, df, ej_distances, cfg=CFG):
     """
     Return ejecta thickness [m] and name(s) of ejecta source craters at each
     time in time_arr.
+
+    Parameters
+    ----------
+    time_arr (arr): Time array [yr]
+    df (DataFrame): DataFrame of craters
+    ej_distances (2D arr): Crater-coldtrap ejecta distances [m]
+    cfg (Cfg): Config object
 
     Returns
     -------
     ej_thick_t (2D array): Ejecta thickness at each t in time_arr by coldtrap
     ej_sources_t (2D array): Source crater(s) at each t in time_arr by coldtrap
     """
-    ej_thick = get_ejecta_thickness_matrix(df, cfg)
+    ej_thick = get_ejecta_thickness_matrix(df, ej_distances, cfg)
     ej_ages = df.age.values
     ej_thick_t = ages2time(time_arr, ej_ages, ej_thick, np.nansum, 0)
 
@@ -535,27 +550,23 @@ def get_ejecta_thickness_time(time_arr, df, cfg=CFG):
     return ej_thick_t, ej_sources_t
 
 
-def get_ejecta_thickness_matrix(df, cfg=CFG):
+def get_ejecta_thickness_matrix(df, ej_dists, cfg=CFG):
     """
     Return ejecta thickness matrix of thickness [m] of ejecta in each coldtrap
     crater from each crater in df (shape: len(df), len(cfg.coldtrap_names)).
 
-    Requires:
-    - cfg.coldtrap_names
-    - cfg.simple2complex
-    - cfg.ejecta_thickness_order
+    Parameters
+    ----------
+    df (DataFrame): DataFrame of craters
+    ej_dists (2D arr): Crater-coldtrap distances [m] (Ncrater, Ncoldtrap)
 
     Returns
     -------
-    ejecta_thick (2D array): Ejecta thickness from each crater to each coldtrap
+    ejecta_thick (2D arr): Ejecta thickness from each crater to each coldtrap
     """
-    # Distance from all craters to all coldtraps shape: (Ncrater, Ncoldtrap)
-    ej_distances = get_coldtrap_dists(df, cfg)
-
-    # Ejecta thickness [m] deposited in each coldtrap from each crater
-    rad = df.rad.values
-    ej_thick = get_ejecta_thickness(ej_distances, rad, cfg)
-    return ej_thick
+    # Get radius array same shape as ej_dists (radii as rows)
+    rad = np.tile(df.rad.values[:, np.newaxis], (1, ej_dists.shape[1]))
+    return get_ejecta_thickness(ej_dists, rad, cfg)
 
 
 def ages2time(time_arr, age_arr, values, agg=np.nansum, fillval=0, dtype=None):
@@ -591,8 +602,7 @@ def get_grid_outputs(df, grdx, grdy, cfg=CFG):
     dist_grid = get_gc_dist_grid(df, grdx, grdy, cfg.dtype)
 
     # Ejecta thickness produced by each crater on grid (3D array: NX, NY, NC)
-    radii = df.rad.values[:, np.newaxis]
-    ej_thick_grid = get_ejecta_thickness(dist_grid, radii, cfg)
+    ej_thick_grid = get_ejecta_thickness_matrix(df, dist_grid, cfg)
     # TODO: ballistic sed depth, kinetic energy, etc
     return age_grid, ej_thick_grid
 
@@ -957,7 +967,7 @@ def delta_t_impact(ke, mass, sphc):
 
 def ballistic_velocity(dist, cfg=CFG):
     """
-    Return ballistic speed given dist of travel [km] assuming spherical planet
+    Return ballistic speed given dist of travel [m] assuming spherical planet
     (Vickery, 1986).
 
     Requires:
@@ -996,10 +1006,16 @@ def read_ballistic_melt_frac(bsed_csv, cfg=CFG):
     return df
 
 
-def bsed_depth_petro_pieters(time_arr, df, cfg=CFG):
+def get_bsed_depth(time_arr, df, ej_dists, cfg=CFG):
     """
     Return ballistic sedimentation depth vs time for each coldtrap in the
     method of Petro and Pieters (2004) via Zhang et al. (2021).
+
+    Parameters
+    ----------
+    time_arr (arr): Time array [yr].
+    df (DataFrame): Crater DataFrame.
+    ej_dists (2D arr): Crater-coldtrap distances [m] (Ncrater, Ncoldtrap)
 
     Returns
     -------
@@ -1012,16 +1028,15 @@ def bsed_depth_petro_pieters(time_arr, df, cfg=CFG):
         return depths, fracs
 
     # Get distance, mixing_ratio, volume_frac for each crater to each coldtrap
-    dist = get_coldtrap_dists(df, cfg)
-    mixing_ratio = get_mixing_ratio_oberbeck(dist, cfg)
+    mixing_ratio = get_mixing_ratio_oberbeck(ej_dists, cfg)
     ej_temp = ejecta_temp(df, mixing_ratio.shape, cfg)
     melt_frac = get_melt_frac(ej_temp, mixing_ratio, cfg)
 
     # Convert to time array shape: (Ncrater, Ncoldtrap) -> (Ntime, Ncoldtrap)
-    ejecta_thickness_t, _ = get_ejecta_thickness_time(time_arr, df, cfg)
+    ej_thick_t, _ = get_ejecta_thickness_time(time_arr, df, ej_dists, cfg)
     ages = df.age.values
     mixing_ratio_t = ages2time(time_arr, ages, mixing_ratio, np.nanmax, 0)
-    bsed_depths_t = ejecta_thickness_t * mixing_ratio_t
+    bsed_depths_t = ej_thick_t * mixing_ratio_t  # Petro and Pieters (2004)
     # TODO: should we take the max melt frac with multiple events?
     melt_frac_t = ages2time(time_arr, ages, melt_frac, np.nanmax, 0)
     return bsed_depths_t, melt_frac_t
@@ -1046,7 +1061,9 @@ def get_mixing_ratio_oberbeck(ej_distances, cfg=CFG):
     dist = ej_distances * 1e-3  # [m -> km]
     mr = cfg.mixing_ratio_a * dist**cfg.mixing_ratio_b
     if cfg.mixing_ratio_petro:
-        mr[mr > 5] = 0.5 * mr[mr > 5] + 2.5
+        mrv = np.atleast_1d(mr)
+        mrv[mrv > 5] = 0.5 * mrv[mrv > 5] + 2.5
+        mr = mrv if mrv.ndim > 0 else float(mrv)
     return mr
 
 
@@ -2303,9 +2320,7 @@ def vprint(cfg, *args, **kwargs):
 
 
 def clear_cache():
-    """Reset CACHE and lru_cache."""
-    global CACHE
-    CACHE = {}
+    """Reset lru_cache."""
     # All objects collected
     for obj in gc.get_objects():
         if isinstance(obj, _lru_cache_wrapper):

@@ -144,10 +144,11 @@ class Cfg:
     escape_vel: float = 2.38e3  # [m/s] lunar escape velocity
     impact_angle: float = 45  # [deg]  average impact angle
     target_density: float = 1500  # [kg m^-3] (Cannon 2020)
-    bulk_density: float = 2700  # [kg m^-3] simple to complex (Melosh)
+    bulk_density: float = 2700  # [kg m^-3] 
     ice_erosion_rate: float = 0.1 # [m], 10 cm / 10 ma (Cannon 2020)
     ej_threshold: float = 4  # [crater radii] Radius of influence of a crater (-1: no threshold)
     basin_ej_threshold: float = 5 # [basin radii] Radius of influence of a basin (-1: no threshold), e.g. Liu et al. (2020)
+    ej_thickness_exp: float = -3  # Exponent in ejecta thickness vs. distance (min: -3.5, avg: -3, max: -2.5; Kring 1995)
     thickness_threshold: float = 1e-3  # [m] minimum thickness to form a layer
     neukum_pf_new: bool = True  # [True=>2001, False=>1983] Neukum production function version (Neukum et al. 2001)
     neukum_pf_a_2001: tuple = (-3.0876, -3.557528, 0.781027, 1.021521, -0.156012, -0.444058, 0.019977, 0.086850, -0.005874, -0.006809, 8.25e-4, 5.54e-5)
@@ -161,11 +162,10 @@ class Cfg:
     ice_melt_temp: float = 273  # [k]
     ice_latent_heat: float = 334e3  # [j/kg] latent heat of h2o ice
 
-    # Ejecta shielding module
+    # Ejecta module
     crater_cols: tuple = ('cname', 'lat', 'lon', 'psr_lat', 'psr_lon', 'diam', 
                           'age', 'age_low','age_upp', 'psr_area', 'age_ref', 
                           'prio', 'notes')
-    ejecta_thickness_order: float = -3  # min: -3.5, avg: -3, max: -2.5 (Kring 1995)
 
     # Basin ice module
     basin_cols: tuple = ('cname', 'lat', 'lon', 'diam', 'inner_ring_diam', 
