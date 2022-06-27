@@ -432,7 +432,7 @@ def get_ejecta_thickness(distance, radius, cfg=CFG):
     thick[is_pr] = get_ej_thick_basin(dist_v[is_pr], t_radius[is_pr], cfg)
     thick[np.isnan(thick)] = 0
     if np.ndim(distance) == 0 and len(thick) == 1:
-        thick = float(thick) # Return scalar if passed a scalar
+        thick = float(thick)  # Return scalar if passed a scalar
     return thick
 
 
@@ -459,7 +459,7 @@ def get_ej_thick_complex(distance, radius, cfg=CFG):
     radius (arr): Complex crater final radius [m]
     order (int): Negative exponent (-3 +/- 0.5)
     """
-    return 0.14 * (radius**0.74) * (distance / radius) ** cfg.ej_thickness_exp
+    return 0.14 * radius**0.74 * (distance / radius) ** cfg.ej_thickness_exp
 
 
 def get_ej_thick_basin(distance, t_radius, cfg=CFG):
@@ -544,8 +544,8 @@ def get_ejecta_thickness_time(time_arr, df, ej_distances, cfg=CFG):
 
     # Label sources above threshold
     has_ej = ej_thick > cfg.thickness_threshold
-    ej_sources = (df.cname.values[:, np.newaxis] + ",") * has_ej
-    ej_sources_t = ages2time(time_arr, ej_ages, ej_sources, np.sum, "", object)
+    ej_srcs = (df.cname.values[:, np.newaxis] + ",") * has_ej
+    ej_sources_t = ages2time(time_arr, ej_ages, ej_srcs, np.sum, "", object)
     ej_sources_t = np.char.rstrip(ej_sources_t.astype(str), ",")
     return ej_thick_t, ej_sources_t
 
@@ -569,14 +569,17 @@ def get_ejecta_thickness_matrix(df, ej_dists, cfg=CFG):
     return get_ejecta_thickness(ej_dists, rad, cfg)
 
 
-def ages2time(time_arr, age_arr, values, agg=np.nansum, fillval=0, dtype=None):
+def ages2time(
+    time_arr, age_arr, values, agg=np.nansum, fillval=0, dtype=None, rtol=1e-5
+):
     """
     Return values filled into array of len(time_arr) filled to nearest ages.
     """
     if dtype is None:
         dtype = values.dtype
     # Remove ages and associated values not in time_arr
-    isin = np.where((age_arr >= time_arr.min()) & (age_arr <= time_arr.max()))
+    tmin, tmax = minmax_rtol(time_arr, rtol)  # avoid rounding error
+    isin = np.where((age_arr >= tmin) & (age_arr <= tmax))
     age_arr = age_arr[isin]
     values = values[isin]
 
@@ -1307,8 +1310,7 @@ def get_basin_ice(time_arr, df, cfg=CFG, rng=None):
     -------
     b_ice_t (arr): Ice thickness [m] delivered to pole at each time.
     """
-    df_basins = df[df.isbasin].reset_index(drop=True)
-    b_ice_mass = ice_basins(df_basins, time_arr, cfg, rng)
+    b_ice_mass = ice_basins(df, time_arr, cfg, rng)
     b_ice_t = get_ice_thickness(b_ice_mass, cfg)
     return b_ice_t
 
@@ -1443,22 +1445,26 @@ def ice_large_craters(crater_diams, impactor_speeds, regime, cfg=CFG):
     return np.sum(ice_masses)
 
 
-def ice_basins(df_basins, time_arr, cfg=CFG, rng=None):
+def ice_basins(df, time_arr, cfg=CFG, rng=None):
     """Return ice mass from basin impacts vs time."""
-    crater_diams = 2 * df_basins.rad.values
-    impactor_speeds = get_random_impactor_speeds(len(crater_diams), cfg, rng)
+    # Get basin ice from hydrated ctypes and cometary basins
+    itype = "hyd_ctype"  # icy_impactor flag (see get_random_icy_basins)
+    if cfg.is_comet:
+        itype = "comet"
 
-    # Get mass of ice from each basin
-    ice_masses = np.zeros_like(crater_diams)
-    for i, (diam, speed) in enumerate(zip(crater_diams, impactor_speeds)):
+    basin_ice_t = np.zeros_like(time_arr)
+
+    bdf = df[df.isbasin & (df.icy_impactor == itype)].reset_index(drop=True)
+    basin_diams = 2 * bdf.rad.values
+    impactor_speeds = get_random_impactor_speeds(len(bdf), cfg, rng)
+
+    # Get ice mass of each basin impactor
+    ice_masses = np.zeros_like(basin_diams)
+    for i, (diam, speed) in enumerate(zip(basin_diams, impactor_speeds)):
         ice_masses[i] = ice_large_craters(diam, speed, "f", cfg)
 
-    # Subset to hydrated impactors
-    hyd = get_random_hydrated_craters(len(ice_masses), cfg, rng)
-    ice_masses = ice_masses[hyd]
-    ages = df_basins.age.values[hyd]
-
     # Insert each basin ice mass to its position in time_arr
+    ages = bdf.age.values
     basin_ice_t = ages2time(time_arr, ages, ice_masses, np.sum, 0)
     return basin_ice_t
 
@@ -2296,6 +2302,13 @@ def probabilistic_round(x, rng=None):
 def round_to_ts(values, timestep):
     """Return values rounded to nearest timestep."""
     return np.around(values / timestep) * timestep
+
+
+def minmax_rtol(arr, rtol=1e-5):
+    """Return min and max of arr -/+ rtol*abs(min/max)."""
+    amin = np.min(arr)
+    amax = np.max(arr)
+    return amin - np.abs(amin) * rtol, amax + np.abs(amax) * rtol
 
 
 def diam2vol(diameter):

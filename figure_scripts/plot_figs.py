@@ -47,6 +47,20 @@ def _generate_all():
     _ = [p.join() for p in procs]
     print(f'All plots written to {FIGDIR}')
 
+def _load_aggregated(cfg, datedir, flatten=True):
+    """Load aggregated data."""
+    # If no datedir, guess latest date folder in outdir that has layers.csv
+    if not datedir:  
+        outdir = Path(cfg.out_path).parents[2]
+        subdirs = [p for p in outdir.iterdir() if p.is_dir()]
+        for subdir in subdirs[::-1]:
+            if any(subdir.glob('layers.csv')):
+                datedir = subdir
+                break
+    layers, runs = agg.read_agg_dfs(datedir, flatten=flatten)
+    print(f'Loaded aggregated data from {datedir}')
+    return layers, runs
+
 
 def ast_comet_vels(fsave='comet_vels.pdf', figdir=FIGDIR, cfg=CFG):
     """
@@ -182,7 +196,7 @@ def ballistic_hop(fsave='bhop_lat.pdf', figdir=FIGDIR, cfg=CFG):
     return _save_or_show(fig, ax, fsave, figdir, version)
 
 
-def basin_ice(fsave='basin_ice.pdf', figdir=FIGDIR, cfg=CFG):
+def basin_ice(fsave='basin_ice.pdf', figdir=FIGDIR, cfg=CFG, n=500):
     """
     Plot basin ice volume by latitude.
 
@@ -194,7 +208,6 @@ def basin_ice(fsave='basin_ice.pdf', figdir=FIGDIR, cfg=CFG):
         return np.convolve(x, np.ones(w), 'same') / w
     mplt.reset_plot_style()
     # Params
-    n = 500  # Number of runs (~1 min / 500 runs)
     seed0 = 200  # Starting seed
     window = 3  # Window size for moving average
     color = {'Asteroid': 'tab:gray', 'Comet': 'tab:blue'}
@@ -218,17 +231,70 @@ def basin_ice(fsave='basin_ice.pdf', figdir=FIGDIR, cfg=CFG):
         ax.semilogy(x, all_basin_ice, marker[btype], c=color[btype], alpha=0.5)
         # median = moving_avg(np.median(all_basin_ice,axis=1), window)
         mean = moving_avg(np.mean(all_basin_ice,axis=1), window)
-        # pct99 = moving_avg(np.percentile(all_basin_ice, 99, axis=1), window)
+        pct99 = moving_avg(np.percentile(all_basin_ice, 99, axis=1), window)
         ax.plot(x, mean, '-', c=color[btype], lw=2, label=btype+' mean')
-        # ax.plot(x, pct99,'--', c=color[btype], lw=1, label='99th percentile')
+        ax.plot(x, pct99,'--', c=color[btype], alpha=0.5, lw=2, label='pct99')
     ax.grid('on')
     ax.set_xlim(4.25, 3.79)
     ax.set_ylim(0.1, None)
     ax.set_title(f'Ice Delivered to South Pole by Basins ({n} runs)')
     ax.set_xlabel('Time [Ga]')
     ax.set_ylabel('Ice Thickness [m]')
-    ax.legend(loc='upper right')
+    ax.legend(loc='upper right', ncol=2)
     version = mplt.plot_version(cfg, loc='ul', ax=ax)
+    return _save_or_show(fig, ax, fsave, figdir, version)
+
+
+def bsed_violin(fsave='bsed_violin.pdf', figdir=FIGDIR, cfg=CFG, datedir=''):
+    mplt.reset_plot_style()
+    corder = np.array(['Faustini', 'Haworth', 'Shoemaker', 'Cabeus B', 
+                       "Idel'son L",'Amundsen','Cabeus','de Gerlache',
+                       'Slater','Sverdrup','Wiechert J','Shackleton'])
+    clist = mp.get_crater_basin_list(cfg).set_index('cname').loc[corder]
+    labels = [c+f'\n{lat:.1f}°' for c, lat in zip(corder, clist.lat.values)]
+    
+    # Load and clean aggregated runs data
+    _, runs = _load_aggregated(cfg, datedir, flatten=False)
+    nruns = len(runs)
+    runs = agg.flatten_agg_df(runs)
+    runs = agg.binary_runs(runs, 'mpies', rename='bsed')
+    runs.loc[runs['total ice'] < 1, 'total ice'] = np.nan
+    runs['log ice'] = np.log10(runs['total ice'])
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(8, 2.5))
+
+    ax.fill_between([2.5, 7.5], [-1, -1], [4, 4], color='tab:gray', alpha=0.5)
+    ax.fill_between([9.5, 12.5], [-1, -1], [4, 4], color='tab:gray', alpha=0.5)
+    ax = sns.violinplot(x='coldtrap', y='log ice', hue='bsed', 
+                        hue_order=['No', 'Yes'], data=runs, split=True, cut=0,
+                        inner='quartiles', palette='Set2', order=corder,
+                        scale='count', scale_hue=False, ax=ax, width=0.95)
+
+    # Plot a specific value on the violin plot
+    # ax.plot(['Haworth'], [1.5], 'ro')
+    ax.set_xticklabels(labels, rotation=30, fontsize=9)
+    ax.tick_params('x', direction='out', top=False)
+    ax.set_ylabel('Ice thickness [m]', labelpad=-0.8)
+    ax.set_yticks([0, 1, 2, 3])
+    ax.set_yticklabels(10**ax.get_yticks())
+    ax.set_xlabel('')
+    
+    ymin = -0.45
+    ax.set_ylim(ymin, 3)
+    ax.set_xlim(-0.5, 11.75)
+    ax.annotate('Pre/Early Nectarian', (-0.4, ymin+0.1))
+    ax.annotate('Late Nectarian', (2.6, ymin+0.1))
+    ax.annotate('Imbrian', (7.6, ymin+0.1))
+    ax.annotate('Eratosthenian', (9.6, ymin+0.1))
+    
+
+    title = f'Ballistic\nSedimentation\n({nruns} runs)'
+    leg = plt.legend(loc='upper right', borderaxespad=0.25, title_fontsize=9, fontsize=9, ncol=2, 
+                     columnspacing=0.5, handletextpad=0.2, title=title)
+    leg.get_title().set_multialignment('center')
+
+    version = mplt.plot_version(cfg, loc='ur', xyoff=(0.01, -0.4), ax=ax, fontsize=8)
     return _save_or_show(fig, ax, fsave, figdir, version)
 
 
@@ -493,14 +559,9 @@ def kde_layers(fsave='kde_layers.pdf', figdir=FIGDIR, cfg=CFG, datedir='', coldt
     ylim = (1, 800)
     skip = 100  # skip this many points for each coldtrap (for faster kde)
 
-    # Load aggregated layer data
-    if not datedir:  # Guess most recent date folder in outdir
-        outdir = Path(cfg.out_path).parents[2]
-        datedir = [p for p in outdir.iterdir() if p.is_dir()][-1]
-    layers, _ = agg.read_agg_dfs(datedir, flatten=True)
+    # Clean layer data
+    layers, _ = _load_aggregated(cfg, datedir)
     layers = agg.binary_runs(layers, 'mpies', rename='bsed')
-
-    # Clean data
     layers.loc[layers['ice'] < 0.1, 'ice'] = np.nan
     layers.loc[layers['depth'] < 0.1, 'depth'] = np.nan
     layers.dropna(inplace=True)
