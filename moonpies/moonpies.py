@@ -543,7 +543,7 @@ def get_ejecta_thickness_time(time_arr, df, ej_distances, cfg=CFG):
     ej_thick_t = ages2time(time_arr, ej_ages, ej_thick, np.nansum, 0)
 
     # Label sources above threshold
-    has_ej = ej_thick > cfg.thickness_threshold
+    has_ej = ej_thick > cfg.thickness_min
     ej_srcs = (df.cname.values[:, np.newaxis] + ",") * has_ej
     ej_sources_t = ages2time(time_arr, ej_ages, ej_srcs, np.sum, "", object)
     ej_sources_t = np.char.rstrip(ej_sources_t.astype(str), ",")
@@ -570,7 +570,7 @@ def get_ejecta_thickness_matrix(df, ej_dists, cfg=CFG):
 
 
 def ages2time(
-    time_arr, age_arr, values, agg=np.nansum, fillval=0, dtype=None, rtol=1e-5
+    time_arr, age_arr, values, agg=np.nansum, fillval=0, dtype=None, cfg=CFG
 ):
     """
     Return values filled into array of len(time_arr) filled to nearest ages.
@@ -578,7 +578,7 @@ def ages2time(
     if dtype is None:
         dtype = values.dtype
     # Remove ages and associated values not in time_arr
-    tmin, tmax = minmax_rtol(time_arr, rtol)  # avoid rounding error
+    tmin, tmax = minmax_rtol(time_arr, cfg.rtol)  # avoid rounding error
     isin = np.where((age_arr >= tmin) & (age_arr <= tmax))
     age_arr = age_arr[isin]
     values = values[isin]
@@ -804,7 +804,8 @@ def volcanic_ice_nk(time_arr, cfg=CFG):
     volc_ice_mass (arr): Ice mass [kg] deposited at the pole at each time.
     """
     df_volc = read_volcanic_species(cfg.nk_csv_in, cfg.nk_cols, cfg.nk_species)
-    df_volc = df_volc[df_volc.time < time_arr.max()]
+    tmax = time_arr.max()
+    df_volc = df_volc[df_volc.time < tmax + rtol(tmax, cfg.rtol)]
 
     rounded_time = np.rint(time_arr / cfg.timestep)
     rounded_ages = np.rint(df_volc.time.values / cfg.timestep)
@@ -1286,7 +1287,8 @@ def get_large_simple_crater_ice(time_arr, cfg=CFG, rng=None):
     -------
     lsc_ice_t (arr): Ice thickness [m] delivered to pole at each time.
     """
-    lsc_ice_t = get_ice_stochastic(time_arr, "d", cfg, rng)
+    lsc_ice_mass = get_ice_stochastic(time_arr, "d", cfg, rng)
+    lsc_ice_t = get_ice_thickness(lsc_ice_mass, cfg)
     return lsc_ice_t
 
 
@@ -1298,7 +1300,8 @@ def get_complex_crater_ice(time_arr, cfg=CFG, rng=None):
     -------
     cc_ice_t (arr): Ice thickness [m] delivered to pole at each time.
     """
-    cc_ice_t = get_ice_stochastic(time_arr, "e", cfg, rng)
+    cc_ice_mass = get_ice_stochastic(time_arr, "e", cfg, rng)
+    cc_ice_t = get_ice_thickness(cc_ice_mass, cfg)
     return cc_ice_t
 
 
@@ -1317,8 +1320,8 @@ def get_basin_ice(time_arr, df, cfg=CFG, rng=None):
 
 def get_ice_stochastic(time_arr, regime, cfg=CFG, rng=None):
     """
-    Return ice thickness [m] delivered to pole at each time due to
-    a given stochastic regime.
+    Return ice mass [kg] delivered to pole at each time from stochastic 
+    delivery by crater-forming impactors.
 
     Parameters
     ----------
@@ -1329,7 +1332,7 @@ def get_ice_stochastic(time_arr, regime, cfg=CFG, rng=None):
 
     Returns
     -------
-    ice_t (arr): Ice thickness [m] delivered to pole at each time.
+    ice_t (arr): Ice mass [kg] delivered to pole at each time.
     """
     rng = _rng(rng)
     diams, num_craters_t, sfd_prob = get_crater_pop(time_arr, regime, cfg)
@@ -1338,7 +1341,7 @@ def get_ice_stochastic(time_arr, regime, cfg=CFG, rng=None):
     num_craters_t = probabilistic_round(num_craters_t, rng=rng)
 
     # Get ice thickness for each time, randomizing crater diam and impact speed
-    ice_t = np.zeros_like(time_arr)
+    ice_mass_t = np.zeros_like(time_arr)
     for i, num_craters in enumerate(num_craters_t):
         # Randomly resample crater diams from sfd prob with replacement
         rand_diams = rng.choice(diams, num_craters, p=sfd_prob)
@@ -1348,9 +1351,8 @@ def get_ice_stochastic(time_arr, regime, cfg=CFG, rng=None):
         hyd_diams = rand_diams[hyd]
 
         speeds = get_random_impactor_speeds(len(hyd_diams), cfg, rng)
-        ice_mass = ice_large_craters(hyd_diams, speeds, regime, cfg)
-        ice_t[i] = get_ice_thickness(ice_mass, cfg)
-    return ice_t
+        ice_mass_t[i] = ice_large_craters(hyd_diams, speeds, regime, cfg)
+    return ice_mass_t
 
 
 def read_ballistic_hop_csv(bhop_csv):
@@ -1446,7 +1448,7 @@ def ice_large_craters(crater_diams, impactor_speeds, regime, cfg=CFG):
 
 
 def ice_basins(df, time_arr, cfg=CFG, rng=None):
-    """Return ice mass from basin impacts vs time."""
+    """Return ice mass [kg] from basin impacts vs time."""
     # Get basin ice from hydrated ctypes and cometary basins
     itype = "hyd_ctype"  # icy_impactor flag (see get_random_icy_basins)
     if cfg.is_comet:
@@ -2047,7 +2049,7 @@ def update_age(age_grid, crater, grdx, grdy, rp=1737.4e3):
 
 
 # Format and export model results
-def make_strat_col(time, ice, ejecta, ejecta_sources, thresh=1e-6):
+def make_strat_col(time, ice, ejecta, ej_srcs, age, cfg=CFG):
     """
     Return stratigraphy column of ice and ejecta.
 
@@ -2056,8 +2058,8 @@ def make_strat_col(time, ice, ejecta, ejecta_sources, thresh=1e-6):
     time (array): Time [yr]
     ice (array): Ice thickness [m]
     ejecta (array): Ejecta thickness [m]
-    ejecta_sources (array): Labels for ejecta layer sources
-    thresh (float): Minimum thickness of ice and ejecta to include in strat.
+    ej_srcs (array): Labels for ejecta layer sources
+    age (num): Age at base of strat col [yr]
 
     Returns
     -------
@@ -2067,24 +2069,32 @@ def make_strat_col(time, ice, ejecta, ejecta_sources, thresh=1e-6):
     """
     # Label rows by ice (no ejecta) or ejecta_source
     label = np.empty(len(time), dtype=object)
-    label[ice > thresh] = "Ice"
-    label[ejecta > thresh] = ejecta_sources[ejecta > thresh]
+    label[ice > cfg.thickness_min] = "Ice"
+    label[ejecta > cfg.thickness_min] = ej_srcs[ejecta > cfg.thickness_min]
     label[label == ""] = "Minor source(s)"
 
     # Make stratigraphy DataFrame
-    data = [time, ice, ejecta]
+    data = np.array([time, ice, ejecta]).T
     cols = ["time", "ice", "ejecta"]
-    sdf = pd.DataFrame(np.array(data).T, columns=cols, dtype=time.dtype)
-
-    # Remove empty rows from strat col
+    sdf = pd.DataFrame(data, columns=cols, dtype=time.dtype)
     sdf["label"] = label
+
+    # Exclude layers before age of crater
+    if cfg.strat_after_age:
+        sdf = sdf[sdf.time < age + rtol(age, cfg.rtol)].reset_index(drop=True)
+        # Insert empty row labelling formation age of strat column
+        sdf = pd.concat([
+            pd.DataFrame([[sdf.iloc[0].time, 0, 0, "Formation age"]
+            ], columns=sdf.columns), sdf], ignore_index=True)
+
+    # Remove rows with no label (no ice or ejecta)
     sdf = sdf.dropna(subset=["label"])
 
     # Combine adjacent rows with same label into layers
     strat = merge_adjacent_strata(sdf)
 
     # Compute depth of each layer (reverse cumulative sum of ice and ejecta)
-    strat["depth"] = np.cumsum(strat.ice[::-1] + strat.ejecta[::-1])[::-1]
+    strat["depth"] = np.cumsum((strat.ice + strat.ejecta)[::-1])[::-1]
 
     # Add ice / ejecta percentage of each layer
     strat["icepct"] = np.round(100 * strat.ice / (strat.ice + strat.ejecta), 4)
@@ -2099,7 +2109,7 @@ def merge_adjacent_strata(strat, agg=None):
     return strat.groupby(["label", isadj], as_index=False, sort=False).agg(agg)
 
 
-def format_csv_outputs(strat_cols, time_arr, cfg=CFG):
+def format_csv_outputs(strat_cols, time_arr, df, cfg=CFG):
     """
     Return all formatted model outputs and write to outpath, if specified.
     """
@@ -2107,12 +2117,13 @@ def format_csv_outputs(strat_cols, time_arr, cfg=CFG):
     ice_dict = {"time": time_arr}
     strat_dfs = {}
     ej_source_all = []
-    for cname in cfg.coldtrap_names:
-        ice_t, ej_t, ej_sources = strat_cols[cname]
+    cdf = df.set_index('cname').loc[list(cfg.coldtrap_names), 'age']
+    for cname, age in cdf.iteritems():
+        ice_t, ej_t, ej_srcs = strat_cols[cname]
         ej_dict[cname] = ej_t
         ice_dict[cname] = ice_t
-        strat_dfs[cname] = make_strat_col(time_arr, ice_t, ej_t, ej_sources)
-        ej_source_all.append(ej_sources)
+        strat_dfs[cname] = make_strat_col(time_arr, ice_t, ej_t, ej_srcs, age, cfg)
+        ej_source_all.append(ej_srcs)
 
     # Convert to DataFrames
     ej_cols_df = pd.DataFrame(ej_dict)
@@ -2138,7 +2149,7 @@ def format_save_outputs(strat_cols, time_arr, df, cfg=CFG):
     Format dataframes and save outputs based on write / write_npy in cfg.
     """
     vprint(cfg, "Formatting outputs")
-    ej_df, ice_df, strat_dfs = format_csv_outputs(strat_cols, time_arr)
+    ej_df, ice_df, strat_dfs = format_csv_outputs(strat_cols, time_arr, df, cfg)
     if cfg.write:
         # Save config file
         vprint(cfg, f"Saving outputs to {cfg.out_path}")
@@ -2304,11 +2315,16 @@ def round_to_ts(values, timestep):
     return np.around(values / timestep) * timestep
 
 
-def minmax_rtol(arr, rtol=1e-5):
-    """Return min and max of arr -/+ rtol*abs(min/max)."""
+def rtol(num, tol=CFG.rtol):
+    """Return relative tolerance where value is equal to num at tol."""
+    return np.abs(num) * tol
+
+
+def minmax_rtol(arr, tol=CFG.rtol):
+    """Return min and max of arr -/+ relative tolerance tol."""
     amin = np.min(arr)
     amax = np.max(arr)
-    return amin - np.abs(amin) * rtol, amax + np.abs(amax) * rtol
+    return amin - rtol(amin, tol), amax + rtol(amax, tol)
 
 
 def diam2vol(diameter):

@@ -73,6 +73,7 @@ class Cfg:
     verbose: bool = False  # Print info as model is running
     write: bool = True  # Write model outputs to a file (if False, just return)
     write_npy: bool = False  # Write large arrays to files - slow! (age_grid, ej_thickness)
+    strat_after_age: bool = True  # Stratigraphy column outputs start at coldtrap age (removes pre-coldtrap layering)
     plot: bool = False  # Save strat column plots - slow!
     
     # Setup Cannon vs MoonPIES config mode and lunar pole
@@ -121,6 +122,7 @@ class Cfg:
 
     # Grid and time size and resolution
     dtype = np.float32  # np.float64 (32 should be good for most purposes)
+    rtol = 1e-6  # Rounding tolerance for floating point comparisons (mainly for rounding error with float time_arr)
     grdxsize: int = 400e3  # [m]
     grdysize: int = 400e3  # [m]
     grdstep: int = 1e3  # [m / pixel]
@@ -149,7 +151,7 @@ class Cfg:
     ej_threshold: float = 4  # [crater radii] Radius of influence of a crater (-1: no threshold)
     basin_ej_threshold: float = 5 # [basin radii] Radius of influence of a basin (-1: no threshold), e.g. Liu et al. (2020)
     ej_thickness_exp: float = -3  # Exponent in ejecta thickness vs. distance (min: -3.5, avg: -3, max: -2.5; Kring 1995)
-    thickness_threshold: float = 1e-3  # [m] minimum thickness to form a layer
+    thickness_min: float = 1e-3  # [m] minimum thickness to form a layer
     neukum_pf_new: bool = True  # [True=>2001, False=>1983] Neukum production function version (Neukum et al. 2001)
     neukum_pf_a_2001: tuple = (-3.0876, -3.557528, 0.781027, 1.021521, -0.156012, -0.444058, 0.019977, 0.086850, -0.005874, -0.006809, 8.25e-4, 5.54e-5)
     neukum_pf_a_1983: tuple = (-3.0768, -3.6269, 0.4366, 0.7935, 0.0865, -0.2649, -0.0664, 0.0379, 0.0106, -0.0022, -5.18e-4, 3.97e-5)
