@@ -17,6 +17,9 @@ import aggregate as agg
 CFG = default_config.Cfg(seed=1)
 DATE = datetime.now().strftime("%y%m%d")
 FIGDIR = Path(CFG.figs_path) / f'{DATE}_v{CFG.version}'
+CORDER = np.array(['Faustini', 'Haworth', 'Shoemaker', 'Cabeus B', 
+                   "Idel'son L",'Amundsen','Cabeus','de Gerlache',
+                   'Slater','Sverdrup','Wiechert J','Shackleton'])
 mplt.reset_plot_style()  # Sets Moonpies style
 
 # Helpers
@@ -47,7 +50,7 @@ def _generate_all():
     _ = [p.join() for p in procs]
     print(f'All plots written to {FIGDIR}')
 
-def _load_aggregated(cfg, datedir, flatten=True):
+def _load_aggregated(cfg, datedir, flatten=True, nruns=True):
     """Load aggregated data."""
     # If no datedir, guess latest date folder in outdir that has layers.csv
     if not datedir:  
@@ -57,9 +60,8 @@ def _load_aggregated(cfg, datedir, flatten=True):
             if any(subdir.glob('layers.csv')):
                 datedir = subdir
                 break
-    layers, runs = agg.read_agg_dfs(datedir, flatten=flatten)
-    print(f'Loaded aggregated data from {datedir}')
-    return layers, runs
+    print(f'Loading aggregated data from {datedir}')
+    return agg.read_agg_dfs(datedir, flatten, nruns)
 
 
 def ast_comet_vels(fsave='comet_vels.pdf', figdir=FIGDIR, cfg=CFG):
@@ -245,18 +247,13 @@ def basin_ice(fsave='basin_ice.pdf', figdir=FIGDIR, cfg=CFG, n=500):
     return _save_or_show(fig, ax, fsave, figdir, version)
 
 
-def bsed_violin(fsave='bsed_violin.pdf', figdir=FIGDIR, cfg=CFG, datedir=''):
+def bsed_violin(fsave='bsed_violin.pdf', figdir=FIGDIR, cfg=CFG, datedir='', corder=CORDER):
     mplt.reset_plot_style()
-    corder = np.array(['Faustini', 'Haworth', 'Shoemaker', 'Cabeus B', 
-                       "Idel'son L",'Amundsen','Cabeus','de Gerlache',
-                       'Slater','Sverdrup','Wiechert J','Shackleton'])
     clist = mp.get_crater_basin_list(cfg).set_index('cname').loc[corder]
     labels = [c+f'\n{lat:.1f}°' for c, lat in zip(corder, clist.lat.values)]
     
     # Load and clean aggregated runs data
-    _, runs = _load_aggregated(cfg, datedir, flatten=False)
-    nruns = len(runs)
-    runs = agg.flatten_agg_df(runs)
+    _, runs, nruns = _load_aggregated(cfg, datedir, flatten=True, nruns=True)
     runs = agg.binary_runs(runs, 'mpies', rename='bsed')
     runs.loc[runs['total ice'] < 1, 'total ice'] = np.nan
     runs['log ice'] = np.log10(runs['total ice'])
@@ -858,6 +855,28 @@ def random_crater_ages(fsave='random_crater_ages.pdf', figdir=FIGDIR, cfg=CFG):
     ax.set_ylabel('Count [runs]')
     version = mplt.plot_version(cfg, loc='lr', xyoff=(0.01, -0.17), ax=axs[1])
     return _save_or_show(fig, axs, fsave, figdir, version)
+
+
+def surface_boxplot(fsave='surface_boxplot.pdf', figdir=FIGDIR, cfg=CFG, 
+                    datedir='', corder=CORDER, sdepth=6):
+    """
+    Plot surface boxplot.
+    """
+    mplt.reset_plot_style()
+    _, runs, nruns = _load_aggregated(cfg, datedir, flatten=True, nruns=True)
+    # runs.loc[runs['total ice'] < 1, 'total ice'] = 0
+    runs = runs[runs.runs == 'mpies']
+    key = f'total ice {sdepth}m'
+    # runs['icepct'] = 100 * runs[key] / sdepth
+    fig, ax = plt.subplots(figsize=(7.2, 4))
+    ax = sns.boxplot(x='coldtrap', y=key, data=runs, 
+                     order=corder, fliersize=1, whis=(1, 99), ax=ax)
+    ax.set_xlabel('')
+    ax.set_ylabel(f'Total ice [m] in top {sdepth} m ({nruns/1e3:.3g}k runs)')
+    ax.set_ylim(0, sdepth)
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=30)
+    version = mplt.plot_version(cfg, loc='ur', ax=ax)
+    return _save_or_show(fig, ax, fsave, figdir, version)
 
 
 # Class helpers

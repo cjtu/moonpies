@@ -3,20 +3,24 @@ import sys
 import pickle
 from pathlib import Path
 from multiprocessing import Process
+import numpy as np
 import pandas as pd
 from moonpies import moonpies as mp
 from moonpies import default_config
 
-# DATEDIR = "~/moonpies/data/out/yymmdd/""
 
-def read_agg_dfs(datedir, flatten=False):
+def read_agg_dfs(datedir, flatten=False, count_runs=False):
     """Return aggregated layers and runs DataFrames."""
     layers = pd.read_csv(datedir / 'layers.csv', header=[0, 1, 2])
     runs = pd.read_csv(datedir / 'runs.csv', header=[0, 1, 2])
+    nruns = len(runs)  # before flattening
     if flatten:
         layers = flatten_agg_df(layers)
         runs = flatten_agg_df(runs)
-    return layers, runs
+    if count_runs:
+        return layers, runs, nruns
+    else:
+        return layers, runs
 
 def flatten_agg_df(df):
     """Flatten aggregated dataframe into a single indexed dataframe."""
@@ -52,9 +56,15 @@ def agg_coldtrap(coldtrap, datedir, outdir):
 
     data = {'layers': {}, 'runs': {}}
     for rundir in runs:
-        csvs = Path(rundir).rglob(f'strat_{coldtrap}.csv')
-        ices, depths, times,  = [], [], []
-        ice_tot, ice_6m, ice_10m, ice_100m, maxdepth = [], [], [], [], []
+        csvs = list(Path(rundir).rglob(f'strat_{coldtrap}.csv'))
+        clayers = {'ice': [], 'depth': [], 'time': []}
+        cruns = {
+            'total ice': np.zeros(len(csvs)), 
+            'total ice 6m': np.zeros(len(csvs)), 
+            'total ice 10m': np.zeros(len(csvs)), 
+            'total ice 100m': np.zeros(len(csvs)), 
+            'maxdepth': np.zeros(len(csvs))
+        }
         for i, csv in enumerate(csvs):
             # Get crater age for this run to exclude older layers
             age = get_coldtrap_age(coldtrap, csv)
@@ -63,28 +73,26 @@ def agg_coldtrap(coldtrap, datedir, outdir):
             ice, time, depth = pd.read_csv(csv, usecols=[0, 3, 4]).values.T
             if (time<=age).sum() == 0:  # no layers after coldtrap formed, skip
                 continue
-            ices.extend(ice[time<=age])
-            depths.extend(depth[time<=age])
-            times.extend(time[time<=age])
-            ice_tot.append(ice[time<=age].sum())
-            ice_6m.append(ice[(time<=age) & (depth < 6)].sum())
-            ice_10m.append(ice[(time<=age) & (depth < 10)].sum())
-            ice_100m.append(ice[(time<=age) & (depth < 100)].sum())
-            maxdepth.append(depth[time<=age].max())
-            if i % 1000 == 0 and i > 0:
+            ice = ice[time<=age]
+            depth = depth[time<=age]
+            clayers['ice'].extend(ice)
+            clayers['depth'].extend(depth)
+            clayers['time'].extend(time)
+            
+            cruns['total ice'][i] = ice.sum()
+            cruns['maxdepth'][i] = depth.max()
+            for dmax in [6, 10, 100]:
+                cruns[f'total ice {dmax}m'][i] = ice[depth<=dmax].sum()
+                # Find layers overlapping the dmax
+                ind = np.searchsorted(depth[::-1], dmax, side='right') + 1
+                if ind <= len(depth):
+                    doverlap = dmax - (depth[-ind] - ice[-ind])
+                    cruns[f'total ice {dmax}m'][i] += max(0, doverlap)  # keep if > 0
+
+            if i % 1000 == 0:
                 print(f'{coldtrap} {rundir.name} CSV {i}')
-        data['layers'][rundir.name] = {
-            'ice': ices,
-            'depth': depths,
-            'time': times,
-        }
-        data['runs'][rundir.name] = {
-            'total ice': ice_tot,
-            'total ice 6m': ice_6m,
-            'total ice 10m': ice_10m,
-            'total ice 100m': ice_100m,
-            'max depth': maxdepth
-        }
+        data['layers'][rundir.name] = clayers
+        data['runs'][rundir.name] = cruns
 
     # Make TMPDIR if it doesn't exist
     outdir = Path(outdir)
@@ -138,14 +146,15 @@ if __name__ == '__main__':
 
     DEBUG = False
     if DEBUG:
-        DATEDIR = Path('/home/ctaiudovicic/projects/moonpies/data/out/220610/')
+        DATEDIR = Path('/home/ctaiudovicic/projects/moonpies/data/out/220627/')
         TMPDIR = DATEDIR / 'tmp'  
         for COLDTRAP in COLDTRAPS[2:]:
             agg_coldtrap(COLDTRAP, DATEDIR, TMPDIR)
+            break
         quit()
-    
-    # Read DATEDIR from command line
-    DATEDIR = Path(sys.argv[1])
-    TMPDIR = DATEDIR / 'tmp'
-    aggregate(COLDTRAPS, TMPDIR, DATEDIR)
+    else:
+        # Read DATEDIR from command line
+        DATEDIR = Path(sys.argv[1])
+        TMPDIR = DATEDIR / 'tmp'
+        aggregate(COLDTRAPS, TMPDIR, DATEDIR)
     
