@@ -248,6 +248,7 @@ def basin_ice(fsave='basin_ice.pdf', figdir=FIGDIR, cfg=CFG, n=500):
 
 
 def bsed_violin(fsave='bsed_violin.pdf', figdir=FIGDIR, cfg=CFG, datedir='', corder=CORDER):
+    """Plot violin plot comparing 10k bsed and no bsed runs."""
     mplt.reset_plot_style()
     clist = mp.get_crater_basin_list(cfg).set_index('cname').loc[corder]
     labels = [c+f'\n{lat:.1f}°' for c, lat in zip(corder, clist.lat.values)]
@@ -548,7 +549,7 @@ def kde_layers(fsave='kde_layers.pdf', figdir=FIGDIR, cfg=CFG, datedir='', coldt
     custom_params = {"axes.spines.right": False, "axes.spines.top": False}
     sns.set_theme(style="ticks", rc=custom_params)
     if coldtraps is None:
-        coldtraps = ["Haworth", "de Gerlache", "Slater", "Cabeus"]
+        coldtraps = ["Faustini", "Haworth", "Amundsen", "Cabeus", "de Gerlache", "Slater"]
     pal = sns.color_palette()
     mypal = [pal[0], pal[1]]
     hues = ['No', 'Yes']
@@ -557,7 +558,7 @@ def kde_layers(fsave='kde_layers.pdf', figdir=FIGDIR, cfg=CFG, datedir='', coldt
     skip = 100  # skip this many points for each coldtrap (for faster kde)
 
     # Clean layer data
-    layers, _ = _load_aggregated(cfg, datedir)
+    layers, _, nruns = _load_aggregated(cfg, datedir)
     layers = agg.binary_runs(layers, 'mpies', rename='bsed')
     layers.loc[layers['ice'] < 0.1, 'ice'] = np.nan
     layers.loc[layers['depth'] < 0.1, 'depth'] = np.nan
@@ -566,14 +567,17 @@ def kde_layers(fsave='kde_layers.pdf', figdir=FIGDIR, cfg=CFG, datedir='', coldt
     layers['depth_top'] = layers['depth_top'].clip(lower=0.1)
 
     # Make plots. 4 seaborn jointgrids then put together with SeabornFig2Grid
-    fig = plt.figure(figsize=(7.2, 7.2))
+    fig = plt.figure(figsize=(7.2, 9))
     jgs = []
     for i, coldtrap in enumerate(coldtraps):
-        df = layers[(layers.coldtrap==coldtrap)].iloc[::skip]
+        df = layers[(layers.coldtrap==coldtrap)]
+        if len(df) > 1000:
+            df = df.iloc[::skip]
+        # df = layers[(layers.coldtrap==coldtrap)].iloc[::skip]
         jg = sns.JointGrid(space=0)
         jg.ax_joint.annotate(f'{coldtrap}', xy=(0.5, 0.98), ha='center', va='top', xycoords='axes fraction')
         g = sns.kdeplot(x='ice', y='depth_top', hue='bsed', hue_order=hues, data=df, log_scale=True, 
-                    palette=mypal, bw_adjust=1.5, thresh=0, levels=7, common_norm=False, ax=jg.ax_joint)
+                    palette=mypal, bw_adjust=1.5, thresh=0.3, levels=8, common_norm=False, ax=jg.ax_joint)
         # Hist: hue_order plots in reverse order, so flip hues and mypal
         sns.histplot(x='ice', hue='bsed', bins='sturges', common_norm=True,
                     hue_order=hues[::-1], palette=mypal[::-1], alpha=0.3,
@@ -585,11 +589,16 @@ def kde_layers(fsave='kde_layers.pdf', figdir=FIGDIR, cfg=CFG, datedir='', coldt
         # Legend only in 1st subplot
         handles = jg.ax_joint.legend_.get_lines()
         jg.ax_joint.legend_.remove()
-        if i == 1:
+
+        # Gigaton zone
+        if i < 2:
+            jg.ax_joint.fill_betweenx([40, 1e4], [10, 10], [1e4, 1e4], 
+                                       color='tab:gray', alpha=0.5)
+        if i == 0:
             # legend_labels = jg.ax_joint.legend_.get_texts()
             title = 'Ballistic \n Sedimentation'
-            leg = jg.ax_joint.legend(handles, hues, loc="upper right", 
-                                    title=title, fontsize=10, title_fontsize=8, 
+            leg = jg.ax_joint.legend(handles, hues, ncol=2, loc="upper right", 
+                                    title=title, fontsize=8, title_fontsize=9, 
                                     bbox_to_anchor=(1, 0.9))
             leg.get_title().set_multialignment('center')
 
@@ -602,8 +611,8 @@ def kde_layers(fsave='kde_layers.pdf', figdir=FIGDIR, cfg=CFG, datedir='', coldt
     
     # Set axis labels
     for i, jg in enumerate(jgs):
-        xlabel = 'Ice layer thickness [m]' if i in (2, 3) else None
-        ylabel = 'Depth [m]' if i in (0, 2) else None
+        xlabel = 'Ice layer thickness [m]' if i in (4, 5) else None
+        ylabel = 'Depth [m]' if (i % 2 == 0) else None
         jg.ax_joint.set_xlabel(xlabel)
         jg.ax_joint.set_ylabel(ylabel)
         jg.ax_joint.set_xscale('log')
@@ -617,7 +626,7 @@ def kde_layers(fsave='kde_layers.pdf', figdir=FIGDIR, cfg=CFG, datedir='', coldt
         jg.ax_marg_y.yaxis.set_visible(False)
 
     # Move all the jointgrids into a single gridspec figure
-    gs = mpl.gridspec.GridSpec(2, 2)
+    gs = mpl.gridspec.GridSpec(3, 2)
     for jg, gs in zip(jgs, gs):
         SeabornFig2Grid(jg, fig, gs)
     fig.tight_layout()
@@ -653,10 +662,10 @@ def ejecta_distance(fsave='ejecta_distance.pdf', figdir=FIGDIR, cfg=CFG):
     earth_dict = cfg.to_dict()
     earth_dict['grav_moon'] = 9.81  # [m/s^2]
     earth_dict['rad_moon'] = 6.371e6  # [m]
-    earth_dict['target_density'] = 2700  # [kg/m^3]
+    earth_dict['bulk_density'] = 2700  # [kg/m^3]
     earth_cfg = default_config.Cfg(**earth_dict)
 
-    fig, axs = plt.subplots(2, 2, figsize=(7.2, 6.8), sharex=True, 
+    fig, axs = plt.subplots(2, 2, figsize=(7.2, 6.4), sharex=True, 
                             gridspec_kw={'wspace':0.35, 'hspace':0.02})
     ax1, ax2, ax3, ax4 = axs.flatten()
     colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
@@ -676,7 +685,7 @@ def ejecta_distance(fsave='ejecta_distance.pdf', figdir=FIGDIR, cfg=CFG):
         dist = rad * d_crad  # distance [m]
         thick = mp.get_ejecta_thickness(dist, rad, ccfg)  # [m]
         vel = mp.ballistic_velocity(dist, ccfg)  # [m/s]
-        mass = thick * ccfg.target_density  # [kg/m^2]
+        mass = thick * ccfg.bulk_density  # [kg/m^2]
         ke = mp.kinetic_energy(mass, vel) / 1e6  # [MJ] 
         mr = mp.get_mixing_ratio_oberbeck(diam, ccfg)  # mixing ratio
         depth = thick * mr  # depth [m]
@@ -694,7 +703,7 @@ def ejecta_distance(fsave='ejecta_distance.pdf', figdir=FIGDIR, cfg=CFG):
             rthick = thick[ries]
             rke = ke[ries]
             ax1.axhline(rvel, ls='--', c='k')
-            ax1.annotate('Bunte Breccia $v_{max}=$'+f'{rvel:.0f} m/s', (4, rvel), xytext=(3.5, 1300), ha='center', arrowprops=dict(arrowstyle="->"))
+            ax1.annotate('Bunte Breccia $v_{max}=$'+f'{rvel:.0f} m/s', (4, rvel), xytext=(3.82, 1300), ha='center', arrowprops=dict(arrowstyle="->"))
             ax2.axhline(rthick, ls='--', c='k')
             ax2.annotate('Bunte Breccia\n$\delta_{min}=$'+f'{rthick:.1f} m', (4, rthick), xytext=(5.8, 30), ha='right', arrowprops=dict(arrowstyle="->"))
             ax3.axhline(rke, ls='--', c='k')
@@ -703,7 +712,13 @@ def ejecta_distance(fsave='ejecta_distance.pdf', figdir=FIGDIR, cfg=CFG):
     ax1.legend(bbox_to_anchor=(0., 1.02, 2.25, .102), loc=3,
             ncol=2, mode="expand", borderaxespad=0.)
     ax1.set_xlim(1, 6)
-    ax1.set_ylim(20, 2000)
+    ax1.set_ylim(20, 2e3)
+    ax2.set_ylim(None, 2e3)
+    ax3.set_ylim(None, 7e5)
+    ax4.set_ylim(4e-3, 7e3)
+    for ax, letter in zip(axs.flatten(), ('A', 'B', 'C', 'D')):
+        ax.annotate(letter, xy=(0.02, 0.98), va='top', fontweight='bold', 
+                    fontsize=16, xycoords='axes fraction')
 
     ax1.set_ylabel('Ejecta velocity [$\\rm m/s$]')
     ax2.set_ylabel('Ejecta thickness [$\\rm m$]')
@@ -711,7 +726,7 @@ def ejecta_distance(fsave='ejecta_distance.pdf', figdir=FIGDIR, cfg=CFG):
     ax4.set_ylabel('Balistic mixing depth [$\\rm m$]')
     ax3.set_xlabel('Distance [crater radii]')
     ax4.set_xlabel('Distance [crater radii]')
-    version = mplt.plot_version(cfg, loc='ll', xyoff=(0.02, 0), ax=ax4)
+    version = mplt.plot_version(cfg, loc='lr', xyoff=(-0.02, 0), ax=ax4)
     return _save_or_show(fig, axs, fsave, figdir, version)
 
 
@@ -747,12 +762,7 @@ def melt_fraction_bsed(fsave='melt_fraction_bsed.pdf', figdir=FIGDIR, cfg=CFG):
     basin_w = [[basin_tw, basin_tw], [basin_pct.min(), basin_pct.max()]]
     # Plot
     fig = plt.figure(figsize=(7.2, 7))
-    ax_dict = fig.subplot_mosaic(
-        """
-        AB
-        CC
-        """
-    )
+    ax_dict = fig.subplot_mosaic("""AB\nCC""")
     fig.subplots_adjust(hspace=0.5, wspace=0.45)    
 
     ax = ax_dict['A']
@@ -857,6 +867,56 @@ def random_crater_ages(fsave='random_crater_ages.pdf', figdir=FIGDIR, cfg=CFG):
     return _save_or_show(fig, axs, fsave, figdir, version)
 
 
+def strat_cols_bsed(fsave='strat_cols_bsed.pdf', figdir=FIGDIR, cfg=CFG,
+                    datedir='', runs=('mpies', 'no_bsed'), seeds=(7,),
+                    min_thick=5, corder=CORDER):
+    """
+    Plot stratigraphy columns comparing bsed and no bsed.
+    """
+    mplt.reset_plot_style()
+    if not datedir:
+        datedir = Path(cfg.out_path).parents[1]
+    fig = mplt.plot_stratigraphy(datedir, corder, runs, seeds, min_thick, 
+                                 version=False)
+    ax = fig.axes[-1]
+    version = mplt.plot_version(cfg, loc='lr', xyoff=(0.01, -0.2), ax=ax)
+
+    # Find coords for subplot annotations (top left of row 1 and 2)
+    axa = fig.axes[1]
+    axb = next(ax for ax in fig.axes[2:] 
+               if ax.get_window_extent().get_points()[0, 1] 
+               != axa.get_window_extent().get_points()[0, 1])
+    kw = dict(va='top', fontweight='bold', fontsize=20, xycoords='axes fraction')
+    axa.annotate('A', xy=(-0.5, 1), **kw)  # 0.052, 0.9
+    axb.annotate('B', xy=(-0.5, 1), **kw)  # 0.052, 0.5
+    return _save_or_show(fig, ax, fsave, figdir, version)
+
+
+def strat_cols_seeds(fsave='strat_cols_seeds.pdf', figdir=FIGDIR, cfg=CFG,
+                    datedir='', runs=('mpies',), seeds=(13, 8, 1),
+                    min_thick=5, corder=('Faustini', 'Haworth', 'Cabeus')):
+    """
+    Plot stratigraphy columns comparing bsed and no bsed.
+    """
+    mplt.reset_plot_style()
+    if not datedir:
+        datedir = Path(cfg.out_path).parents[1]
+    fig = mplt.plot_stratigraphy(datedir, corder, runs, seeds, min_thick, 
+                                 version=False)
+    ax = fig.axes[-1]
+    version = mplt.plot_version(cfg, loc='lr', xyoff=(0.01, -0.2), ax=ax)
+
+    # Find coords for subplot annotations (top left of row 1 and 2)
+    axa = fig.axes[1]
+    axb = fig.axes[5]
+    axc = fig.axes[9]
+    kw = dict(va='top', fontweight='bold', fontsize=20, xycoords='axes fraction')
+    axa.annotate('A', xy=(-0.5, 1), **kw)
+    axb.annotate('B', xy=(-0.5, 1), **kw)
+    axc.annotate('C', xy=(-0.5, 1), **kw)
+    return _save_or_show(fig, ax, fsave, figdir, version)
+
+
 def surface_boxplot(fsave='surface_boxplot.pdf', figdir=FIGDIR, cfg=CFG, 
                     datedir='', corder=CORDER, sdepth=6):
     """
@@ -868,6 +928,17 @@ def surface_boxplot(fsave='surface_boxplot.pdf', figdir=FIGDIR, cfg=CFG,
     runs = runs[runs.runs == 'mpies']
     key = f'total ice {sdepth}m'
     # runs['icepct'] = 100 * runs[key] / sdepth
+
+    # Faustini, de Gerlache, Amundsen. % model runs > 0
+    thresh = 0.05 * 6  # [m] 5% of 6m (LCROSS threshold)
+    for coldtrap in runs.coldtrap.unique():
+        gt_thresh = runs[runs.coldtrap == coldtrap][key] > thresh
+        gt_frac = gt_thresh.sum() / len(gt_thresh)
+        print(f'{coldtrap} exceeds {thresh:.2f} m {gt_frac:.2%} of the time')
+    
+    # Mean +/- std of ice in each coldtrap
+    
+
     fig, ax = plt.subplots(figsize=(7.2, 4))
     ax = sns.boxplot(x='coldtrap', y=key, data=runs, 
                      order=corder, fliersize=1, whis=(1, 99), ax=ax)
