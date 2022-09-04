@@ -4,10 +4,7 @@ docs/_build/
 data/tmp/
 dist/
 figures/
-final_report/
-other_modules/
-paper/
-refs/
+scripts/
 __pycache__/
 *.zip
 *.prof

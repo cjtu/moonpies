@@ -233,9 +233,9 @@ def basin_ice(fsave='basin_ice.pdf', figdir=FIGDIR, cfg=CFG, n=500):
         ax.semilogy(x, all_basin_ice, marker[btype], c=color[btype], alpha=0.5)
         # median = moving_avg(np.median(all_basin_ice,axis=1), window)
         mean = moving_avg(np.mean(all_basin_ice,axis=1), window)
-        pct99 = moving_avg(np.percentile(all_basin_ice, 99, axis=1), window)
+        pct99 = moving_avg(np.percentile(all_basin_ice, 99.7, axis=1), window)
         ax.plot(x, mean, '-', c=color[btype], lw=2, label=btype+' mean')
-        ax.plot(x, pct99,'--', c=color[btype], alpha=0.5, lw=2, label='pct99')
+        ax.plot(x, pct99,'--', c=color[btype], alpha=0.5, lw=2, label='99.7 percentile')
     ax.grid('on')
     ax.set_xlim(4.25, 3.79)
     ax.set_ylim(0.1, None)
@@ -541,15 +541,15 @@ def ejecta_bsed(fsave='ejecta_bsed.pdf', figdir=FIGDIR, cfg=CFG):
     return _save_or_show(fig, ax, fsave, figdir, version)
 
 
-def kde_layers(fsave='kde_layers.pdf', figdir=FIGDIR, cfg=CFG, datedir='', coldtraps=None):
+def kde_layers(fsave='kde_layers.pdf', figdir=FIGDIR, cfg=CFG, datedir='', 
+               coldtraps=("Faustini", "Haworth", "Amundsen", "Cabeus", 
+               "de Gerlache", "Slater")):
     """
     Plot KDE of ejecta thickness and ballistic mixing depth.
     """
     mplt.reset_plot_style()
     custom_params = {"axes.spines.right": False, "axes.spines.top": False}
     sns.set_theme(style="ticks", rc=custom_params)
-    if coldtraps is None:
-        coldtraps = ["Faustini", "Haworth", "Amundsen", "Cabeus", "de Gerlache", "Slater"]
     pal = sns.color_palette()
     mypal = [pal[0], pal[1]]
     hues = ['No', 'Yes']
@@ -703,7 +703,7 @@ def ejecta_distance(fsave='ejecta_distance.pdf', figdir=FIGDIR, cfg=CFG):
             rthick = thick[ries]
             rke = ke[ries]
             ax1.axhline(rvel, ls='--', c='k')
-            ax1.annotate('Bunte Breccia $v_{max}=$'+f'{rvel:.0f} m/s', (4, rvel), xytext=(3.82, 1300), ha='center', arrowprops=dict(arrowstyle="->"))
+            ax1.annotate('Bunte Breccia $v_{max}=$'+f'{round(rvel,-1):.0f} m/s', (4, rvel), xytext=(3.82, 1300), ha='center', arrowprops=dict(arrowstyle="->"))
             ax2.axhline(rthick, ls='--', c='k')
             ax2.annotate('Bunte Breccia\n$\delta_{min}=$'+f'{rthick:.1f} m', (4, rthick), xytext=(5.8, 30), ha='right', arrowprops=dict(arrowstyle="->"))
             ax3.axhline(rke, ls='--', c='k')
@@ -730,7 +730,7 @@ def ejecta_distance(fsave='ejecta_distance.pdf', figdir=FIGDIR, cfg=CFG):
     return _save_or_show(fig, axs, fsave, figdir, version)
 
 
-def melt_fraction_bsed(fsave='melt_fraction_bsed.pdf', figdir=FIGDIR, cfg=CFG):
+def melt_fraction_bsed(fsave='melt_fraction_bsed.pdf', figdir=FIGDIR, cfg=CFG, show_avgs=False):
     """
     Plot melt fraction as a function of ejecta thickness and ballistic mixing depth.
     """
@@ -761,21 +761,38 @@ def melt_fraction_bsed(fsave='melt_fraction_bsed.pdf', figdir=FIGDIR, cfg=CFG):
     basin_c = [[basin_tc, basin_tc], [basin_pct.min(), basin_pct.max()]]
     basin_w = [[basin_tw, basin_tw], [basin_pct.min(), basin_pct.max()]]
     # Plot
-    fig = plt.figure(figsize=(7.2, 7))
-    ax_dict = fig.subplot_mosaic("""AB\nCC""")
-    fig.subplots_adjust(hspace=0.5, wspace=0.45)    
+    mosaic = "A\nB"
+    figsize = (3.75, 6.5)
+    v_xyoff = (0.5, -0.22)
+    sharex = True
+    hspace = 0.075
+    if show_avgs:
+        mosaic = "AB\nCC" 
+        figsize=(7.2, 7)
+        v_xyoff = (0.01, -0.21)
+        sharex = False
+        hspace = 0.5
+    fig = plt.figure(figsize=figsize)
+    ax_dict = fig.subplot_mosaic(mosaic, sharex=sharex)
+    fig.subplots_adjust(hspace=hspace, wspace=0.45)    
 
     ax = ax_dict['A']
+    ax.tick_params('x', bottom=False, top=False)
+    ax.tick_params('y', direction='out', right=False)
     p = ax.imshow(frac_mean, extent=extent, aspect='auto', interpolation='none', cmap='magma')
     ax.plot(*crater, 'o--', ms=4, c='tab:blue', label='Crater')
     ax.plot(*basin_c, 'o--', ms=4, c='tab:orange', label='Basin (cold)')
     ax.plot(*basin_w, 'o--', ms=4, c='tab:red', label='Basin (warm)')
     ax.legend()
-    fig.colorbar(p, ax=ax, label='Fraction melted')
+    fig.colorbar(p, ax=ax, label='Mean Melt fraction')
     ax.set_ylabel("Ejecta fraction [%]")
-    ax.set_xlabel("Ejecta Temperature [K]")
+    if show_avgs:
+        ax.tick_params('x', direction='out', bottom=True, top=False)
+        ax.set_xlabel("Ejecta Temperature [K]")
 
     ax = ax_dict['B']
+    ax.tick_params('x', direction='out', top=False)
+    ax.tick_params('y', direction='out', right=False)
     p = ax.imshow(frac_std, vmax=0.1, extent=extent, aspect='auto', interpolation='none', cmap='cividis')
     ax.plot(*crater, 'o--', ms=4, c='tab:blue', label='Crater')
     ax.plot(*basin_c, 'o--', ms=4, c='tab:orange', label='Basin (cold)')
@@ -784,19 +801,20 @@ def melt_fraction_bsed(fsave='melt_fraction_bsed.pdf', figdir=FIGDIR, cfg=CFG):
     ax.set_ylabel("Ejecta fraction [%]")
     ax.set_xlabel("Ejecta Temperature [K]")
 
-    ax = ax_dict['C']
-    axb = ax.twiny()
-    ax.errorbar(temps, frac_mean.mean(axis=0), yerr=frac_std.mean(axis=0), 
-                c='tab:blue', fmt='o', label='Melt frac vs. Temperature', capsize=4)
-    axb.errorbar(ejecta_pct, frac_mean.mean(axis=1), yerr=frac_std.mean(axis=1), 
-                c='tab:orange', fmt='^', label='Melt frac vs. Ejecta %', capsize=4)
-    ax.set_ylim(0, 1)
-    ax.set_xlabel('Ejecta Temperature [K]')
-    axb.set_xlabel("Ejecta fraction [%]")
-    ax.set_ylabel("Mean fraction melted")
-    ax.legend(loc='lower right')
-    axb.legend(loc='upper left')
-    version = mplt.plot_version(cfg, loc='lr', xyoff=(0.01, -0.21), ax=ax)
+    if show_avgs:
+        ax = ax_dict['C']
+        axb = ax.twiny()
+        ax.errorbar(temps, frac_mean.mean(axis=0), yerr=frac_std.mean(axis=0), 
+                    c='tab:blue', fmt='o', label='Melt frac vs. Temperature', capsize=4)
+        axb.errorbar(ejecta_pct, frac_mean.mean(axis=1), yerr=frac_std.mean(axis=1), 
+                    c='tab:orange', fmt='^', label='Melt frac vs. Ejecta %', capsize=4)
+        ax.set_ylim(0, 1)
+        ax.set_xlabel('Ejecta Temperature [K]')
+        axb.set_xlabel("Ejecta fraction [%]")
+        ax.set_ylabel("Mean fraction melted")
+        ax.legend(loc='lower right')
+        axb.legend(loc='upper left')
+    version = mplt.plot_version(cfg, loc='lr', xyoff=v_xyoff, ax=ax)
     return _save_or_show(fig, ax_dict, fsave, figdir, version)
 
 
@@ -918,7 +936,7 @@ def strat_cols_seeds(fsave='strat_cols_seeds.pdf', figdir=FIGDIR, cfg=CFG,
 
 
 def surface_boxplot(fsave='surface_boxplot.pdf', figdir=FIGDIR, cfg=CFG, 
-                    datedir='', corder=CORDER, sdepth=6):
+                    datedir='', corder=CORDER, sdepth=10):
     """
     Plot surface boxplot.
     """
