@@ -67,6 +67,9 @@ master_doc = 'index'
 # Don't expand constants in doc params
 autodoc_preserve_defaults = True
 
+# Don't alphabetize functions
+autodoc_member_order = "bysource"
+
 # Latex options
 latex_documents = [
     (master_doc, 'moonpiesapi.tex', project,

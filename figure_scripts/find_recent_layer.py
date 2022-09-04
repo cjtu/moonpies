@@ -15,10 +15,10 @@ import sys
 sys.path.insert(0, "/Users/tylerpaladino/Documents/ISU/LPI_NASA/Codes/moonpies_package/moonpies")
 
 import moonpies as mp
-from moonpies import default_config
+from moonpies import config
 
 
-cfg= default_config.Cfg()
+cfg= config.Cfg()
 
 # Craters sorted by latitude
 col_names_new = ['time', 'Cabeus B', "Idel'son L", 'Amundsen', 'Wiechert J', 'Cabeus','Faustini', 'Haworth', 'Shoemaker', 'Slater', 'Sverdrup', 'de Gerlache', 'Shackleton']

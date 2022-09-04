@@ -8,9 +8,9 @@ from multiprocessing import Pool, cpu_count
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from moonpies import default_config
+from moonpies import config
 
-CFG = default_config.Cfg()
+CFG = config.Cfg()
 G_MOON = CFG.grav_moon  # [m/s^2]
 R_MOON = CFG.rad_moon  # [m]
 

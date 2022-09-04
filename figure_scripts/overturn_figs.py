@@ -1,6 +1,6 @@
 #DOES NOT WORK WITH CURRENT MOONPIES
 from moonpies import moonpies as mm
-from moonpies import default_config
+from moonpies import config
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -14,7 +14,7 @@ plt.rcParams.update({
     'ytick.direction': 'in',
     'axes.grid': True
 })
-cfg = default_config.Cfg()
+cfg = config.Cfg()
 
 mm.plot_version(cfg,loc='ul')
 # See figure 4 Costello (2020)
@@ -128,7 +128,7 @@ plt.savefig('/home/cjtu/projects/moonpies/figs/overturn_regime_test.png',
 plt.show()
 
 time_arr = np.linspace(cfg.timestart, 0)
-new_cfg = default_config.Cfg()
+new_cfg = config.Cfg()
 new_cfg.overturn_prob_pct = '99%'
 
 for n in (100, 10, 1):

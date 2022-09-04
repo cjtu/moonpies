@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 import pandas as pd
 import matplotlib.pyplot as plt
-from moonpies import default_config
+from moonpies import config
 
 # Manually set datadir else try to read from cfg
 data_dir = ''
@@ -14,8 +14,8 @@ col = 2  # Column to use from ice_cols.csv (1 up to #cols)
 # Get cfg
 cfg_dict = {}
 if len(sys.argv) > 1:   # 1st cmd-line arg is path to custom cfg
-    cfg_dict = default_config.read_custom_cfg(sys.argv[1]) 
-cfg = default_config.Cfg(**cfg_dict)
+    cfg_dict = config.read_custom_cfg(sys.argv[1]) 
+cfg = config.Cfg(**cfg_dict)
 if not data_dir:
     data_dir = Path(cfg.out_path).parent
 figname = f'ensemble_ice_{cfg.run_name}_{cfg.run_date}.png'

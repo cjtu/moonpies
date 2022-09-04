@@ -7,18 +7,18 @@ from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 from moonpies import moonpies as mp
-from moonpies import default_config
+from moonpies import config
 
 FIGDIR = ''  # Set or leave blank to use default (moonpies/figs)
 if not FIGDIR:
-    FIGDIR = default_config.Cfg().figs_path
+    FIGDIR = config.Cfg().figs_path
 FIGDIR = str(Path(FIGDIR).resolve() / "_")[:-1]  # add trailing slash
 
 
 # Set config
-cfg_c = default_config.Cfg(mode='cannon')
-cfg_m_asteroid = default_config.Cfg(mode='moonpies')
-cfg_m_comet = default_config.Cfg(mode='moonpies', is_comet=True)
+cfg_c = config.Cfg(mode='cannon')
+cfg_m_asteroid = config.Cfg(mode='moonpies')
+cfg_m_comet = config.Cfg(mode='moonpies', is_comet=True)
 print(cfg_m_comet.is_comet)
 
 # Data from Ong et al. (2010)

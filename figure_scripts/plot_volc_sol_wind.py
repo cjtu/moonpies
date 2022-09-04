@@ -7,9 +7,9 @@ import matplotlib.pyplot as plt
 import sys
 sys.path.insert(0, "/Users/tylerpaladino/Documents/ISU/LPI_NASA/Codes/moonpies_package/moonpies")
 
-from moonpies import default_config
+from moonpies import config
 import moonpies as mp
-cfg= default_config.Cfg()
+cfg= config.Cfg()
 TIME_ARR = mp.get_time_array(cfg)
 
 out_dir = '/Users/tylerpaladino/Documents/ISU/LPI_NASA/figs/'

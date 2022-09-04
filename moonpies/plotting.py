@@ -7,10 +7,10 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from moonpies import default_config
+from moonpies import config
 from moonpies import moonpies as mp
 
-CFG = default_config.Cfg(seed=1)
+CFG = config.Cfg(seed=1)
 CDF = mp.get_crater_basin_list(CFG)  # Only used for radii for lith_key
 WARNINGS = 0  # Count warnings
 
@@ -76,7 +76,7 @@ def plot_stratigraphy(out_path, coldtraps=None, runs=None, seeds=None,
         fcfg = next(Path(out_path).rglob('run_config*.py'))
     except StopIteration as e:
         raise FileNotFoundError(f"No run_config*.py in {out_path}") from e
-    cfg = default_config.read_custom_cfg(fcfg)
+    cfg = config.read_custom_cfg(fcfg)
     date_path = Path(cfg.out_path).parents[1]
     
     if runs is None:

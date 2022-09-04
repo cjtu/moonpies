@@ -6,7 +6,7 @@
 
 
 import moonpies as mp
-import default_config
+import config
 import numpy as np
 import os
 import matplotlib.pyplot as plt
@@ -14,8 +14,8 @@ import pandas as pd
 import rasterio
 import matplotlib.ticker as ticker
 
-def_cfg = default_config.Cfg(mode = 'moonpies')
-can_cfg = default_config.Cfg(mode = 'cannon')
+def_cfg = config.Cfg(mode = 'moonpies')
+can_cfg = config.Cfg(mode = 'cannon')
 
 # Constants
 G_MOON = 1.624  # [m s^-2]

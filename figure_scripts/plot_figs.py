@@ -9,12 +9,12 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import seaborn as sns
 from moonpies import moonpies as mp
-from moonpies import default_config
+from moonpies import config
 from moonpies import plotting as mplt
 import aggregate as agg
 
 # Plot helpers
-CFG = default_config.Cfg(seed=1)
+CFG = config.Cfg(seed=1)
 DATE = datetime.now().strftime("%y%m%d")
 FIGDIR = Path(CFG.figs_path) / f'{DATE}_v{CFG.version}'
 CORDER = np.array(['Faustini', 'Haworth', 'Shoemaker', 'Cabeus B', 
@@ -223,7 +223,7 @@ def basin_ice(fsave='basin_ice.pdf', figdir=FIGDIR, cfg=CFG, n=500):
         for i, seed in enumerate(range(seed0, seed0+n)):
             mp.clear_cache()
             cdict['seed'] = seed
-            cfg = default_config.Cfg(**cdict)
+            cfg = config.Cfg(**cdict)
             df = mp.get_crater_basin_list(cfg)
             if btype == 'Comet':
                 cfg = mp.get_comet_cfg(cfg)
@@ -390,7 +390,7 @@ def crater_scaling(fsave='crater_scaling.pdf', figdir=FIGDIR, cfg=CFG):
     }
     cdict = cfg.to_dict()
     cdict['impact_regimes'] = new_regimes
-    alt_cfg = default_config.Cfg(**cdict)
+    alt_cfg = config.Cfg(**cdict)
 
     # Plot regimes c - e
     fig, ax = plt.subplots(figsize=(7.2, 5.5))
@@ -432,7 +432,7 @@ def distance_bsed(fsave='distance_bsed.pdf', figdir=FIGDIR, cfg=CFG):
     mplt.reset_plot_style()
     cdict = cfg.to_dict() 
     cdict['ej_threshold'] = -1
-    cfg = default_config.Cfg(**cdict)
+    cfg = config.Cfg(**cdict)
 
     # Ries data
     fries = Path(cfg.data_path) / 'horz_etal_1983_table2_fig19.csv'
@@ -663,7 +663,7 @@ def ejecta_distance(fsave='ejecta_distance.pdf', figdir=FIGDIR, cfg=CFG):
     earth_dict['grav_moon'] = 9.81  # [m/s^2]
     earth_dict['rad_moon'] = 6.371e6  # [m]
     earth_dict['bulk_density'] = 2700  # [kg/m^3]
-    earth_cfg = default_config.Cfg(**earth_dict)
+    earth_cfg = config.Cfg(**earth_dict)
 
     fig, axs = plt.subplots(2, 2, figsize=(7.2, 6.4), sharex=True, 
                             gridspec_kw={'wspace':0.35, 'hspace':0.02})
@@ -836,7 +836,7 @@ def random_crater_ages(fsave='random_crater_ages.pdf', figdir=FIGDIR, cfg=CFG):
     crater_list = list(df.cname)
     for i, seed in enumerate(range(nseed)):
         cdict['seed'] = seed
-        cfg = default_config.Cfg(**cdict)
+        cfg = config.Cfg(**cdict)
         rng = mp.get_rng(cfg)
         df = mp.read_crater_list(cfg)
         df_rand = mp.randomize_crater_ages(df, cfg.timestep, rng).set_index('cname')

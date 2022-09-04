@@ -11,7 +11,7 @@ import matplotlib as mpl
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 from moonpies import moonpies as mp
-from moonpies import default_config
+from moonpies import config
 
 FIGDIR = ''  # Full path or '' for default (moonpies/figs)
 DATADIR = ''  # Full path or '' for default (moonpies/data)
@@ -27,8 +27,8 @@ if RUNNAME == '_bsed':
 elif RUNNAME == '_no_bsed':
     DATADIR = '/home/cjtu/projects/moonpies/data/out/220221_nobsed/'
 
-# Set default config
-CFG = default_config.Cfg()
+# Set config
+CFG = config.Cfg()
 
 # Set Fig paths
 if not FIGDIR:
@@ -270,7 +270,7 @@ def makekey(lith_key, savepath, ncols=1, show_ict_pct=False, key_color='white', 
 if __name__ == "__main__":
     # Read strat and initialize
     coi_strat = pd.read_csv(COI_CSV)
-    cfg = default_config.Cfg(seed=float(SEED))
+    cfg = config.Cfg(seed=float(SEED))
     rng = mp.get_rng(cfg)
     crater_list = mp.get_crater_list(cfg=cfg, rng=rng)
 

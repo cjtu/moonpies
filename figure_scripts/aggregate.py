@@ -6,7 +6,7 @@ from multiprocessing import Process
 import numpy as np
 import pandas as pd
 from moonpies import moonpies as mp
-from moonpies import default_config
+from moonpies import config
 
 
 def read_agg_dfs(datedir, flatten=False, count_runs=False):
@@ -42,7 +42,7 @@ def get_coldtrap_age(coldtrap, coldtrap_csv):
     """
     mp.clear_cache()
     fcfg = coldtrap_csv.parent.joinpath('run_config_mpies.py')
-    cfg = default_config.read_custom_cfg(fcfg)
+    cfg = config.read_custom_cfg(fcfg)
     craters = mp.get_crater_basin_list(cfg=cfg, rng=mp.get_rng(cfg))
     return craters[craters.cname==coldtrap].age.values[0]
 
@@ -142,7 +142,7 @@ def aggregate(coldtraps, tmpdir, datedir):
 
 
 if __name__ == '__main__':
-    COLDTRAPS = default_config.Cfg().coldtrap_names
+    COLDTRAPS = config.Cfg().coldtrap_names
 
     DEBUG = False
     if DEBUG:

@@ -11,7 +11,7 @@ import pandas as pd
 import matplotlib as mpl
 import matplotlib.pyplot as plt 
 from moonpies import moonpies as mp
-from moonpies import default_config
+from moonpies import config
 
 mpl.rcParams.update({
     'font.size': 12,
@@ -24,14 +24,14 @@ mpl.rcParams.update({
 # Set Fig paths
 FIGDIR = ''  # Set or leave blank to use default (moonpies/figs)
 if not FIGDIR:
-    FIGDIR = default_config.Cfg().figs_path
+    FIGDIR = config.Cfg().figs_path
 FIGDIR = str(Path(FIGDIR).resolve() / "_")[:-1]  # add trailing slash
 
 # Create configuration objects for each mode. 
 COI = 'Faustini'
 seed = 65103
-cfg_mp = default_config.Cfg(mode='moonpies', volc_mode='Head', seed=seed)
-cfg_cn = default_config.Cfg(mode='cannon', seed=seed)
+cfg_mp = config.Cfg(mode='moonpies', volc_mode='Head', seed=seed)
+cfg_cn = config.Cfg(mode='cannon', seed=seed)
 mp.clear_cache()
 
 # Random number generator for each run

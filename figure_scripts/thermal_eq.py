@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd 
 import moonpies as mp
-import default_config
+import config
 
 fig_dir = "/home/kristen/codes/code/moonpies_package/figs/"
 data_dir = "/home/kristen/codes/code/moonpies_package/data/"
@@ -473,7 +473,7 @@ def test_melt():
             maxTlen[i,j] = len(maxtemp[maxtemp>110])
             fraction[i,j] = maxTlen[i,j]/(100*(1-vf[i])) 
     
-    cfg = default_config.Cfg(mode='moonpies')
+    cfg = config.Cfg(mode='moonpies')
 
     plt.figure(1, figsize=(6,4))
     plt.plot(np.linspace(0,10,100), T[:,0], 'r-')

@@ -6,7 +6,7 @@ Acknowledgements: Translated & extended MATLAB model by Cannon et al. (2020).
 """
 import argparse
 from pathlib import Path
-from moonpies import default_config
+from moonpies import config
 if __name__ == '__main__':
     # Get optional random seed and cfg file from cmd-line args
     parser = argparse.ArgumentParser()
@@ -25,7 +25,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # Get Cfg from file (if provided), overwrite seed (if provided), else default
-    cfg = default_config.read_custom_cfg(args.cfg, args.seed)
+    cfg = config.read_custom_cfg(args.cfg, args.seed)
 
     if args.resume and Path(cfg.out_path).exists():
         print(f"Skipping run with seed {cfg.seed}: {cfg.out_path} exists.")

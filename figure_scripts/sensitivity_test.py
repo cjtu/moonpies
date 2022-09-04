@@ -1,5 +1,5 @@
 import moonpies as mp
-import default_config
+import config
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -13,7 +13,7 @@ def sens_test_options():
     for op in options:
         mp.clear_cache() 
         #print('Time step = ', mystep)
-        cfg = default_config.Cfg(seed=7494, write=False, mode='moonpies', volc_mode=op)
+        cfg = config.Cfg(seed=7494, write=False, mode='moonpies', volc_mode=op)
         #print(int((cfg.timestart - cfg.timeend) / cfg.timestep) - (cfg.timestart - cfg.timeend) / cfg.timestep)
         out.append(mp.main(cfg))
         
@@ -53,7 +53,7 @@ def sens_test_mode():
     for state in states:
         mp.clear_cache() 
         #print('Time step = ', mystep)
-        cfg = default_config.Cfg(seed=7494, write=False, mode='moonpies', impact_gardening_costello=state)#
+        cfg = config.Cfg(seed=7494, write=False, mode='moonpies', impact_gardening_costello=state)#
         #print(int((cfg.timestart - cfg.timeend) / cfg.timestep) - (cfg.timestart - cfg.timeend) / cfg.timestep)
         out.append(mp.main(cfg))
 

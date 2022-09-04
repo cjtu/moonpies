@@ -7,9 +7,9 @@
 :linenos:
 ```
 
-## default_config.py
+## config.py
 
-```{literalinclude} ../moonpies/default_config.py
+```{literalinclude} ../moonpies/config.py
 :language: python
 :linenos:
 ```

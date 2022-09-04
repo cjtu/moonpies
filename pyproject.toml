@@ -35,7 +35,7 @@ exclude = '''
     | build
     | dist
   )/
-  | moonpies/default_config.py
+  | moonpies/config.py
 )
 '''
 

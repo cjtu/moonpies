@@ -2,9 +2,9 @@
 from unittest.mock import patch
 import numpy as np
 from moonpies import moonpies as mp
-from moonpies import default_config
+from moonpies import config
 
-CFG = default_config.from_dict({
+CFG = config.from_dict({
     'mode': 'cannon',
     'seed': 0,
     'write': False,
@@ -627,7 +627,7 @@ def test_cannon_ds02(mock_diam2len):
 
 def test_moonpies_mode():
     """Run main in moonpies mode."""
-    cfg = default_config.from_dict({
+    cfg = config.from_dict({
         'mode': 'moonpies', 
         'seed': 0,
         'write': False,

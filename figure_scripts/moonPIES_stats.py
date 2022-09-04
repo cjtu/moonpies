@@ -11,23 +11,23 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt 
 from moonpies import moonpies as mp
-from moonpies import default_config
+from moonpies import config
 
 # Set Fig paths
 FIGDIR = ''  # Set or leave blank to use default (moonpies/figs)
 if not FIGDIR:
-    FIGDIR = default_config.Cfg().figs_path
+    FIGDIR = config.Cfg().figs_path
 FIGDIR = str(Path(FIGDIR).resolve() / "_")[:-1]  # add trailing slash
 
 # Set data path
 DATADIR = '/home/cjtu/projects/moonpies/data/out/211119_mpies'
 if not DATADIR:
-    DATADIR = default_config.Cfg().out_path
+    DATADIR = config.Cfg().out_path
 DATADIR = str(Path(DATADIR).resolve() / "_")[:-1]  # add trailing slash
 os.chdir(DATADIR)
 
 
-cfg= default_config.Cfg()
+cfg= config.Cfg()
 
 # Find model run directories
 model_run_pths = DATADIR + '/*/'

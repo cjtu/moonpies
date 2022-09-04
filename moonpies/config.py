@@ -1,4 +1,8 @@
-"""DO NOT EDIT. Default config for moonpies (see README for config guide)."""
+"""Configuration for MoonPIES model
+
+Sets all configurable attributes, paths and model options for a MoonPIES run.
+See documentation for guide to defining custom config parameters.
+"""
 import ast
 import pprint
 from os import path, sep, environ, getcwd

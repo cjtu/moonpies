@@ -61,7 +61,7 @@ moonpies_package/
 |  |- needham_kring_2017.csv
 |- figures/
 |- moonpies/
-|  |- default_config.py
+|  |- config.py
 |  |- moonpies.py
 |  |- my_config.py
 |- test/
@@ -115,7 +115,7 @@ The seed can be any integer from 1 to 99999 (5-digits max). If no seed is specif
 
 All parameters to `main.py` can be modified in a configuration file and passed as an argument. The `my_config.py` file in the `moonpies/` directory is an template which you may edit or copy to produce custom `config.py` files.
 
-**Warning**: The `default_config.py` file contains the default parameters and should never be modified directly. However, `default_config.py` may be a useful reference for descriptions and units of all model parameters.
+**Warning**: The `config.py` file contains the default parameters and should never be modified directly. However, `config.py` may be a useful reference for descriptions and units of all model parameters.
 
 To run the model with a custom configuration, specify the `--cfg` or `-c` flag followed by the path to a custom `config.py` file:
 
@@ -188,11 +188,11 @@ import moonpies
 model_out = moonpies.main()
 ```
 
-To specify custom configuration options, create a custom `Cfg` object provided by `default_config.py` and pass it to `moonpies.main()`. Any parameter in `default_config.Cfg()` can be set as an argument like so:
+To specify custom configuration options, create a custom `Cfg` object provided by `config.py` and pass it to `moonpies.main()`. Any parameter in `config.Cfg()` can be set as an argument like so:
 
 ```Python
-import default_config
-custom_cfg = default_config.Cfg(mode='cannon', solar_wind_ice=True)
+import config
+custom_cfg = config.Cfg(mode='cannon', solar_wind_ice=True)
 cannon_model_out = moonpies.main(custom_cfg)
 ```
 

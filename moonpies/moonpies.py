@@ -10,21 +10,21 @@ from functools import lru_cache, _lru_cache_wrapper
 import numpy as np
 from scipy import stats
 import pandas as pd
-from moonpies import default_config
+from moonpies import config
 
-# Init cache and default configuration
-CFG = default_config.Cfg()
+# Init config
+CFG = config.Cfg()
 
 
 def main(cfg=CFG):
     """
-    Run mixing model with options in cfg (see default_config.py).
+    Run mixing model with options in cfg (see config.py).
 
     Examples
     --------
-    >>> import default_config
+    >>> import config
     >>> import moonpies as mp
-    >>> cfg = default_config.Cfg(mode='moonpies')
+    >>> cfg = config.Cfg(mode='moonpies')
     >>> ej_df, ice_df, strat_dfs = mp.main(cfg)
     >>> strat_dfs['Faustini'].head()
     """
@@ -1221,7 +1221,7 @@ def get_comet_cfg(cfg):
     comet_cfg_dict["hydrated_wt_pct"] = cfg.comet_hydrated_wt_pct
     comet_cfg_dict["impactor_density"] = cfg.comet_density
     comet_cfg_dict["impact_mass_retained"] = cfg.comet_mass_retained
-    return default_config.from_dict(comet_cfg_dict)
+    return config.from_dict(comet_cfg_dict)
 
 
 def get_impact_ice_comet(time_arr, df, cfg, rng=None):
@@ -2192,7 +2192,7 @@ def save_outputs(outputs, fnames):
             out.to_csv(fout, index=False)
         elif isinstance(out, np.ndarray):
             np.save(fout, out)
-        elif isinstance(out, default_config.Cfg):
+        elif isinstance(out, config.Cfg):
             out.to_py(fout)
 
 
