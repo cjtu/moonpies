@@ -1,7 +1,9 @@
 #DOES NOT WORK WITH CURRENT MOONPIES
+from pathlib import Path
 from moonpies import moonpies as mm
 from moonpies import config
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 
 
@@ -15,6 +17,20 @@ plt.rcParams.update({
     'axes.grid': True
 })
 cfg = config.Cfg()
+costello_csv_in = Path(cfg.data_dir) / 'tmp' / 'costello_etal_2018_t1_expanded.csv'
+
+# @lru_cache(1)
+def read_lambda_table(costello_csv):
+    """
+    Return DataFrame of lambda, probabilities (Table 1, Costello et al. 2018).
+
+    Parameters
+    ----------
+    costello_csv (str): Path to costello et al. (2018) Table 1.
+    """
+    cdf = pd.read_csv(costello_csv, header=1, index_col=0)
+    cdf.columns = cdf.columns.astype(float)
+    return cdf
 
 mm.plot_version(cfg,loc='ul')
 # See figure 4 Costello (2020)
@@ -58,7 +74,7 @@ for n_overturns, c in zip((1, 10, 100), ('r', 'orange', 'c')):
     depth = mm.get_overturn_depth(
             u,
             b,
-            cfg.costello_csv_in,
+            costello_csv_in,
             time_arr,
             n_overturns,
             prob_pct)
@@ -111,7 +127,7 @@ for regime in ('strength', 'gravity'):
     depth = mm.get_overturn_depth(
             u,
             b,
-            cfg.costello_csv_in,
+            costello_csv_in,
             time_arr,
             n_overturns,
             prob_pct)
@@ -146,7 +162,7 @@ plt.savefig('/home/cjtu/projects/moonpies/figs/total_overturn_depth.png',
 plt.show()
 
 # Table 1 from Costello et al. (2018)
-df = mm.read_lambda_table(cfg.costello_csv_in)
+df = read_lambda_table(costello_csv_in)
 df.plot(x='n', logx=True, logy=True)
 plt.ylabel('$\lambda$')
 plt.title('Table 1 Costello et al. 2018')

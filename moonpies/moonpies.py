@@ -1,8 +1,15 @@
-"""
-:MoonPIES: Moon Polar Ice and Ejecta Stratigraphy module
-:Date: 08/06/21
-:Authors: K.R. Frizzell, K.M. Luchsinger, A. Madera, T.G. Paladino and C.J. Tai Udovicic
-:Acknowledgements: Translated & extended MATLAB model by Cannon et al. (2020).
+"""Moon Polar Ice and Ejecta Stratigraphy model (MoonPIES).
+
+This module contains the main functions for running the MoonPIES model. This
+model simulates the evolution of polar ice and ejecta stratigraphy on the Moon
+over geologic time.
+
+
+:Authors: C.J. Tai Udovicic, K.R. Frizzell, K.M. Luchsinger, A. Madera, T.G. Paladino
+:Acknowledgements: This model was developed as part of the 2021 Exploration
+    Science Summer Intern Program hosted by the Lunar and Planetary Institute
+    with support from the Center for Lunar Science and Exploration node of the 
+    NASA Solar System Exploration Research Virtual Institute.
 """
 import os
 import gc
@@ -12,21 +19,34 @@ from scipy import stats
 import pandas as pd
 from moonpies import config
 
-# Init config
-CFG = config.Cfg()
-
+CFG = config.Cfg()  # Default Cfg object
 
 def main(cfg=CFG):
-    """
-    Run mixing model with options in cfg (see config.py).
+    """Run MoonPIES model and return stratigraphy columns.
+
+    Runs full ejecta and ice straitigraphy model for time, cold traps and
+    model parameters specified in cfg.
+
+    Parameters
+    ----------
+    cfg : moonpies.config.Cfg
+        MoonPIES config object.
+
+    Returns
+    -------
+    strat_dict : dict
+        Dict of {str:pandas.DataFrame} of coldtrap names and stratigraphy
+        tables (rows: layers, cols: ice, ejecta, source, time, depth, ice%)
+
+    See Also
+    --------
+    moonpies.config.Cfg
 
     Examples
     --------
-    >>> import config
     >>> import moonpies as mp
-    >>> cfg = config.Cfg(mode='moonpies')
-    >>> ej_df, ice_df, strat_dfs = mp.main(cfg)
-    >>> strat_dfs['Faustini'].head()
+    >>> ej_df, ice_df, strat_dfs = mp.main()
+    >>> print(strat_dfs['Faustini'].head())
     """
     # Setup phase
     vprint(cfg, "Initializing run...")
@@ -54,117 +74,148 @@ def main(cfg=CFG):
     )
 
     # Format and save outputs
-    outputs = format_save_outputs(strat_cols, time_arr, df, cfg)
-    return outputs
+    return format_save_outputs(strat_cols, time_arr, df, cfg)
 
 
 def get_time_array(cfg=CFG):
-    """
-    Return time_array from tstart [yr] - tend [yr] by timestep [yr] and dtype.
+    """Return model time array [yr].
 
     Parameters
     ----------
-    cfg (Cfg): Config object with attrs tstart, tend, timestep, dtype.
-    """
+    cfg : moonpies.config.Cfg, optional
+        cfg.timestart : int
+            Start time [yr].
+        cfg.timeend : int
+            End time [yr].
+        cfg.timestep : int
+            Time step [yr].
+
+    Returns
+    -------
+    time_arr : np.ndarray
+    """    
     n = int((cfg.timestart - cfg.timeend) / cfg.timestep)
     return np.linspace(cfg.timestart, cfg.timestep, n, dtype=cfg.dtype)
 
 
 # Strat column functions
 def init_strat_columns(time_arr, df, ej_dists, cfg=CFG, rng=None):
-    """
-    Return initialized stratigraphy columns (ice, ej, ej_sources)
+    """Return initialized model stratigraphy columns.
+
+    Initialize dict of list (ice, ej, ej_sources) for each cold trap. Computes
+    the ice and ejecta delivered in each model timestep to each cold trap.
 
     Parameters
     ----------
-    time_arr (arr): Time array [yr].
-    df (DataFrame): DataFrame of craters and basins.
-    ej_dists (2D arr): Crater-coldtrap distances [m] (Ncrater, Ncoldtrap)
-    cfg (Cfg): Config object.
-    rng (int or np.RandomState): Seed or random number generator.
-    """
-    ej_cols, ej_srcs = get_ejecta_thickness_time(time_arr, df, ej_dists, cfg)
-    ice_cols = get_ice_cols_time(time_arr, df, cfg, rng)
-    strat_columns = make_strat_columns(ej_cols, ej_srcs, ice_cols, cfg)
-    return strat_columns
-
-
-def make_strat_columns(ej_cols, ej_sources, ice_cols, cfg=CFG):
-    """
-    Return dict of ice and ejecta columns for cold trap craters in df.
-
-    Currently init at start of time_arr, but possibe TODO:
-    - init only after crater formed? But we lose info about pre-impact layering
-    - remove some pre-existing ice/ej? How much? And was the ice stable before?
-    - init only after coldtrap stable (e.g., polar wander epochs Siegler 2015)?
-
-    Parameters
-    ----------
-    ej_cols (arr): Array of ejecta columns for cold traps.
-    ej_sources (dict): Dict of ejecta sources for cold traps.
-    cfg (Cfg): Config object.
+    time_arr : numpy.ndarray
+        Time array [yr].
+    df : pandas.DataFrame
+        Crater and basin DataFrame.
+    ej_dists : numpy.ndarray
+        2D crater to cold trap distance array [m] (Ncrater, Ncoldtrap).
+    cfg : moonpies.config.Cfg, optional
+        MoonPIES config object.
+    rng : int or numpy.random.Generator, optional
+        Random seed or random number generator, by default None.
 
     Returns
     -------
-    strat_columns_dict[cname] = [ice_col, ej_col]
+    dict
+        Dict of {str : list of array} of coldtrap names to [ice, ej, ej_src].
+
+    See Also
+    --------
+    get_ejecta_thickness_time, get_ice_cols_time
     """
-    # Get cold trap crater names and their locations in df
+    ej_cols, ej_srcs = get_ejecta_thickness_time(time_arr, df, ej_dists, cfg)
+    ice_cols = get_ice_cols_time(time_arr, df, cfg, rng)
+
+    # Get cold trap crater names (corresponds to columns in ej_cols, ice_cols)
     ctraps = cfg.coldtrap_names
 
-    # Build strat columns with cname: ccol, ice_col, ej_col
+    # Build strat columns as {cname: ice_col, ej_col, ej_src}
     strat_columns = {
-        coldtrap: [ice_cols[:, i], ej_cols[:, i], ej_sources[:, i]]
+        coldtrap: [ice_cols[:, i], ej_cols[:, i], ej_srcs[:, i]]
         for i, coldtrap in enumerate(ctraps)
     }
     return strat_columns
 
 
-def update_ice_col(cols, t, overturn_depth, bsed_depth, bsed_frac, cfg=CFG):
-    """
-    Return ice_column updated with all processes applicable at time t.
+def update_ice_col(ice_col, ej_col, t, overturn_d, bsed_d, bsed_frac, cfg=CFG):
+    """Return ice_column updated with all processes applicable at time t.
+
+    Apply effects of impact gardening (overturn) and ballistic sedimentation 
+    (bsed) at time t to ice_col. Modifies ice_col in place.
 
     Parameters
     ----------
-    cols (tuple of arr): Ice column arr and ejecta column arr.
-    t (int): Time index.
-    new_ice (float): New ice thickness [m] at time t.
-    overturn_depth (float): Overturn depth [m] at time t.
-    bsed_depth (float): Ballistic sed depth [m] at time t.
-    cfg (Cfg): Config object.
+    ice_col : umpy.ndarray
+        Ice column array.
+    ej_col : numpy.ndarray
+        Ejecta column array.
+    t : int
+        Current time index.
+    overturn_d : float
+        Overturn depth [m] at timestep t.
+    bsed_d : float
+        Ballistic sedimentation depth [m] at timestep t.
+    bsed_frac : float
+        Ballistic sedimentation fraction at timestep t.
+    cfg : moonpies.config.Cfg, optional
+        MoonPIES config object.
 
     Returns
     -------
-    ice_col (arr): Updated ice column arr.
-    """
-    ice_col, ej_col, _ = cols
-    # Ballistic sed gardens before any ice gain (timestep t-1)
-    ice_col = garden_ice_column(ice_col, ej_col, t - 1, bsed_depth, bsed_frac)
+    ice_col : numpy.ndarray
+        Updated ice column arr.
 
-    # Ice "gained" by column (already computed in ice_col[t])
+    See Also
+    --------
+    garden_ice_column, remove_ice_overturn
+    """    
+    # Ballistic sed gardens column before any ice gain (timestep t-1)
+    ice_col = garden_ice_column(ice_col, ej_col, t - 1, bsed_d, bsed_frac)
 
-    # Ice eroded in column after ice gain (timestep t)
-    ice_col = remove_ice_overturn(ice_col, ej_col, t, overturn_depth, cfg)
+    # Ice "gained" by column (already pre-computed in ice_col[t])
+
+    # Ice gardened at end of timestep, i.e. after ice gain (timestep t)
+    ice_col = remove_ice_overturn(ice_col, ej_col, t, overturn_d, cfg)
     return ice_col
 
 
 def update_strat_cols(strat_cols, overturn, bsed_depth, bsed_frac, cfg=CFG):
-    """
-    Update ice_cols new ice added and ice eroded.
+    """Return strat_cols dict updated with ice modification at each timestep.
 
     Parameters
     ----------
-    strat_cols (dict): Dict of strat columns.
-    overturn (arr): Overturn depth [m] at time t.
-    bsed_depth (2D arr): Ballistic sed depth [m] at time t for each coldtrap.
-    bsed_frac (2D arr): Ballistic sed fraction at time t for each coldtrap.
-    cfg (Cfg): Config object.
-    """
+    strat_cols : dict
+        Dict of {str : list of array} of coldtrap names to [ice, ej, ej_src].
+    overturn : numpy.ndarray
+        Overturn depth array [m] (Ntime).
+    bsed_depth : numpy.ndarray
+        Ballistic sedimentation depth array [m] (Ntime).
+    bsed_frac : numpy.ndarray
+        Ballistic sedimentation fraction array (Ntime).
+    cfg : moonpies.config.Cfg, optional
+        MoonPIES config object.
+
+    Returns
+    -------
+    strat_cols : dict
+        Updated strat_cols dict.
+
+    See Also
+    --------
+    update_ice_col
+    """    
     # Loop through all timesteps
     for t, overturn_t in enumerate(overturn):
         # Update all coldtrap ice_cols
         for i, coldtrap in enumerate(cfg.coldtrap_names):
+            ice_col, ej_col, _ = strat_cols[coldtrap]
             ice_col = update_ice_col(
-                strat_cols[coldtrap],
+                ice_col, 
+                ej_col,
                 t,
                 overturn_t,
                 bsed_depth[t, i],
@@ -177,22 +228,23 @@ def update_strat_cols(strat_cols, overturn, bsed_depth, bsed_frac, cfg=CFG):
 
 # Import data
 def get_crater_basin_list(cfg=CFG, rng=None):
-    """
-    Return dataframe of craters from read_crater_list() with ages randomized.
-
-    If basins, also return list of basins. Randomizes all crater and basin ages
-    based on cfg.seed and caches result for reproducibility between runs.
+    """Return dataframe of craters with ages randomized.
 
     Parameters
     ----------
-    basins (bool): If True, include basins with read_basin_list().
-    cfg (Cfg): Configuration object
-    rng (int or np.RandomState): Random number generator
+    cfg : moonpies.config.Cfg, optional
+        MoonPIES config object.
+    rng : int or numpy.random.Generator, optional
+        Random seed or random number generator, by default None.
 
     Returns
     -------
-    cfg (Cfg): Configuration object
-    rng (int or np.RandomState): Seed or random number generator.
+    pandas.DataFrame
+        Crater and basin DataFrame.
+
+    See Also
+    --------
+    random_icy_basins, randomize_crater_ages
     """
     df_craters = read_crater_list(cfg)
     df_craters["isbasin"] = False
@@ -209,18 +261,31 @@ def get_crater_basin_list(cfg=CFG, rng=None):
 
 
 def random_icy_basins(df, cfg=CFG, rng=None):
-    """
-    Randomly assign each basin an icy_impactor type (hyd_ctype, comet, or no).
+    """Randomly assign each basin an impactor type determining hydration. 
+    
+    Probability of hydration and comet based on cfg. Possible icy_impactor 
+    types are {"hyd_ctype", "comet", or "no"}.
 
     Parameters
     ----------
-    df (DataFrame): Basin DataFrame
-    cfg (Cfg): Configuration object
-    rng (int or np.RandomState): Seed or random number generator.
+    df : pandas.DataFrame
+        Basin DataFrame.
+    cfg : moonpies.config.Cfg, optional
+        cfg.impact_ice_basins : bool
+            Whether to allow basins to be icy.
+        cfg.impact_ice_comets : bool
+            Whether to allow comet impactors.
+    rng : int or numpy.random.Generator, optional
+        Random seed or random number generator, by default None.
 
     Returns
     -------
-    df (DataFrame): Crater DataFrame
+    pandas.DataFrame
+        Basin DataFrame with icy_impactor column added.
+
+    See Also
+    --------
+    get_random_hydrated_basins
     """
     df["icy_impactor"] = "no"
     ctype, comet = get_random_hydrated_basins(len(df), cfg, rng)
@@ -232,10 +297,9 @@ def random_icy_basins(df, cfg=CFG, rng=None):
 
 
 def read_crater_list(cfg=CFG):
-    """
-    Return DataFrame of craters from cfg.crater_csv_in path with columns names.
+    """Return DataFrame of craters from cfg.crater_csv_in.
 
-    Mandatory columns and naming convention:
+    Required columns, names and units in cfg.crater_csv_in:
         - 'lat': Latitude [deg]
         - 'lon': Longitude [deg]
         - 'diam': Diameter [km]
@@ -243,18 +307,21 @@ def read_crater_list(cfg=CFG):
         - 'age_low': Age error residual, lower (e.g., age - age_low) [Gyr]
         - 'age_upp': Age error residual, upper (e.g., age + age_upp) [Gyr]
 
-    Optional columns and naming conventions:
+    Optional columns in cfg.crater_csv_in:
         - 'psr_area': Permanently shadowed area of crater [km^2]
 
     Parameters
     ----------
-    cfg (Cfg): Configuration object contining attrs:
-        crater_csv_in (str): Path to crater list csv.
-        crater_cols (list of str): Names of all columns in crater_csv_in.
+    cfg : moonpies.config.Cfg, optional
+        cfg.crater_csv_in : str
+            Path to crater CSV file.
+        cfg.crater_cols : tuple of str
+            Tuple of column names in cfg.crater_csv_in.
 
     Returns
     -------
-    df (DataFrame): Crater DataFrame read and updated from crater_csv
+    pandas.DataFrame
+        Crater DataFrame.
     """
     df = pd.read_csv(cfg.crater_csv_in, names=cfg.crater_cols, header=0)
 
@@ -275,10 +342,9 @@ def read_crater_list(cfg=CFG):
 
 
 def read_basin_list(cfg=CFG):
-    """
-    Return dataframe of craters from basin_csv path with columns names.
+    """Return dataframe of craters from basin_csv path with columns names.
 
-    Mandatory columns, naming convention, and units:
+    Required columns, names and units in cfg.basin_csv_in:
         - 'lat': Latitude [deg]
         - 'lon': Longitude [deg]
         - 'diam': Diameter [km]
@@ -288,13 +354,16 @@ def read_basin_list(cfg=CFG):
 
     Parameters
     ----------
-    cfg (Cfg): Configuration object contining attrs:
-        basin_csv_in (str): Path to crater list csv.
-        basin_cols (list of str): Names of all columns in basin_csv_in.
+    cfg : moonpies.config.Cfg, optional
+        cfg.basin_csv_in : str
+            Path to basin CSV file.
+        cfg.basin_cols : tuple of str
+            Tuple of column names in cfg.basin_csv_in.
 
     Returns
     -------
-    df (DataFrame): Crater DataFrame read and updated from basin_csv
+    pandas.DataFrame
+        Basin DataFrame.
     """
     df = pd.read_csv(cfg.basin_csv_in, names=cfg.basin_cols, header=0)
 
@@ -307,71 +376,116 @@ def read_basin_list(cfg=CFG):
     return df
 
 
-def read_volcanic_species(nk_csv, nk_cols, species):
-    """
-    Return DataFrame of time, species mass (Table S3, Needham & Kring 2017).
+def read_volcanic_species(cfg=CFG):
+    """Return DataFrame of time, species mass from Table S3 [1]_.
 
     Parameters
     ----------
-    nk_csv (str): Path to Needham and Kring (2017) Table S3.
-    nk_cols (list of str): List of names of all columns in nk_csv.
-    species (str): Column name of volatile species.
+    cfg : moonpies.config.Cfg, optional
+        cfg.nk_csv : str
+            Path to Table S3 [1] CSV file.
+        cfg.nk_cols : tuple of str
+            Tuple of column names in cfg.nk_csv.
+        cfg.species : str
+            Species name (must be in nk_cols).
+
+    Returns
+    -------
+    pandas.DataFrame
+        DataFrame with columns "time" and species.
+    
+    References
+    ----------
+
+    .. [1] Needham, D. H., & Kring, D. A. (2017). "Lunar volcanism produced a 
+       transient atmosphere around the ancient Moon." Earth and Planetary 
+       Science Letters, 478, 175-178. 
+       https://doi.org/10.1016/j.epsl.2017.09.002
+
     """
-    df = pd.read_csv(nk_csv, names=nk_cols, header=4)
-    df = df[["time", species]]
+    df = pd.read_csv(cfg.nk_csv, names=cfg.nk_cols, header=4)
+    df = df[["time", cfg.species]]
     df["time"] = df["time"] * 1e9  # [Gyr -> yr]
-    df[species] = df[species] * 1e-3  # [g -> kg]
+    df[cfg.species] = df[cfg.species] * 1e-3  # [g -> kg]
     df = df.sort_values("time", ascending=False).reset_index(drop=True)
     return df
 
 
-@lru_cache(1)
-def read_lambda_table(costello_csv):
-    """
-    Return DataFrame of lambda, probabilities (Table 1, Costello et al. 2018).
+def read_solar_luminosity(cfg=CFG):
+    """Return DataFrame of time, solar luminosity from Table 2 [1]_.
 
     Parameters
     ----------
-    costello_csv (str): Path to costello et al. (2018) Table 1.
-    """
-    df = pd.read_csv(costello_csv, header=1, index_col=0)
-    df.columns = df.columns.astype(float)
-    return df
-
-
-def read_solar_luminosity(bahcall_csv):
-    """
-    Return DataFrame of time, solar luminosity (Table 2, Bahcall et al. 2001).
-
-    Parameters
-    ----------
-    bahcall_csv (str): Path to Bahcall et al. (2001) Table 2.
-    """
-    df = pd.read_csv(bahcall_csv, names=("age", "luminosity"), header=1)
-    df.loc[:, "age"] = (4.57 - df.loc[:, "age"]) * 1e9  # [Gyr -> yr]
-    return df
-
-
-# Pre-compute grid functions
-def get_coldtrap_dists(df, cfg=CFG):
-    """
-    Return 2D array of great circle dist between all craters in df. Distance
-    from a crater to itself or outside ejecta_threshold set to nan.
-
-    Mandatory
-        - df : Read in crater_list.csv as a DataFrame with defined columns
-        - df : Required columns defined 'lat' and 'lon'
-        - See 'read_crater_list' function
-
-    Parameters
-    ----------
-    df (DataFrame): Crater DataFrame, e.g., read by read_crater_list
-    coldtraps (arr of str): Coldtrap crater names (must be in df.cname)
-    ej_threshold (num): Number of crater radii to limit distant to else np.nan
+    cfg : moonpies.config.Cfg, optional
+        cfg.bahcall_csv_in : str
+            Path to CSV of Table 2 [1].
 
     Returns
     -------
-    dist (2D array): great circle distances from df craters to coldtraps
+    pandas.DataFrame
+        DataFrame with columns "time" and "luminosity".
+    
+    References
+    ----------
+    .. [1] Bahcall, J. N., Pinsonneault, M. H., & Basu, S. (2001). "Solar 
+       Models: Current Epoch and Time Dependences, Neutrinos, and 
+       Helioseismological Properties." The Astrophysical Journal, 555(2), 
+       990-1012. https://doi.org/10/dv2q29
+
+    """
+    cols = ["time", "luminosity"]
+    df = pd.read_csv(cfg.bahcall_csv_in, names=cols, header=1)
+    df.loc[:, "time"] = (4.57 - df.loc[:, "time"]) * 1e9  # [Gyr -> yr]
+    return df
+
+
+@lru_cache(2)
+def read_ballistic_melt_frac(mean=True, cfg=CFG):
+    """Return DataFrame of ballistic sedimentation melt fractions.
+
+    Parameters
+    ----------
+    mean : bool, optional
+        If True, return mean melt fraction. If False, return standard dev
+    cfg : moonpies.config.Cfg, optional
+        cfg.bsed_frac_mean_in : str
+            CSV of ballistic sedimentation melt fractions.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Melt fractions (index: mixing ratio, cols: ejecta temperature).
+    """
+    csv = cfg.bsed_frac_mean_in if mean else cfg.bsed_frac_std_in
+    df = pd.read_csv(csv, index_col=0, dtype=cfg.dtype)
+    df.columns = df.columns.astype(cfg.dtype)
+    return df
+
+# Pre-compute grid functions
+def get_coldtrap_dists(df, cfg=CFG):
+    """Return great circle distance between all craters and coldtraps. 
+    
+    Returns a 2D array (rows: craters from df, cols: cold traps from 
+    cfg.coldtrap_names, in order). Elements are NaN for distance from crater 
+    to its own cold trap or distance further than ejecta_threshold radii.
+
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Crater DataFrame.
+    cfg : moonpies.config.Cfg, optional
+        cfg.coldtrap_names : tuple of str
+            Tuple of cold trap names.
+        cfg.ejecta_threshold : float
+            Continuous ejecta threshold distance [crater radii].
+        cfg.basin_ej_threshold : float
+            Continuous ejecta threshold distance for basins [basin radii].
+
+    Returns
+    -------
+    numpy.ndarray
+        2D array of distances from craters to cold traps (Ncrater, Ncoldtrap).
     """
     dist = np.zeros((len(df), len(cfg.coldtrap_names)), dtype=cfg.dtype)
     for i, row in df.iterrows():
@@ -399,18 +513,28 @@ def get_coldtrap_dists(df, cfg=CFG):
 
 
 def get_ejecta_thickness(distance, radius, cfg=CFG):
-    """
-    Return ejecta thickness as a function of distance given crater radius.
+    """Return ejecta thickness as a function of distance given crater radius.
 
     Parameters
     ----------
-    distance (num or arr): Distance [m] from crater to coldtrap.
-    radius (num or arr): Source crater radius [m].
-    cfg (Cfg): Configuration object.
+    distance : numpy.ndarray
+        Distance from crater center [m].
+    radius : float
+        Crater radius [m].
+    cfg : moonpies.config.Cfg, optional
+        cfg.simple2complex : float
+            Simple to complex transition diameter [m]
+        cfg.complex2peakring : float
+            Complex to peak ring basin transition diameter [m]
 
     Returns
     -------
-    ejecta_thickness (num or arr): Ejecta thickness [m] at distance.
+    thickness : numpy.ndarray
+        Ejecta thickness [m] at distance.
+
+    See Also
+    --------
+    get_ej_thick_simple, get_ej_thick_complex, get_ej_thick_basin
     """
     dist_v = np.atleast_1d(distance)
     rad_v = np.broadcast_to(radius, dist_v.shape)
@@ -437,45 +561,93 @@ def get_ejecta_thickness(distance, radius, cfg=CFG):
 
 
 def get_ej_thick_simple(distance, radius, cfg=CFG):
-    """
-    Return ejecta thickness with distance from a simple crater (Kring 1995).
+    """Return ejecta thickness with distance from a simple crater [1]_.
 
     Parameters
     ----------
-    distance (arr): Distance from crater [m]
-    radius (arr): Simple crater final radius [m]
-    order (int): Negative exponent (-3 +/- 0.5)
-    """
+    distance : numpy.ndarray
+        Distance from crater center [m].
+    radius : float
+        Crater final radius [m].
+    cfg : moonpies.config.Cfg, optional
+        cfg.ej_thickness_exp : float
+            Ejecta thickness exponent, default: -3.
+
+    Returns
+    -------
+    thickness : numpy.ndarray
+        Ejecta thickness [m] at distance.
+
+    References
+    ----------
+    .. [1] Kring, D. A. (1995). "The dimensions of the Chicxulub impact crater
+       and impact melt sheet." Journal of Geophysical Research, 100(E8),
+       16979. https://doi.org/10/fphq8j
+
+    """    
     return 0.04 * radius * (distance / radius) ** cfg.ej_thickness_exp
 
 
 def get_ej_thick_complex(distance, radius, cfg=CFG):
-    """
-    Return ejecta thickness with distance from a complex crater (McGetchin 1973).
+    """Return ejecta thickness with distance from a complex crater [1]_.
 
     Parameters
     ----------
-    distance (arr): Distance from crater [m]
-    radius (arr): Complex crater final radius [m]
-    order (int): Negative exponent (-3 +/- 0.5)
+    distance : numpy.ndarray
+        Distance from crater center [m].
+    radius : float
+        Crater final radius [m].
+    cfg : moonpies.config.Cfg, optional
+        cfg.ej_thickness_exp : float
+            Ejecta thickness exponent, default: -3.
+
+    Returns
+    -------
+    thickness : numpy.ndarray
+        Ejecta thickness [m] at distance.
+
+    References
+    ----------
+    .. [1] Kring, D. A. (1995). "The dimensions of the Chicxulub impact crater
+       and impact melt sheet." Journal of Geophysical Research, 100(E8),
+       16979. https://doi.org/10/fphq8j
     """
     return 0.14 * radius**0.74 * (distance / radius) ** cfg.ej_thickness_exp
 
 
 def get_ej_thick_basin(distance, t_radius, cfg=CFG):
-    """
-    Return ejecta thickness with distance from a basin (Zhang et al., 2021).
+    """Return ejecta thickness with distance from a basin [1]_.
 
-    Uses Pike (1974) and Haskin et al. (2003) correction for curvature
+    Uses Pike (1974) and Haskin et al. (2003) correction for curvature as
+    described in [1].
 
     Parameters
     ----------
-    distance (arr): Distance from crater [m]
-    t_radius (arr): Transient crater radius [m]
-    order (int): Negative exponent (-3 +/- 0.5)
+    distance : numpy.ndarray
+        Distance from crater center [m].
+    t_radius : float
+        Basin transient crater radius [m].
+    cfg : moonpies.config.Cfg, optional
+        cfg.ej_thickness_exp : float
+            Ejecta thickness exponent, default: -3.
+        cfg.rad_moon : float
+            Lunar radius [m].
+        cfg.grav_moon : float
+            Lunar gravity [m/s^2].
+        cfg.impact_angle : float
+            Impact angle [deg].
 
+    Returns
+    -------
+    thickness : numpy.ndarray
+        Ejecta thickness [m] at distance.
+
+    References
+    ----------
+    .. [1] Zhang, X., Xie, M., & Xiao, Z. (2021). "Thickness of orthopyroxene-
+      rich materials of ejecta deposits from the south pole-Aitken basin."
+      Icarus, 358, 114214. https://doi.org/10/gmfc53
     """
-
     def r_flat(r_t, R, g, theta):
         """Return distance on flat surface, r' (eq S3, Zhang et al., 2021)"""
         v = ballistic_velocity(r_t * 1e3) / 1e3
@@ -522,21 +694,32 @@ def get_ej_thick_basin(distance, t_radius, cfg=CFG):
 
 
 def get_ejecta_thickness_time(time_arr, df, ej_distances, cfg=CFG):
-    """
-    Return ejecta thickness [m] and name(s) of ejecta source craters at each
-    time in time_arr.
-
+    """Return ejecta thickness and ejecta sources at each time. 
+    
+    Ejecta layers smaller than cfg.thickness_min are set to 0.
+    
     Parameters
     ----------
-    time_arr (arr): Time array [yr]
-    df (DataFrame): DataFrame of craters
-    ej_distances (2D arr): Crater-coldtrap ejecta distances [m]
-    cfg (Cfg): Config object
+    time_arr : numpy.ndarray
+        Time array [yr].
+    df : pandas.DataFrame
+        Crater DataFrame.
+    ej_distances : numpy.ndarray
+        2D array of crater to cold trap distances [m].
+    cfg : moonpies.config.Cfg, optional
+        cfg.thickness_min : float
+            Minimum ejecta layer thickness [m].
 
     Returns
     -------
-    ej_thick_t (2D array): Ejecta thickness at each t in time_arr by coldtrap
-    ej_sources_t (2D array): Source crater(s) at each t in time_arr by coldtrap
+    thickness_time : numpy.ndarray
+        2D array ejecta thickness [m] at each time (Ntime, Ncoldtrap).
+    sources_time : numpy.ndarray of str
+        2D array of ejecta source(s) at each time (Ntime, Ncoldtrap).
+
+    See Also
+    --------
+    get_ejecta_thickness_matrix
     """
     ej_thick = get_ejecta_thickness_matrix(df, ej_distances, cfg)
     ej_ages = df.age.values
@@ -551,18 +734,25 @@ def get_ejecta_thickness_time(time_arr, df, ej_distances, cfg=CFG):
 
 
 def get_ejecta_thickness_matrix(df, ej_dists, cfg=CFG):
-    """
-    Return ejecta thickness matrix of thickness [m] of ejecta in each coldtrap
-    crater from each crater in df (shape: len(df), len(cfg.coldtrap_names)).
+    """Return ejecta thickness from each crater to each cold trap.
 
+    Rows are craters in df, columns are cold traps from cfg.coldtrap_names.
+    
     Parameters
     ----------
-    df (DataFrame): DataFrame of craters
-    ej_dists (2D arr): Crater-coldtrap distances [m] (Ncrater, Ncoldtrap)
+    df : pandas.DataFrame
+        Crater DataFrame.
+    ej_dists : numpy.ndarray
+        2D array of crater to cold trap distances [m] (Ncrater, Ncoldtrap).
 
     Returns
     -------
-    ejecta_thick (2D arr): Ejecta thickness from each crater to each coldtrap
+    thickness : numpy.ndarray
+        2D array of ejecta thickness [m] (Ncrater, Ncoldtrap).
+    
+    See Also
+    --------
+    get_ejecta_thickness_time, get_ejecta_thickness
     """
     # Get radius array same shape as ej_dists (radii as rows)
     rad = np.tile(df.rad.values[:, np.newaxis], (1, ej_dists.shape[1]))
@@ -570,21 +760,46 @@ def get_ejecta_thickness_matrix(df, ej_dists, cfg=CFG):
 
 
 def ages2time(
-    time_arr, age_arr, values, agg=np.nansum, fillval=0, dtype=None, cfg=CFG
+    time_arr, ages, values, agg=np.nansum, fillval=0, dtype=None, cfg=CFG
 ):
-    """
-    Return values filled into array of len(time_arr) filled to nearest ages.
+    """Return values shaped like time_arr given corresponding ages.
+
+    Rounds ages to nearest time in time_arr. If multiple values have the same 
+    age, they are combined using agg. Times with no ages are set to fillval.
+
+    Parameters
+    ----------
+    time_arr : numpy.ndarray
+        Time array [yr].
+    ages : numpy.ndarray
+        Age of each value [yr].
+    values : numpy.ndarray
+        Values to reshape (must be same length as ages).
+    agg : callable, optional
+        Function to combine multiple values of same age, by default np.nansum.
+    fillval : int, optional
+        Value to use as default (all times lacking a value), by default 0.
+    dtype : data-type, optional
+        Data type of output, by default same as values.
+    cfg : moonpies.config.Cfg, optional
+        cfg.rtol : float
+            Relative tolerance for time comparison to avoid rounding error.
+
+    Returns
+    -------
+    values_time : numpy.ndarray
+        Values reshaped like time_arr.
     """
     if dtype is None:
         dtype = values.dtype
     # Remove ages and associated values not in time_arr
     tmin, tmax = minmax_rtol(time_arr, cfg.rtol)  # avoid rounding error
-    isin = np.where((age_arr >= tmin) & (age_arr <= tmax))
-    age_arr = age_arr[isin]
+    isin = np.where((ages >= tmin) & (ages <= tmax))
+    ages = ages[isin]
     values = values[isin]
 
     # Minimize distance between ages and times to handle rounding error
-    time_idx = np.abs(time_arr[:, np.newaxis] - age_arr).argmin(axis=0)
+    time_idx = np.abs(time_arr[:, np.newaxis] - ages).argmin(axis=0)
     shape = [len(time_arr), *values.shape[1:]]
     values_time = np.full(shape, fillval, dtype=dtype)
 
@@ -593,63 +808,42 @@ def ages2time(
         values_time[t_idx] = agg([values_time[t_idx], values[i]], axis=0)
     return values_time
 
+# Polar ice deposition
+def get_ice_cols_time(time_arr, df, cfg=CFG, rng=None):
+    """Return ice thickness from all sources at all times for each cold trap.
 
-def get_grid_outputs(df, grdx, grdy, cfg=CFG):
-    """
-    Return matrices of interest computed on the grid of shape: (NY, NX, (NC)).
-    """
-    # Age of most recent impact (2D array: NX, NY)
-    age_grid = get_age_grid(df, grdx, grdy, cfg)
-
-    # Great circle distance from each crater to grid (3D array: NX, NY, NC)
-    dist_grid = get_gc_dist_grid(df, grdx, grdy, cfg.dtype)
-
-    # Ejecta thickness produced by each crater on grid (3D array: NX, NY, NC)
-    ej_thick_grid = get_ejecta_thickness_matrix(df, dist_grid, cfg)
-    # TODO: ballistic sed depth, kinetic energy, etc
-    return age_grid, ej_thick_grid
-
-
-def get_gc_dist_grid(df, grdx, grdy, cfg=CFG):
-    """
-    Return 3D array of great circle dist between all craters in df and every
-    point on the grid.
+    Combines polar ice and volcanic-derived ice and applies ballistic hop 
+    efficiency to determine amount of ice that reaches each cold trap.
 
     Parameters
     ----------
-    df (DataFrame):
-    grdx (arr):
-    grdy (arr):
+    time_arr : numpy.ndarray
+        Time array [yr].
+    df : pandas.DataFrame
+        Crater DataFrame.
+    cfg : moonpies.config.Cfg, optional
+        cfg.coldtrap_names : list of str
+            Names of cold traps.
+        cfg.ballistic_hop_moores : bool
+            Use Moores et al. (2016) ballistic hop model for ice deposition.
+
+    rng : int or numpy.random.Generator, optional
+        Random seed or random number generator, by default None.
 
     Returns
     -------
-    grd_dist (3D arr: NX, NY, Ndf):
-    """
-    ny, nx = grdy.shape[0], grdx.shape[1]
-    lat, lon = xy2latlon(grdx, grdy, cfg.rad_moon)
-    grd_dist = np.zeros((nx, ny, len(df)), dtype=cfg.dtype)
-    for i in range(len(df)):
-        clon, clat = df.iloc[i][["lon", "lat"]]
-        grd_dist[:, :, i] = gc_dist(clon, clat, lon, lat)
-    return grd_dist
+    ice_time : numpy.ndarray
+        2D array of ice thickness [m] at each time (Ntime, Ncoldtrap).
 
-
-# Polar ice deposition
-def get_ice_cols_time(time_arr, df, cfg=CFG, rng=None):
-    """
-    Return ice thickness [m] from all sources at each t in time_arr for all
-    coldtraps in cfg.
-
-    Parameters
-    ----------
-    time_arr (arr): Time array.
-    df (DataFrame):
-    cfg (Cfg): Config object.
-    rng (int or np.RandomState): Seed or random number generator.
+    See Also
+    --------
+    get_polar_ice, get_volcanic_ice
     """
     # Get column vectors of polar and volc ice
     ice_polar = get_polar_ice(time_arr, df, cfg, rng)[:, None]
     ice_volcanic = get_volcanic_ice(time_arr, cfg)[:, None]
+
+    # TODO: refactor into get_volcanic ice, need to move ballistic hop too
     if cfg.use_volc_dep_effcy:
         # Rescale by volc dep effcy, apply evenly to all coldtraps
         ice_volcanic *= cfg.volc_dep_effcy / cfg.ballistic_hop_effcy
@@ -670,21 +864,28 @@ def get_ice_cols_time(time_arr, df, cfg=CFG, rng=None):
 
 
 def get_polar_ice(time_arr, df, cfg=CFG, rng=None):
-    """
-    Return total polar ice at all timesteps from all sources.
+    """Return total polar ice at all timesteps from all sources.
 
     Parameters
     ----------
-    time_arr (array): Model time array [yrs].
-    t (int): Index of current timestep in the model.
-    cfg (Cfg): Config object, contains:
-        ...
-    rng (int or np.RandomState): Seed or random number generator.
+    time_arr : numpy.ndarray
+        Time array [yr].
+    df : pandas.DataFrame
+        Crater DataFrame.
+    cfg : moonpies.config.Cfg, optional
+        MoonPIES config object.
+    rng : int or numpy.random.Generator, optional
+        Random seed or random number generator, by default None.
 
     Returns
     -------
-    polar_ice (float): Ice thickness [m] delivered to the pole vs time.
-    """
+    ice_time : numpy.ndarray
+        Total ice delivered to the pole [m] at each time.
+
+    See Also
+    --------
+    get_impact_ice, get_impact_ice_comet, get_solar_wind_ice
+    """    
     impact_ice = get_impact_ice(time_arr, df, cfg, rng)
     comet_ice = get_impact_ice_comet(time_arr, df, cfg, rng)
     if cfg.impact_ice_comets:
@@ -695,14 +896,30 @@ def get_polar_ice(time_arr, df, cfg=CFG, rng=None):
 
 
 def get_ice_thickness(global_ice_mass, cfg=CFG):
-    """
-    Return ice thickness assuming global_ice_mass delived balistically.
+    """Return polar ice thickness [m] given globally delivered ice mass [kg].
 
-    Converts:
-        global_ice_mass to polar_ice_mass with cfg.ballistic_hop_effcy,
-        polar_ice_mass to volume with cfg.ice_density,
-        volume to thickness with coldtrap_area of cfg.ice_species at cfg.pole.
-    """
+    Assumes ice is uniformly distributed over polar coldtrap area and has a 
+    constant ice density. Scale by amount of global ice that reaches poles.
+
+    Parameters
+    ----------
+    global_ice_mass : np.ndarray
+        Ice delivered globally [kg].
+    cfg : moonpies.config.Cfg, optional
+        cfg.ice_species : str
+            Ice species {"H2O", "CO2"}.
+        cfg.coldtrap_area_H2O, cfg.coldtrap_area_CO2 : float
+            Area of cold traps [m^2].
+        cfg.ballistic_hop_effcy : float
+            Ballistic hop efficiency (fraction of ice that reaches poles).
+        cfg.ice_density : float
+            Ice density [kg/m^3].
+
+    Returns
+    -------
+    ice_thickness : np.ndarray
+        Polar ice thickness [m].
+    """    
     if cfg.ice_species == "H2O":
         coldtrap_area = cfg.coldtrap_area_H2O
     elif cfg.ice_species == "CO2":
@@ -715,8 +932,23 @@ def get_ice_thickness(global_ice_mass, cfg=CFG):
 
 # Solar wind module
 def get_solar_wind_ice(time_arr, cfg=CFG):
-    """
-    Return solar wind ice over time if mode is mpies.
+    """Return thickness of solar wind ice at all times.
+
+    Parameters
+    ----------
+    time_arr : numpy.ndarray
+        Time array [yr].
+    cfg : moonpies.config.Cfg, optional
+        MoonPIES config object.
+
+    Returns
+    -------
+    ice_time : numpy.ndarray
+        Thickness of solar wind ice delivered [m] at each time.
+    
+    See Also
+    --------
+    solar_wind_ice_mass, get_ice_thickness
     """
     sw_ice_t = np.zeros_like(time_arr)
     if cfg.solar_wind_ice:
@@ -726,37 +958,53 @@ def get_solar_wind_ice(time_arr, cfg=CFG):
 
 
 def solar_wind_ice_mass(time_arr, cfg=CFG):
-    """
-    Return ice mass [kg] deposited globally by solar wind vs time in time_arr.
+    """Return global solar wind ice mass [kg] deposited at each time.
 
-    Does not account for movement of ice, only deposition given a supply rate.
-
-    cfg.solar_wind_mode determines the H2O supply rate:
-      "Benna": H2O supply rate 2 g/s (Benna et al. 2019; Arnold, 1979;
-        Housley et al. 1973)
-      "Lucey-Hurley": H2 supply rate 30 g/s, converted to water assuming 1 part
-        per thousand (Lucey et al. 2020)
+    H2O supply rate is given by cfg.solar_wind_mode ("Benna": 2g/s [1]_,
+    "Lucey-Hurley": H2 supply of 30 g/s, H2 -> H2O at 1 ppt [2]_). If 
+    cfg.faint_young_sun, scale solar wind H2O supply rate by relative solar
+    luminosity at each time [3]_.
 
     Parameters
     ----------
-    time_arr (array): Model time array.
-    cfg (Cfg): Config object, must contain:
-      - solar_wind_mode (str): Solar wind mode to use.
-      - faint_young_sun (bool): Scale by luminosity of faint young sun
-      - cfg.bahcall_csv_in (str): Path to solar wind data.
-
+    time_arr : numpy.ndarray
+        Time array [yr].
+    cfg : moonpies.config.Cfg, optional
+        cfg.solar_wind_mode : str
+            Solar wind ice mode {"Benna", "Lucey-Hurley"}.
+        cfg.faint_young_sun : bool
+            Use faint young sun model.
+        
     Returns
     -------
-    sw_ice_mass (1D array): Ice mass deposited by solar wind at each time
-    """
-    if cfg.solar_wind_mode == "Benna":
+    ice_mass : numpy.ndarray
+        Global solar wind ice mass [kg] deposited at each time.
+
+    References
+    ----------
+    .. [1] Benna, M., Hurley, D. M., Stubbs, T. J., Mahaffy, P. R., & Elphic,
+       R. C. (2019). "Lunar soil hydration constrained by exospheric water
+       liberated by meteoroid impacts." Nature Geoscience, 12(5), 333-338.
+       https://doi.org/10/c4nz
+
+    .. [2] Lucey, P. G., Costello, E. S., Hurley, D. M., Prem, P., Farrell,
+       W. M., Petro, N., & Cable, M. L. (2020). Relative Magnitudes of Water
+       Sources to the Lunar Poles. LPS LI, Abstract # 2319.
+       Retrieved from https://www.hou.usra.edu/meetings/lpsc2020/pdf/2319.pdf
+
+    .. [3] Bahcall, J. N., Pinsonneault, M. H., & Basu, S. (2001). "Solar 
+       Models: Current Epoch and Time Dependences, Neutrinos, and 
+       Helioseismological Properties." The Astrophysical Journal, 555(2), 
+       990-1012. https://doi.org/10/dv2q29
+    """ 
+    if cfg.solar_wind_mode.lower() == "benna":
         # Benna et al. 2019; Arnold, 1979; Housley et al. 1973
         volatile_supply_rate = 2 * 1e-3  # [g/s -> kg/s]
-    elif cfg.solar_wind_mode == "Lucey-Hurley":
+    elif cfg.solar_wind_mode.lower() == "lucey-hurley":
         # Lucey et al. 2020, Hurley et al. 2017 (assume 1 ppt H2 -> H2O)
         volatile_supply_rate = 30 * 1e-3 * 1e-3  # [g/s - kg/s] * [1 ppt]
     else:
-        msg = 'Solar wind mode not recognized. Accepts "Benna", "Lucey-Hurley"'
+        msg = 'cfg.solar_wind_mode not one of {"Benna", "Lucey-Hurley"}'
         raise ValueError(msg)
     # convert to kg per timestep
     supply_rate_ts = volatile_supply_rate * 60 * 60 * 24 * 365 * cfg.timestep
@@ -764,22 +1012,34 @@ def solar_wind_ice_mass(time_arr, cfg=CFG):
     sw_ice_mass = np.ones_like(time_arr) * supply_rate_ts
     if cfg.faint_young_sun:
         # Import historical solar luminosity (Bahcall et al. 2001)
-        df_lum = read_solar_luminosity(cfg.bahcall_csv_in)
+        df_lum = read_solar_luminosity(cfg)
 
         # Interpolate to time_arr, scale by solar luminosity at each time
-        lum_time = np.interp(-time_arr, -df_lum["age"], df_lum["luminosity"])
+        lum_time = np.interp(-time_arr, -df_lum.time, df_lum.luminosity)
         sw_ice_mass *= lum_time
     return sw_ice_mass
 
 
 # Volcanic ice delivery module
 def get_volcanic_ice(time_arr, cfg=CFG):
-    """
-    Return ice thickness [m] delivered to pole by volcanic outgassing vs time.
+    """Return ice thickness [m] delivered to pole by volcanics at each time.
+
+    Parameters
+    ----------
+    time_arr : numpy.ndarray
+        Time array [yr].
+    cfg : moonpies.config.Cfg, optional
+        cfg.volc_mode : str
+            Volcanic ice mode {"NK", "Head"}.
 
     Returns
     -------
-    volc_ice_t (arr): Ice thickness [m] delivered at the pole at each time.
+    ice_time : numpy.ndarray
+        Thickness of volcanic ice delivered [m] at each time.
+
+    See Also
+    --------
+    volcanic_ice_nk, volcanic_ice_head
     """
     if cfg.volc_mode == "NK":
         volc_ice_mass = volcanic_ice_nk(time_arr, cfg)
@@ -793,17 +1053,21 @@ def get_volcanic_ice(time_arr, cfg=CFG):
 
 
 def volcanic_ice_nk(time_arr, cfg=CFG):
-    """
-    Return global ice [kg] deposited vs time using Needham & Kring (2017).
+    """Return global ice mass [kg] deposited at each time using [1]_.
 
-    Values from supplemental spreadsheet S3 (Needham and Kring, 2017)
-    transient atmosphere data. Scale by % material delievered to the pole.
+    Parameters
+    ----------
+    time_arr : numpy.ndarray
+        Time array [yr].
+    cfg : moonpies.config.Cfg, optional
+        cfg.volc_mode : str
 
     Returns
     -------
-    volc_ice_mass (arr): Ice mass [kg] deposited at the pole at each time.
-    """
-    df_volc = read_volcanic_species(cfg.nk_csv_in, cfg.nk_cols, cfg.nk_species)
+    ice_mass : numpy.ndarray
+        Global volcanic ice mass [kg] deposited at each time.
+    """    
+    df_volc = read_volcanic_species(cfg)
     tmax = time_arr.max()
     df_volc = df_volc[df_volc.time < tmax + rtol(tmax, cfg.rtol)]
 
@@ -825,12 +1089,32 @@ def volcanic_ice_nk(time_arr, cfg=CFG):
 
 
 def volcanic_ice_head(time_arr, cfg=CFG):
-    """
-    Return global ice [kg] deposited vs time using Head et al. (2020).
+    """Return global ice [kg] deposited at each time using Head et al. (2020).
+
+    Parameters
+    ----------
+    time_arr : numpy.ndarray
+        Time array [yr].
+    cfg : moonpies.config.Cfg, optional
+        cfg.volc_total_vol : float
+            Total volcanics volume [km^3].
+        cfg.volc_magma_density : float
+            Magma density [kg/m^3].
+        cfg.volc_ice_ppm : float
+            Volcanic volatile concentration [ppm].
+        cfg.volc_early : tuple of float
+            Early volcanism time period (start, end) [yr].
+        cfg.volc_early_pct : float
+            Percent of total volcanics delivered during volc_early.
+        cfg.volc_late : tuple of float
+            Late volcanism time period (start, end) [yr].
+        cfg.volc_late_pct : float
+            Percent of total volcanics delivered during volc_late.
 
     Returns
     -------
-    volc_ice_mass (arr): Ice mass [kg] deposited vs time.
+    ice_mass : numpy.ndarray
+        Global volcanic ice mass [kg] deposited at each time.
     """
     # Global ice deposition (Head et al. 2020)
     volc_mass = cfg.volc_total_vol * cfg.volc_magma_density
@@ -851,21 +1135,35 @@ def volcanic_ice_head(time_arr, cfg=CFG):
 
 # Ballistic sedimentation module
 def get_melt_frac(ejecta_temps, mixing_ratios, cfg=CFG):
-    """
-    Return fraction of ice melted at given ejecta_temps and vol_fracs.
-
-    Uses thermal equilibrium model results from this work.
+    """Return fraction of ice melted at given ejecta_temps and vol_fracs.
 
     Parameters
     ----------
-    ejecta_temps (arr): Ejecta temperatures [K].
-    mixing_ratios (arr): Mixing ratios target:ejecta.
+    ejecta_temps : numpy.ndarray
+        Ejecta temperatures [K].
+    mixing_ratios : numpy.ndarray
+        Mixing ratios (target:ejecta).
+    cfg : moonpies.config.Cfg, optional
+        MoonPIES config object.
 
     Returns
     -------
-    melt_frac (arr): Fraction of ice melted at each ejecta_temp and vol_frac.
+    melt_frac : numpy.ndarray
+        Fraction of ice melted at each ejecta_temp and mixing ratio.
+
+    See Also
+    --------
+    read_ballistic_melt_frac
     """
-    mdf = read_ballistic_melt_frac(cfg.bsed_frac_mean_in)
+    def insert_unique_in_range(src, target):
+        """Return sorted target with unique values in src inserted."""
+        uniq = np.unique(src[~np.isnan(src)])
+        # Ensure in range of target
+        uniq = uniq[(target.min() < uniq) & (uniq < target.max())]
+        arr = np.sort(np.unique(np.concatenate([target, uniq])))
+        return arr
+
+    mdf = read_ballistic_melt_frac(True, cfg)
     temps = insert_unique_in_range(ejecta_temps, mdf.columns.to_numpy())
     mrs = insert_unique_in_range(mixing_ratios, mdf.index.to_numpy())
     mdf = mdf.reindex(index=mrs, columns=temps)
@@ -879,25 +1177,34 @@ def get_melt_frac(ejecta_temps, mixing_ratios, cfg=CFG):
     return melt_frac
 
 
-def insert_unique_in_range(src, target):
-    """
-    Return sorted target with unique values in src inserted.
-    """
-    uniq = np.unique(src[~np.isnan(src)])
-    # Ensure in range of target
-    uniq = uniq[(target.min() < uniq) & (uniq < target.max())]
-    arr = np.sort(np.unique(np.concatenate([target, uniq])))
-    return arr
-
-
 def kinetic_energy(mass, velocity):
     """Return kinetic energy [J] given mass [kg] and velocity [m/s]."""
     return 0.5 * mass * velocity**2
 
 
 def ejecta_temp(df, shape=None, cfg=CFG):
-    """
-    Return ejecta temperature [K].
+    """Return ejecta temperature [K].
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Crater DataFrame.
+    shape : tuple, optional
+        Shape of output, by default (len(df),)
+    cfg : moonpies.config.Cfg, optional
+        cfg.polar_ejecta_temp_init : float
+            Initial polar ejecta temperature [K].
+        cfg.basin_ejecta_temp_warm : bool
+            If True, use warm ejecta temperatures for basins, otherwise cold.
+        cfg.basin_ejecta_temp_init_warm : float
+            Initial warm basin ejecta temperature [K].
+        cfg.basin_ejecta_temp_init_cold : float
+            Initial cold basin ejecta temperature [K].
+
+    Returns
+    -------
+    ejecta_temp : numpy.ndarray
+        Ejecta temperature [K] for each impact in df.
     """
     if shape is None:
         shape = (len(df),)
@@ -911,82 +1218,32 @@ def ejecta_temp(df, shape=None, cfg=CFG):
     return ejecta_t
 
 
-def ejecta_temp_distance(df, dist, thick, cfg=CFG):
-    """
-    Return the temperature of ejecta at distance based on scaling of
-    Imbrium impact temperature (Fernandes and Artemieva, 2012)
-
-    Deprecated: see ejecta_temp()
-
-    Parameters
-    ----------
-    df
-    ke (num or array): kinetic energy of the ejecta blanket [J/m^2]
-    thick (num or array): thickness of the ejecta blanket [m]
-    isbasin (bool or array): True if ejecta is from basin, False otherwise
-    Cp (num): specific heat of the ejecta blanket [J/K/kg]
-    density (num): density of the ejecta blanket [kg/m^3]
-    """
-    mass = thick * cfg.target_density  # [kg/m^2]
-    vel = ballistic_velocity(dist, cfg)
-
-    # Use only kinetic energy in excess of ke_heat_frac_speed
-    v_excess = vel - cfg.ke_heat_frac_speed
-    v_excess[v_excess < 0] = 0
-
-    # Get KE and scale by fraction converted to heat
-    ke = cfg.ke_heat_frac * kinetic_energy(mass, v_excess)
-
-    # Craters
-    ejt = np.zeros_like(ke)
-    isbasin = df.isbasin.values
-    t0 = cfg.polar_ejecta_temp_init
-    cp = specific_heat_capacity(t0, cfg)
-    ejt[~isbasin] = t0 + delta_t_impact(ke[~isbasin], mass[~isbasin], cp)
-
-    # Basins
-    if cfg.basin_ejecta_temp_warm:
-        bt0 = cfg.basin_ejecta_temp_init_warm
-    else:
-        bt0 = cfg.basin_ejecta_temp_init_cold
-    cpb = specific_heat_capacity(bt0, cfg)
-    ejt[isbasin] = bt0 + delta_t_impact(ke[isbasin], mass[isbasin], cpb)
-    return ejt
-
-
-def delta_t_impact(ke, mass, sphc):
-    """
-    Return the temperature change at impact [K] using ke conversion.
-
-    delT = ke / (mass * cp)
-
-    Parameters
-    ----------
-    ke (num or array): kinetic energy of the ejecta [J/m^2]
-    mass (num or array): mass of the ejecta [kg]
-    sphc (num): specific heat capacity of the ejecta blanket [J/K/kg]
-    """
-    return ke / (mass * sphc)
-
-
 def ballistic_velocity(dist, cfg=CFG):
-    """
-    Return ballistic speed given dist of travel [m] assuming spherical planet
-    (Vickery, 1986).
-
-    Requires:
-    - cfg.grav_moon
-    - cfg.rad_moon
-    - cfg.impact_angle
+    """Return ballistic velocity given distance of travel on a sphere [1]_.
 
     Parameters
     ----------
-    dist (arr): Distance of travel [m]
+    dist : numpy.ndarray
+        Distance of travel [m].
+    cfg : moonpies.config.Cfg, optional
+        cfg.grav_moon : float
+            Lunar gravity [m/s^2].
+        cfg.rad_moon : float
+            Lunar radius [m].
+        cfg.impact_angle : float
+            Impact angle [deg].
 
     Returns
     -------
-    v (arr): Ballistic speed [m/s]
-    """
+    velocity : numpy.ndarray
+        Ballistic velocity [m/s].
+
+    References
+    ----------
+    .. [1] Vickery, A. (1986). "Size-velocity distribution of large ejecta 
+       fragments." Icarus, 67(2), 224-236. https://doi.org/10/bjjk93
+
+    """    
     theta = np.radians(cfg.impact_angle)
     g = cfg.grav_moon
     rp = cfg.rad_moon
@@ -996,35 +1253,39 @@ def ballistic_velocity(dist, cfg=CFG):
     return np.sqrt(num / denom)
 
 
-@lru_cache(2)
-def read_ballistic_melt_frac(bsed_csv, cfg=CFG):
-    """
-    Return DataFrame of ballistic sedimentation melt fractions.
-
-    Returns
-    -------
-    df (DataFrame): DataFrame of melt fractions.
-    """
-    df = pd.read_csv(bsed_csv, index_col=0, dtype=cfg.dtype)
-    df.columns = df.columns.astype(cfg.dtype)
-    return df
-
-
 def get_bsed_depth(time_arr, df, ej_dists, cfg=CFG):
-    """
-    Return ballistic sedimentation depth vs time for each coldtrap in the
-    method of Petro and Pieters (2004) via Zhang et al. (2021).
+    """Return ballistic sedimentation depth over time [1]_.
+
+    If more than one ballistic sedimentation event occurs in a timestep, take
+    the maximum depth and melt fraction. TODO: make sequential.
 
     Parameters
     ----------
-    time_arr (arr): Time array [yr].
-    df (DataFrame): Crater DataFrame.
-    ej_dists (2D arr): Crater-coldtrap distances [m] (Ncrater, Ncoldtrap)
+    time_arr : numpy.ndarray
+        Time array [yr].
+    df : pandas.DataFrame
+        Crater DataFrame.
+    ej_dists : numpy.ndarray
+        2D array of ejecta distances [m] (Ncrater, Ncoldtrap).
+    cfg : moonpies.config.Cfg, optional
+        
 
     Returns
     -------
-    bsed_depths (arr): Ballistic sed depth. shape: (time, coldtraps).
-    bsed_fracs (arr): Ballistic sed melt fraction. shape: (time, coldtraps).
+    depths : numpy.ndarray
+        2D array of ballistic sedimentation depths [m] (Ntime, Ncoldtrap).
+    melt_fracs : numpy.ndarray
+        2D array of melt fractions (Ntime, Ncoldtrap).
+
+    See Also
+    --------
+    get_mixing_ratio_oberbeck, ejecta_temp, get_melt_frac
+
+    References
+    ----------
+    .. [1] Zhang, X., Xie, M., & Xiao, Z. (2021). "Thickness of orthopyroxene-
+       rich materials of ejecta deposits from the south pole-Aitken basin." 
+       Icarus, 358, 114214. https://doi.org/10/gmfc53
     """
     if not cfg.ballistic_sed:
         depths = np.zeros((len(time_arr), len(cfg.coldtrap_names)), cfg.dtype)
@@ -1041,26 +1302,40 @@ def get_bsed_depth(time_arr, df, ej_dists, cfg=CFG):
     ages = df.age.values
     mixing_ratio_t = ages2time(time_arr, ages, mixing_ratio, np.nanmax, 0)
     bsed_depths_t = ej_thick_t * mixing_ratio_t  # Petro and Pieters (2004)
-    # TODO: should we take the max melt frac with multiple events?
     melt_frac_t = ages2time(time_arr, ages, melt_frac, np.nanmax, 0)
     return bsed_depths_t, melt_frac_t
 
 
 def get_mixing_ratio_oberbeck(ej_distances, cfg=CFG):
-    """
-    Return mixing ratio of target/ejecta material.
+    """Return mixing ratio of target to ejecta material [1]_.
 
-    Ex. 0.5: target == 1/2 ejecta
-    Ex. 1: target == ejecta
-    Ex. 2: target == 2 * ejecta
+    If cfg.mixing_ratio_petro, use the adjustment for large mr from [2].
 
     Parameters
     ----------
-    ej_distances (2D array): distance [m] between each crater and cold trap
+    ej_distances : numpy.ndarray
+        2D array of ejecta distances [m] (Ncrater, Ncoldtrap).
+    cfg : moonpies.config.Cfg, optional
+        cfg.mixing_ratio_a : float
+            Mixing ratio factor a [1].
+        cfg.mixing_ratio_b : float
+            Mixing ratio exponent b [2].
+        cfg.mixing_ratio_petro : bool
+            If True, adjust large mixing ratios using [2]
 
     Returns
     -------
-    mr (2D array): mixing ratio of local (target) to foreign (ejecta) material
+    mixing_ratio : numpy.ndarray
+        2D array of mixing ratios (target:ejecta) (Ncrater, Ncoldtrap).
+
+    References
+    ----------
+    .. [1] Oberbeck, V. R. (1975). "The role of ballistic erosion and 
+       sedimentation in lunar stratigraphy." Reviews of Geophysics, 13(2), 
+       337-362. https://doi.org/10/bcxqfb
+    .. [2] Petro, N. E., & Pieters, C. M. (2006). "Modeling the provenance of 
+       the Apollo 16 regolith." Journal of Geophysical Research, 111(E9), 
+       E09005. https://doi.org/10/dbwzmv
     """
     dist = ej_distances * 1e-3  # [m -> km]
     mr = cfg.mixing_ratio_a * dist**cfg.mixing_ratio_b
@@ -1073,9 +1348,31 @@ def get_mixing_ratio_oberbeck(ej_distances, cfg=CFG):
 
 # Impact gardening module (remove ice by impact overturn)
 def remove_ice_overturn(ice_col, ej_col, t, depth, cfg=CFG):
-    """
-    Return ice_col with ice removed by impact gardening to overturn_depth.
-    """
+    """Return ice_col gardened to depth below time t.
+
+    Parameters
+    ----------
+    ice_col : numpy.ndarray
+        Ice column [m].
+    ej_col : numpy.ndarray
+        Ejecta column [m].
+    t : int
+        Time index.
+    depth : float
+        Impact gardening depth [m].
+    cfg : moonpies.config.Cfg, optional
+        cfg.impact_gardening_costello : bool
+            If True, use Costello impact gardening model, else use Cannon.
+
+    Returns
+    -------
+    ice_col : numpy.ndarray
+        Ice column [m] with impact gardening applied.
+
+    See Also
+    --------
+    garden_ice_column, erode_ice_cannon
+    """    
     if cfg.impact_gardening_costello:
         ice_col = garden_ice_column(ice_col, ej_col, t, depth)
     else:
@@ -1084,10 +1381,36 @@ def remove_ice_overturn(ice_col, ej_col, t, depth, cfg=CFG):
 
 
 def erode_ice_cannon(ice_col, ej_col, t, erosion_depth=0.1, ej_shield=0.4):
-    """
-    Return eroded ice column using Cannon et al. (2020) method (10 cm / 10 Ma).
-    """
-    # BUG in Cannon ds01: erosion base never updated for adjacent ejecta layers
+    """Return ice_col gardened to erosion_depth below time t [1]_.
+
+    Translated directly from Cannon et al. (2020) MATLAB code [1].
+
+    Parameters
+    ----------
+    ice_col : numpy.ndarray
+        Ice column [m].
+    ej_col : numpy.ndarray
+        Ejecta column [m].
+    t : int
+        Time index.
+    erosion_depth : float, optional
+        Erosion depth [m], by default 0.1
+    ej_shield : float, optional
+        Ejecta shield thickness [m], by default 0.4
+
+    Returns
+    -------
+    ice_col : numpy.ndarray
+        Ice column [m] with impact gardening applied.
+    
+    References
+    ----------
+    .. [1] Cannon, K. M., Deutsch, A. N., Head, J. W., & Britt, D. T. (2020). 
+       "Stratigraphy of Ice and Ejecta Deposits at the Lunar Poles."
+       Geophysical Research Letters, 47(21). https://doi.org/10/gksdcc
+
+    """    
+    # Possible bug: erosion base never updated for adjacent ejecta layers
     # Erosion base is most recent time when ejecta column was > ejecta_shield
     erosion_base = -1
     erosion_base_idx = np.where(ej_col[: t + 1] > ej_shield)[0]
@@ -1097,7 +1420,9 @@ def erode_ice_cannon(ice_col, ej_col, t, erosion_depth=0.1, ej_shield=0.4):
     # Garden from top of ice column until ice_to_erode amount is removed
     layer = t
     while erosion_depth > 0 and layer >= 0:
-        # BUG in Cannon ds01: t > erosion_base should be layer > erosion_base.
+        # Possible bug: t > erosion_base should be layer > erosion_base.
+        # - loop doesn't end if we reach erosion base while eroding
+        # - loop only ends in else block if we started at erosion_base
         if t > erosion_base:
             ice_in_layer = ice_col[layer]
             if ice_in_layer >= erosion_depth:
@@ -1107,31 +1432,38 @@ def erode_ice_cannon(ice_col, ej_col, t, erosion_depth=0.1, ej_shield=0.4):
             erosion_depth -= ice_in_layer
             layer -= 1
         else:
-            # Consequences of t > erosion_base:
-            # - loop doesn't end if we reach erosion base while eroding
-            # - loop only ends here if we started at erosion_base
             break
     return ice_col
 
 
 def garden_ice_column(ice_column, ejecta_column, t, depth, eff=1):
-    """
-    Return ice_column gardened to overturn_depth, preserved by ejecta_column.
+    """Return ice_column gardened to depth, but preserved by ejecta_column.
 
     Ejecta deposited on last timestep preserves ice. Loop through ice_col and
     ejecta_col until overturn_depth and remove all ice that is encountered.
 
     Parameters
     ----------
-    ice_column (arr):
-    ejecta_column (arr):
-    t (int): Current timestep (first index in ice/ej columns to garden)
-    depth (num): Total depth [m] to garden.
-    ice_first (bool): Erode ice first (bsed) else ejecta first (gardening)
-    eff (num): Erosion efficiency (frac removed in each layer, default 100%)
+    ice_column : numpy.ndarray
+        Ice column [m].
+    ejecta_column : numpy.ndarray
+        Ejecta column [m].
+    t : int
+        Time index.
+    depth : float
+        Impact gardening depth [m].
+    eff : float, optional
+        Fraction to remove from each layer in [0, 1], by default 1 (all).
+
+    Returns
+    -------
+    ice_column : numpy.ndarray
+        Ice column [m] with impact gardening applied.
     """
-    # Alternate so i//2 is current index to garden (odd: ejecta, even: ice)
-    # If ice_first, skip topmost ejecta layer and erode ice first
+    # Travese ice and ejecta column from t down, removing ice, skipping ejecta
+    # Loop until we hit the bottom or have gone down depth meters
+    # - If ejecta[t] > depth, no ice is removed.
+    # Double i so i//2 is current index to garden (odd: ejecta, even: ice)
     i = (2 * t) + 1
     d = 0  # current depth
     while i >= 0 and d < depth:  # and < 2 * len(ice_column):
@@ -1139,34 +1471,43 @@ def garden_ice_column(ice_column, ejecta_column, t, depth, eff=1):
             # Odd i (ejecta): do nothing, add ejecta layer to depth, d
             d += ejecta_column[i // 2]
         else:
-            # Even i (ice): remove ice*eff from layer, add it to depth, d
+            # Even i (ice): remove ice*eff from layer
             removed = ice_column[i // 2] * eff
 
-            # Removing more ice than depth so only remove enough to reach depth
+            # Removing more ice than depth, only remove enough to reach depth
             if (d + removed) > depth:
                 removed = depth - d
-            d += removed
             ice_column[i // 2] -= removed
+            d += ice_column[i // 2]  # Count all ice in layer towards depth
         i -= 1
     return ice_column
 
 
 # Impact gardening module (Costello et al. 2018, 2020)
 def overturn_depth_time(time_arr, cfg=CFG):
-    """
-    Return array of overturn depth [m] as a function of time.
+    """Return overturn depth [m] at each time.
+
 
     Parameters
     ----------
-    time_arr (array): Model time array [yrs].
-    cfg (Cfg): Config object, must contain:
-        overturn_ab (dict):
+    time_arr : numpy.ndarray
+        Time array [yr].
+    cfg : moonpies.config.Cfg, optional
+        cfg.impact_gardening_costello : bool
+            If True, get overturn over time, else use cfg.ice_erosion_rate.
+        cfg.ice_erosion_rate : float
+            Constant ice erosion rate [m/10 Ma].
+        cfg.timestep : float
+            Timestep [yr] to scale cfg.ice_erosion_rate.
 
-    - cfg.n_overturn:
+    Returns
+    -------
+    overturn_depth : numpy.ndarray
+        Overturn depth [m] at each time.
 
-    cfg.overturn_ab
-    cfg.timestep
-    cfg.impact_speeds
+    See Also
+    --------
+    overturn_depth_costello_time
     """
     if cfg.impact_gardening_costello:
         overturn_t = overturn_depth_costello_time(time_arr, cfg)
@@ -1178,9 +1519,33 @@ def overturn_depth_time(time_arr, cfg=CFG):
 
 
 def overturn_depth_costello_time(time_arr, cfg=CFG):
-    """
-    Return regolith overturn depth at each time_arr (Costello et al., 2020).
-    """
+    """Return regolith overturn depth at each time [1]_.
+
+    Parameters
+    ----------
+    time_arr : numpy.ndarray
+        Time array [yr].
+    cfg : moonpies.config.Cfg, optional
+        cfg.overturn_ancient_t0 : float
+            Time when ancient overturn rate becomes present rate [yr].
+        cfg.overturn_depth_present : float
+            Present-day overturn depth per cfg.timestep [m].
+        cfg.overturn_ancient_slope : float
+            Slope of ancient overturn depth [m/yr].
+
+    Returns
+    -------
+    overturn_depth : numpy.ndarray
+        Overturn depth [m] at each time.
+    
+    References
+    ----------
+    .. [1] Costello, E. S., Ghent, R. R., Hirabayashi, M., & Lucey, P. G. 
+       (2020). "Impact Gardening as a Constraint on the Age, Source, and 
+       Evolution of Ice on Mercury and the Moon." Journal of Geophysical 
+       Research: Planets, 125(3). https://doi.org/10/gk56kr
+
+    """    
     t_anc = cfg.overturn_ancient_t0
     depth = np.ones_like(time_arr) * cfg.overturn_depth_present
     d_scaling = cfg.overturn_ancient_slope * (time_arr - t_anc) + 1
@@ -1190,13 +1555,24 @@ def overturn_depth_costello_time(time_arr, cfg=CFG):
 
 # Impact-delivered ice module
 def get_impact_ice(time_arr, df, cfg=CFG, rng=None):
-    """
-    Return ice thickness [m] delivered to pole due to global impacts vs time.
+    """Return polar ice thickness [m] from global impacts at each time.
+
+    Parameters
+    ----------
+    time_arr : numpy.ndarray
+        Time array [yr].
+    df : pandas.DataFrame
+        Crater dataframe.
+    cfg : moonpies.config.Cfg, optional
+        cfg.impact_ice_basins : bool
+            If True, add basin ice contributions
+    rng : int or numpy.random.Generator, optional
+        Random number generator or seed.
 
     Returns
     -------
-    impact_ice_t (arr): Ice thickness [m] delivered to pole at each time.
-    rng (int or np.RandomState): Seed or random number generator.
+    ice_time : numpy.ndarray
+        Polar ice thickness [m] at each time.
     """
     impact_ice_t = np.zeros_like(time_arr)
     impact_ice_t += get_micrometeorite_ice(time_arr, cfg)
@@ -1212,9 +1588,22 @@ def get_impact_ice(time_arr, df, cfg=CFG, rng=None):
 
 
 def get_comet_cfg(cfg):
-    """
-    Return comet config.
-    """
+    """Return config with impact parameters updated to comet values.
+
+    Sets cfg.is_comet, cfg.hydrated_wt_pct, cfg.impactor_density, 
+    cfg.impact_mass_retained to comet counterparts.
+
+    Parameters
+    ----------
+    cfg : moonpies.config.Cfg
+        MoonPIES config object.
+
+    Returns
+    -------
+    comet_cfg : moonpies.config.Cfg
+        MoonPIES config object with comet parameters set.
+    """    
+    # TODO: Explicitly handle comets instead of cludge with impact cfg params.
     # Define comet_cfg with comet parameters to supply to get_impact_ice
     comet_cfg_dict = cfg.to_dict()
     comet_cfg_dict["is_comet"] = True  # Use comet impact speeds
@@ -1225,13 +1614,25 @@ def get_comet_cfg(cfg):
 
 
 def get_impact_ice_comet(time_arr, df, cfg, rng=None):
-    """
-    Return ice thickness [m] delivered to pole due to comet impacts vs time.
+    """Return polar ice thickness [m] from comet impacts at each time.
+
+    Parameters
+    ----------
+    time_arr : numpy.ndarray
+        Time array [yr].
+    df : pandas.DataFrame
+        Crater dataframe.
+    cfg : moonpies.config.Cfg
+        MoonPIES config object.
+    rng : int or numpy.random.Generator, optional
+        Random number generator or seed.
 
     Returns
     -------
-    impact_ice_t (arr): Ice thickness [m] delivered to pole at each time.
-    """
+    ice_time : numpy.ndarray
+        Comet polar ice thickness [m] at each time.
+    """    
+    # Repeat get_impact_ice with comet cfg
     comet_cfg = get_comet_cfg(cfg)
     comet_ice_t = get_impact_ice(time_arr, df, comet_cfg, rng)
     return comet_ice_t
@@ -1328,7 +1729,7 @@ def get_ice_stochastic(time_arr, regime, cfg=CFG, rng=None):
     time_arr (arr): Array of times [yr] to calculate ice thickness at.
     regime (str): Regime of ice production.
     cfg (Cfg): Config object.
-    rng (int or np.RandomState): Seed or random number generator.
+    rng (int or numpy.random.Generator): Seed or random number generator.
 
     Returns
     -------
@@ -1537,7 +1938,7 @@ def randomize_crater_ages(df, timestep, rng=None):
     ----------
     df (DataFrame): Crater dataframe with age, age_low, age_upp columns.
     timestep (int): Timestep [yr].
-    rng (int or np.RandomState): Seed or random number generator.
+    rng (int or numpy.random.Generator): Seed or random number generator.
     """
     rng = _rng(rng)
 
@@ -1561,7 +1962,7 @@ def get_random_hydrated_craters(n, cfg=CFG, rng=None):
     ----------
     n (int): Number of craters.
     cfg (Cfg): Config object.
-    rng (int or np.RandomState): Seed or random number generator.
+    rng (int or numpy.random.Generator): Seed or random number generator.
     """
     rng = _rng(rng)
     rand_arr = rng.random(size=n)
@@ -1588,7 +1989,7 @@ def get_random_hydrated_basins(n, cfg=CFG, rng=None):
     ----------
     n (int): Number of basins.
     cfg (Cfg): Config object.
-    rng (int or np.RandomState): Seed or random number generator.
+    rng (int or numpy.random.Generator): Seed or random number generator.
     """
     rng = _rng(rng)
     rand_arr = rng.random(size=n)
@@ -1614,7 +2015,7 @@ def get_random_impactor_speeds(n, cfg=CFG, rng=None):
     ----------
     n (int): Number of impactors.
     cfg (Cfg): Config object.
-    rng (int or np.RandomState): Seed or random number generator.
+    rng (int or numpy.random.Generator): Seed or random number generator.
     """
     # Randomize impactor speeds with Gaussian around mean, sd
     rng = _rng(rng)
@@ -2027,24 +2428,109 @@ def specific_heat_capacity(T, cfg=CFG):
     return c0 + c1 * T + c2 * T**2 + c3 * T**3 + c4 * T**4
 
 
-# Surface age module
+# Gridded outputs
+def get_grid_outputs(df, grdx, grdy, cfg=CFG):
+    """Return gridded age of most recent impact and ejecta thickness.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Crater DataFrame.
+    grdx : numpy.ndarray
+        Grid x-coordinates [m].
+    grdy : numpy.ndarray
+        Grid y-coordinates [m].
+    cfg : moonpies.config.Cfg, optional
+        MoonPIES config object.
+
+    Returns
+    -------
+    age_grid : numpy.ndarray
+        Gridded ages of last impact [yr] (Ny, Nx).
+    thickness_grid : numpy.ndarray
+        Gridded ejecta thickness [m] (Ny, Nx, Ncoldtraps).
+
+    See Also
+    --------
+    get_age_grid, get_gc_dist_grid, get_ejecta_thickness_matrix
+    """    
+    # Age of most recent impact (2D array: NX, NY)
+    age_grid = get_age_grid(df, grdx, grdy, cfg)
+
+    # Great circle distance from each crater to grid (3D array: NX, NY, NC)
+    dist_grid = get_gc_dist_grid(df, grdx, grdy, cfg.dtype)
+
+    # Ejecta thickness produced by each crater on grid (3D array: NX, NY, NC)
+    ej_thick_grid = get_ejecta_thickness_matrix(df, dist_grid, cfg)
+    # TODO: ballistic sed depth, kinetic energy, etc
+    return age_grid, ej_thick_grid
+
+
+def get_gc_dist_grid(df, grdx, grdy, cfg=CFG):
+    """Return gridded great circle distance from each crater
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Crater DataFrame.
+    grdx : numpy.ndarray
+        Grid x-coordinates [m].
+    grdy : numpy.ndarray
+        Grid y-coordinates [m].
+    cfg : moonpies.config.Cfg, optional
+        
+
+    Returns
+    -------
+    distance_grid : numpy.ndarray
+        Gridded from each crater in df [m] (Ny, Nx, Ncrater).
+
+    See Also
+    --------
+    gc_dist
+    """
+    ny, nx = grdy.shape[0], grdx.shape[1]
+    lat, lon = xy2latlon(grdx, grdy, cfg.rad_moon)
+    grd_dist = np.zeros((nx, ny, len(df)), dtype=cfg.dtype)
+    for i in range(len(df)):
+        clon, clat = df.iloc[i][["lon", "lat"]]
+        grd_dist[:, :, i] = gc_dist(clon, clat, lon, lat)
+    return grd_dist
+
+
 def get_age_grid(df, grdx, grdy, cfg=CFG):
-    """Return final surface age of each grid point after all craters formed."""
+    """Return final surface age of each grid point after all craters formed.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Crater DataFrame.
+    grdx : numpy.ndarray
+        Grid x-coordinates [m].
+    grdy : numpy.ndarray
+        Grid y-coordinates [m].
+    cfg : moonpies.config.Cfg, optional
+        cfg.timestart : float
+            Start time [yr].
+        cfg.rad_moon : float
+            Lunar radius [m].
+
+    Returns
+    -------
+    age_grid : numpy.ndarray
+        Gridded ages of last impact [yr] (Ny, Nx).
+    """
+    def update_age(age_grid, crater, grdx, grdy, rp):
+        """Return new age grid, update points interior to crater with age."""
+        x, y = latlon2xy(crater.lat, crater.lon, rp)
+        rad = crater.rad
+        crater_mask = (np.abs(grdx - x) < rad) * (np.abs(grdy - y) < rad)
+        age_grid[crater_mask] = crater.age
+        return age_grid
     ny, nx = grdy.shape[0], grdx.shape[1]
     age_grid = cfg.timestart * np.ones((ny, nx), dtype=cfg.dtype)
     for _, crater in df.iterrows():
         age_grid = update_age(age_grid, crater, grdx, grdy, cfg.rad_moon)
-    return age_grid
-
-
-def update_age(age_grid, crater, grdx, grdy, rp=1737.4e3):
-    """
-    Return new age grid updating the points interior to crater with its age.
-    """
-    x, y = latlon2xy(crater.lat, crater.lon, rp)
-    rad = crater.rad
-    crater_mask = (np.abs(grdx - x) < rad) * (np.abs(grdy - y) < rad)
-    age_grid[crater_mask] = crater.age
     return age_grid
 
 
@@ -2112,6 +2598,16 @@ def merge_adjacent_strata(strat, agg=None):
 def format_csv_outputs(strat_cols, time_arr, df, cfg=CFG):
     """
     Return all formatted model outputs and write to outpath, if specified.
+
+    Returns
+    -------
+    ejecta: pandas.DataFrame
+        Ejecta thickness [m] (rows: time, cols: cold traps)
+    ice: pandas.DataFrame
+        Ice thickness [m] (rows: time, cols: cold traps)
+    strat_dict: dict of str:pandas.DataFrame
+        Dict of stratigraphy column DataFrames; keys: coldtrap names, values:
+        dataframe (rows: layers, cols: ice, ejecta, source, time, depth, ice%)
     """
     ej_dict = {"time": time_arr}
     ice_dict = {"time": time_arr}
@@ -2149,7 +2645,7 @@ def format_save_outputs(strat_cols, time_arr, df, cfg=CFG):
     Format dataframes and save outputs based on write / write_npy in cfg.
     """
     vprint(cfg, "Formatting outputs")
-    ej_df, ice_df, strat_dfs = format_csv_outputs(strat_cols, time_arr, df, cfg)
+    ejdf, icedf, strat_dfs = format_csv_outputs(strat_cols, time_arr, df, cfg)
     if cfg.write:
         # Save config file
         vprint(cfg, f"Saving outputs to {cfg.out_path}")
@@ -2164,7 +2660,7 @@ def format_save_outputs(strat_cols, time_arr, df, cfg=CFG):
         save_outputs(dfs, fnames)
 
         # Save raw ice and ejecta column vs time dataframes
-        save_outputs([ej_df, ice_df], [cfg.ej_t_csv_out, cfg.ice_t_csv_out])
+        save_outputs([ejdf, icedf], [cfg.ej_t_csv_out, cfg.ice_t_csv_out])
         print(f"Outputs saved to {cfg.out_path}")
 
     if cfg.write_npy:
@@ -2176,7 +2672,7 @@ def format_save_outputs(strat_cols, time_arr, df, cfg=CFG):
         npy_fnames = (cfg.agegrd_npy_out, cfg.ejmatrix_npy_out)
         vprint(cfg, f"Saving npy outputs to {cfg.out_path}")
         save_outputs(grd_outputs, npy_fnames)
-    return ej_df, ice_df, strat_dfs
+    return strat_dfs
 
 
 def save_outputs(outputs, fnames):

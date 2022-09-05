@@ -111,7 +111,6 @@ class Cfg:
     crater_csv_in: str = 'crater_list.csv'
     basin_csv_in: str = 'basin_list.csv'
     nk_csv_in: str = 'needham_kring_2017_s3.csv'
-    costello_csv_in: str = 'costello_etal_2018_t1_expanded.csv'
     bahcall_csv_in: str = 'bahcall_etal_2001_t2.csv'
     bhop_csv_in: str = 'ballistic_hop_coldtraps.csv'
     bsed_frac_mean_in: str = 'ballistic_sed_frac_melted_mean.csv'

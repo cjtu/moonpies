@@ -735,8 +735,8 @@ def melt_fraction_bsed(fsave='melt_fraction_bsed.pdf', figdir=FIGDIR, cfg=CFG, s
     Plot melt fraction as a function of ejecta thickness and ballistic mixing depth.
     """
     mplt.reset_plot_style()
-    dm = mp.read_ballistic_melt_frac(cfg.bsed_frac_mean_in, cfg)
-    ds = mp.read_ballistic_melt_frac(cfg.bsed_frac_std_in, cfg)
+    dm = mp.read_ballistic_melt_frac(True, cfg)  # mean
+    ds = mp.read_ballistic_melt_frac(False, cfg)  # std
 
     # Get data and axes
     frac_mean = dm.to_numpy()
