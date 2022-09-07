@@ -6,7 +6,7 @@ authors = ["Christian J. Tai Udovicic <cjtu@nau.edu>", "Katelyn R. Frizzell", "K
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/cjtu/moonpies"
-classifiers=[
+classifiers = [
     'Intended Audience :: Science/Research',
     'License :: OSI Approved :: MIT License',
     'Natural Language :: English',
@@ -14,6 +14,9 @@ classifiers=[
     'Topic :: Scientific/Engineering :: Astronomy',
     'Programming Language :: Python :: 3.8',
 ]
+
+[tool.poetry.urls]
+"Bug Tracker" = "https://github.com/cjtu/moonpies/issues"
 
 [tool.poetry.dependencies]
 python = "^3.8,<3.12"
