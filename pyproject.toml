@@ -24,6 +24,9 @@ myst-parser = "^0.15.1"
 numpydoc = "^1.1.0"
 seaborn = "^0.11.2"
 
+[tool.poetry.scripts]
+moonpies = "moonpies.cli:run"
+
 [tool.black]
 line-length=79
 exclude = '''
