@@ -1,13 +1,19 @@
+<div align="center">
+<a href="https://zenodo.org/badge/latestdoi/399214580">
+<img src="https://zenodo.org/badge/399214580.svg" alt="DOI"></a>
+<a href="https://github.com/psf/black">
+<img src="https://img.shields.io/badge/code%20style-black-000000.svg" alt="Code Style: Black" /></a>
+</div>
+
 # MoonPIES: Moon Polar Ice and Ejecta Stratigraphy
 
-Welcome to the *Moon Polar Ice and Ejecta Stratigraphy* (MoonPIES) model. 
+Welcome to the *Moon Polar Ice and Ejecta Stratigraphy* (MoonPIES) model.
 
 **Note:** This model is not yet peer-reviewed and comes with no warranties. It should not be considered "stable". Ongoing work to improve the documentation and usability of the model may result in backwards-incompatible changes. Please direct bug reports or code feedback to the GitHub [issues board](https://github.com/cjtu/moonpies/issues) or general inquiries to Christian at [cjtu@nau.edu](mailto:cjtu@nau.edu).
 
 ## Motivation
 
 MoonPIES models ice and ejecta at depth below lunar polar cold traps. With the imminent return of humans to the Moon through the NASA Artemis program, it is crucial to predict where we expect to find ice, a possibly invaluable lunar resource.
-
 
 ## Installing MoonPIES
 
@@ -136,11 +142,13 @@ This example will start 1000 runs of MoonPIES, each with a unique random seed an
 
 This model was produced by C. J. Tai Udovicic, K. Frizzell, K. Luchsinger, A. Madera, and T. Paladino with input from M. Kopp, M. Meier, R. Patterson, F. Wroblewski, G. Kodikara, and D. Kring.
 
-## License and Citations
+## License and Referencing
 
 This code is made available under the [MIT license](https://choosealicense.com/licenses/mit/) which allows warranty-free use with proper citation. The model can be cited as:
 
-> Authors et al. (2021). Title.
+> Tai Udovicic et al. (2022). Moonpies. 10.5281/zenodo.7055800
+
+See (CITATION.cff)[https://github.com/cjtu/moonpies/blob/main/CITATION.cff] or (MoonPIES on zenodo)[https://doi.org/10.5281/zenodo.7055799] for easy import to any reference manager.
 
 ## Acknowledgements
 
