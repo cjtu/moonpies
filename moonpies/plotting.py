@@ -1,9 +1,6 @@
 # Plot helpers
-import json
-import warnings
 from pathlib import Path
 import matplotlib as mpl
-# import matplotlib.gridspec as gs
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -12,7 +9,6 @@ from moonpies import moonpies as mp
 
 CFG = config.Cfg(seed=1)
 CDF = mp.get_crater_basin_list(CFG)  # Only used for radii for lith_key
-WARNINGS = 0  # Count warnings
 
 # Stratigraphy column hatches with increasing density
 HATCH = ('/', '\\', '|', '-', '+', 'x', 'o')
@@ -24,15 +20,7 @@ def reset_plot_style(mplstyle=True, cfg=CFG):
     """Reset matplotlib style defaults, use MoonPIES mplstyle if True."""
     mpl.rcParams.update(mpl.rcParamsDefault)
     if mplstyle:
-        if mplstyle is True:
-            mplstyle = Path(cfg.model_path) / ".moonpies.mplstyle"
-        try:
-            mpl.style.use(mplstyle)
-        except (OSError, FileNotFoundError):
-            global WARNINGS
-            if WARNINGS < 1:
-                warnings.warn(f"Could not find mplstyle file {mplstyle}")
-                WARNINGS += 1
+        mpl.style.use(cfg.mplstyle_in)
 
 
 def plot_version(

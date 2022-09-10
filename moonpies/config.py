@@ -4,15 +4,13 @@ Sets all configurable attributes, paths and model options for a MoonPIES run.
 See documentation for guide to defining custom config parameters.
 """
 import ast
+import importlib.resources
 import pprint
-from os import path, sep, environ, getcwd
+from os import path, sep, getcwd
 from datetime import datetime
 from dataclasses import dataclass, fields, field, asdict
 import numpy as np
-try:
-    from ._version import __version__
-except ImportError:
-    from _version import __version__
+from ._version import __version__
 _sudo_setattr = object.__setattr__  # Set attrs of frozen dataclass fields
 
 MODE_DEFAULTS = {
@@ -65,7 +63,7 @@ POLE_DEFAULTS = {
 @dataclass(frozen=True)
 class Cfg:
     """Class to configure a mixing model run."""
-    run_name: str = 'mpies'  # Name of the current run
+    run_name: str = 'moonpies'  # Name of the current run
     version: str = __version__  # Current version of MoonPIES
 
     # Set in post_init
@@ -102,7 +100,6 @@ class Cfg:
     coldtrap_names: tuple = None
 
     # Paths set in post_init if not given (attr name must end with "_path")
-    model_path: str = ''  # path to moonpies.py
     data_path: str = ''  # path to import data
     out_path: str = ''  # path to save outputs
     figs_path: str = ''  # path to save figures
@@ -115,13 +112,14 @@ class Cfg:
     bhop_csv_in: str = 'ballistic_hop_coldtraps.csv'
     bsed_frac_mean_in: str = 'ballistic_sed_frac_melted_mean.csv'
     bsed_frac_std_in: str = 'ballistic_sed_frac_melted_std.csv'
+    mplstyle_in: str = '.moonpies.mplstyle'
 
     # Files to export to out_path (attr name must end with "_out")
-    ej_t_csv_out: str = f'ej_columns_{run_name}.csv'
-    ice_t_csv_out: str = f'ice_columns_{run_name}.csv'
-    config_py_out: str = f'run_config_{run_name}.py'
-    agegrd_npy_out: str = f'age_grid_{run_name}.npy'
-    ejmatrix_npy_out: str = f'ejecta_matrix_{run_name}.npy'
+    ej_t_csv_out: str = 'ej_columns.csv'
+    ice_t_csv_out: str = 'ice_columns.csv'
+    config_py_out: str = f'config_{run_name}_v{__version__}.py'
+    agegrd_npy_out: str = 'age_grid.npy'
+    ejmatrix_npy_out: str = 'ejecta_matrix.npy'
 
     # Grid and time size and resolution
     dtype = np.float32  # np.float64 (32 should be good for most purposes)
@@ -294,10 +292,9 @@ class Cfg:
 
     def _set_path_defaults(self):
         """Set defaults for paths."""
-        _sudo_setattr(self, 'model_path', _get_model_path(self.model_path))
-        _sudo_setattr(self, 'data_path', _get_data_path(self.data_path, self.model_path))
-        _sudo_setattr(self, 'out_path', _get_out_path(self.out_path, self.data_path, self.seed, self.run_date, self.run_name))
-        _sudo_setattr(self, 'figs_path', _get_figs_path(self.figs_path, self.model_path))
+        _sudo_setattr(self, 'data_path', _get_data_path(self.data_path))
+        _sudo_setattr(self, 'out_path', _get_out_path(self.out_path, self.seed, self.run_date, self.run_name))
+        _sudo_setattr(self, 'figs_path', _get_figs_path(self.figs_path, self.out_path))
     
     
     def _make_paths_absolute(self, data_path, out_path):
@@ -308,17 +305,20 @@ class Cfg:
         Prepend out_path to all cfg_fields ending with "_out".
         """
         for cfg_field in fields(self):
-            value = getattr(self, cfg_field.name)
+            key, value = cfg_field.name, getattr(self, cfg_field.name)
             if not isinstance(value, str):
                 continue
+
+            # Get new path with data / out path prepended
             newpath = None
-            if cfg_field.name.endswith('_in'):
+            if key.endswith('_in'):
                 newpath = path.join(data_path, path.basename(value))
-            elif cfg_field.name.endswith('_out'):
+            elif key.endswith('_out'):
                 newpath = path.join(out_path, path.basename(value))
-            elif cfg_field.name.endswith('_path'):
+            elif key.endswith('_path'):
                 newpath = value
-            if newpath is not None:
+            # If value already a valid path, do nothing
+            if newpath is not None and not path.exists(value):
                 newpath = path.abspath(path.expanduser(newpath))
                 _sudo_setattr(self, cfg_field.name, newpath)
 
@@ -383,50 +383,25 @@ def _get_time(fmt="%H:%M:%S"):
     """Return current time as string."""
     return datetime.now().strftime(fmt)
 
-def _get_model_path(model_path):
-    """
-    Return path to moonpies.py. If not installed, assume following structure:
 
-    /project
-        /data
-        /moonpies
-            - config.py (this file)
-            - moonpies.py
-        /figs
-        /test
-
-    """
-    if model_path != '':
-        return model_path
-    # Try to import absolute path from installed moonpies module
-    try:
-        import importlib.resources as pkg_resources  # pylint: disable=import-outside-toplevel
-        with pkg_resources.path('moonpies', 'moonpies.py') as fpath:
-            model_path = fpath.parent.as_posix()
-    except (TypeError, ModuleNotFoundError):
-        # If module not installed, get path from current file
-        if "JPY_PARENT_PID" in environ:  # Jupyter (assume user used chdir)
-            model_path = getcwd()
-        else:  # Non-notebook - assume user is running the .py script directly
-            model_path = path.abspath(path.dirname(__file__))
-    return model_path + sep
-
-
-def _get_data_path(data_path, model_path):
+def _get_data_path(data_path):
     """Return default data_path if not specified in cfg."""
-    if data_path == '':
-        data_path = path.abspath(path.join(model_path, '..', 'data')) + sep
-    return data_path
+    if data_path != '':
+        return data_path
+    with importlib.resources.path('moonpies', 'data') as fpath:
+            data_path = fpath.as_posix()
+    return data_path + sep
 
 
-def _get_figs_path(figs_path, model_path):
-    """Return default data_path if not specified in cfg."""
-    if figs_path == '':
-        figs_path = path.abspath(path.join(model_path, '..', 'figures')) + sep
-    return figs_path
+def _get_figs_path(figs_path, out_path):
+    """Return default figs_path if not specified in cfg."""
+    if figs_path != '':
+        return figs_path
+    figs_path = path.abspath(path.join(out_path, '..', '..', 'figures'))
+    return figs_path  + sep
 
 
-def _get_out_path(out_path, data_path, seed, run_date, run_name):
+def _get_out_path(out_path, seed, run_date, run_name):
     """Return default out_path if not specified in cfg."""
     run_seed = f'{seed:05d}'
     if out_path != '' and run_seed not in out_path:
@@ -436,8 +411,8 @@ def _get_out_path(out_path, data_path, seed, run_date, run_name):
             out_path = path.dirname(path.normpath(out_path))
         out_path = path.join(out_path, run_seed)
     elif out_path == '':
-        # Default out_path is data_path/out/yymmdd/runname/seed/
-        out_path = path.join(data_path, 'out', run_date, run_name, run_seed)
+        # Default out_path is ./out/yymmdd/runname/seed/
+        out_path = path.join(getcwd(), 'out', run_date, run_name, run_seed)
     return out_path + sep
 
 
