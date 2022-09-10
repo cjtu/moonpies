@@ -12,6 +12,7 @@
 #
 import os
 import sys
+from moonpies import __version__
 sys.path.insert(0, os.path.abspath('..'))
 
 
@@ -22,7 +23,7 @@ copyright = '2021, Christian J. Tai Udovicic'
 author = 'Katelyn R. Frizzell, Kristen M. Luchsinger, Alissa Madera, Tyler G. Paladino and Christian J. Tai Udovicic'
 
 # The full version, including alpha/beta/rc tags
-release = '0.10.0'
+release = __version__
 
 
 # -- General configuration ---------------------------------------------------
