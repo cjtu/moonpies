@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.abspath('..'))
 # -- Project information -----------------------------------------------------
 
 project = 'MoonPIES'
-copyright = '2021, Christian J. Tai Udovicic'
+copyright = '2022, Christian J. Tai Udovicic'
 author = 'Katelyn R. Frizzell, Kristen M. Luchsinger, Alissa Madera, Tyler G. Paladino and Christian J. Tai Udovicic'
 
 # The full version, including alpha/beta/rc tags
