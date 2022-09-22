@@ -382,10 +382,10 @@ def read_volcanic_species(cfg=CFG):
     Parameters
     ----------
     cfg : moonpies.config.Cfg, optional
-        cfg.nk_csv : str
+        cfg.nk_csv_in : str
             Path to Table S3 [1] CSV file.
         cfg.nk_cols : tuple of str
-            Tuple of column names in cfg.nk_csv.
+            Tuple of column names in cfg.nk_csv_in.
         cfg.species : str
             Species name (must be in nk_cols).
 
@@ -403,7 +403,7 @@ def read_volcanic_species(cfg=CFG):
        https://doi.org/10.1016/j.epsl.2017.09.002
 
     """
-    df = pd.read_csv(cfg.nk_csv, names=cfg.nk_cols, header=4)
+    df = pd.read_csv(cfg.nk_csv_in, names=cfg.nk_cols, header=4)
     df = df[["time", cfg.species]]
     df["time"] = df["time"] * 1e9  # [Gyr -> yr]
     df[cfg.species] = df[cfg.species] * 1e-3  # [g -> kg]
