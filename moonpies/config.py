@@ -388,8 +388,8 @@ def _get_data_path(data_path):
     """Return default data_path if not specified in cfg."""
     if data_path != '':
         return data_path
-    with importlib.resources.path('moonpies', 'data') as fpath:
-            data_path = fpath.as_posix()
+    with importlib.resources.path('moonpies.data', '__init__.py') as fpath:
+            data_path = fpath.parent.as_posix()
     return data_path + sep
 
 

@@ -31,7 +31,7 @@ def _save_or_show(fig, ax, fsave, figdir, version='', **kwargs):
         if version not in fsave.as_posix():
             fsave = fsave.with_name(f'{fsave.stem}_{version}{fsave.suffix}')
         fsave.parent.mkdir(parents=True, exist_ok=True)  # Make dir if doesn't exist
-        fig.savefig(fsave, **kwargs)
+        fig.savefig(fsave, bbox_inches='tight', **kwargs)
     else:
         plt.show()
     return ax
@@ -54,12 +54,14 @@ def _load_aggregated(cfg, datedir, flatten=True, nruns=True):
     """Load aggregated data."""
     # If no datedir, guess latest date folder in outdir that has layers.csv
     if not datedir:  
-        outdir = Path(cfg.out_path).parents[2]
+        outdir = Path(cfg.data_path).parents[1] / 'data' / 'out'
         subdirs = [p for p in outdir.iterdir() if p.is_dir()]
         for subdir in subdirs[::-1]:
             if any(subdir.glob('layers.csv')):
                 datedir = subdir
                 break
+        else:
+            raise FileNotFoundError('No datedir found. Please specify.')
     print(f'Loading aggregated data from {datedir}')
     return agg.read_agg_dfs(datedir, flatten, nruns)
 
@@ -566,8 +568,8 @@ def kde_layers(fsave='kde_layers.pdf', figdir=FIGDIR, cfg=CFG, datedir='',
     layers['depth_top'] = layers['depth'] - layers['ice']
     layers['depth_top'] = layers['depth_top'].clip(lower=0.1)
 
-    # Make plots. 4 seaborn jointgrids then put together with SeabornFig2Grid
-    fig = plt.figure(figsize=(7.2, 9))
+    # Make plots. seaborn jointgrids then put together with SeabornFig2Grid
+    fig = plt.figure(figsize=(5, 7.75))
     jgs = []
     for i, coldtrap in enumerate(coldtraps):
         df = layers[(layers.coldtrap==coldtrap)]
@@ -629,7 +631,6 @@ def kde_layers(fsave='kde_layers.pdf', figdir=FIGDIR, cfg=CFG, datedir='',
     gs = mpl.gridspec.GridSpec(3, 2)
     for jg, gs in zip(jgs, gs):
         SeabornFig2Grid(jg, fig, gs)
-    fig.tight_layout()
 
     # version = mplt.plot_version(cfg, loc='lr', xyoff=(0.01, -0.15), ax=fig.gca())
     return _save_or_show(fig, gs, fsave, figdir, '')#version)   
