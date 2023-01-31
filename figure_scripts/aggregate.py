@@ -28,26 +28,15 @@ def flatten_agg_df(df):
     dflat = dflat.rename(columns={'level_0': 'coldtrap', 'level_1': 'runs'})
     return dflat
 
-def binary_runs(df, yes='mpies', rename='bsed'):
-    """Replace runs with binary Yes / No."""
-    df['runs'] = df['runs'] == yes
-    df['runs'] = df['runs'].replace({True: 'Yes', False: 'No'})
-    if rename:
-        df.rename(columns={'runs': rename}, inplace=True)
+def rename_runs(df, run_names, new_names):
+    """Subset aggregated df to runs in run_names and rename to new_names."""
+    df = df[df.runs.isin(run_names)]
+    for run_name, new_name in zip(run_names, new_names):
+        df.loc[df.runs==run_name, 'runs'] = new_name
     return df
 
-def get_coldtrap_age(coldtrap, coldtrap_csv):
-    """
-    Return coldtrap age given a run config file.
-    """
-    mp.clear_cache()
-    fcfg = coldtrap_csv.parent.joinpath('run_config_mpies.py')
-    cfg = config.read_custom_cfg(fcfg)
-    craters = mp.get_crater_basin_list(cfg=cfg, rng=mp.get_rng(cfg))
-    return craters[craters.cname==coldtrap].age.values[0]
 
-
-def agg_coldtrap(coldtrap, datedir, outdir):
+def agg_coldtrap(coldtrap, datedir, outdir, depths=(1, 3, 6, 10, 100)):
     """
     Aggregate all Monte Carlo runs for a given coldtrap as ice layers and 
     depths, and total run ice.
@@ -58,20 +47,18 @@ def agg_coldtrap(coldtrap, datedir, outdir):
     for rundir in runs:
         csvs = list(Path(rundir).rglob(f'strat_{coldtrap}.csv'))
         clayers = {'ice': [], 'depth': [], 'time': []}
-        cruns = {
-            'total ice': np.zeros(len(csvs)), 
-            'total ice 6m': np.zeros(len(csvs)), 
-            'total ice 10m': np.zeros(len(csvs)), 
-            'total ice 100m': np.zeros(len(csvs)), 
-            'maxdepth': np.zeros(len(csvs))
-        }
+        cruns = {f'total ice {d}m': np.zeros(len(csvs)) for d in depths}
+        cruns['total ice'] = np.zeros(len(csvs))
+        cruns['maxdepth'] = np.zeros(len(csvs))
+
         for i, csv in enumerate(csvs):
-            # Get crater age for this run to exclude older layers
-            age = get_coldtrap_age(coldtrap, csv)
+            # Pull ice, timing and depth
+            df = pd.read_csv(csv)
+            ice, time, depth = df[['ice', 'time', 'depth']].values.T
+            age = float(df[df.label == 'Formation age'].time)
             
-            # Pull ices and depths after coldtrap formed
-            ice, time, depth = pd.read_csv(csv, usecols=[0, 3, 4]).values.T
-            if (time<=age).sum() == 0:  # no layers after coldtrap formed, skip
+            # Skip if no layers after coldtrap formed
+            if (time<=age).sum() == 0:
                 continue
             ice = ice[time<=age]
             depth = depth[time<=age]
@@ -81,13 +68,15 @@ def agg_coldtrap(coldtrap, datedir, outdir):
             
             cruns['total ice'][i] = ice.sum()
             cruns['maxdepth'][i] = depth.max()
-            for dmax in [6, 10, 100]:
+
+            # Compute total ice to each depth
+            for dmax in depths:
                 cruns[f'total ice {dmax}m'][i] = ice[depth<=dmax].sum()
-                # Find layers overlapping the dmax
+                # Find layer overlapping the dmax, keep portion above dmax
                 ind = np.searchsorted(depth[::-1], dmax, side='right') + 1
                 if ind <= len(depth):
                     doverlap = dmax - (depth[-ind] - ice[-ind])
-                    cruns[f'total ice {dmax}m'][i] += max(0, doverlap)  # keep if > 0
+                    cruns[f'total ice {dmax}m'][i] += max(0, doverlap)
 
             if i % 1000 == 0:
                 print(f'{coldtrap} {rundir.name} CSV {i}')
@@ -146,7 +135,7 @@ if __name__ == '__main__':
 
     DEBUG = False
     if DEBUG:
-        DATEDIR = Path('/home/ctaiudovicic/projects/moonpies/data/out/220627/')
+        DATEDIR = Path('/home/ctaiudovicic/projects/moonpies/out/230122/')
         TMPDIR = DATEDIR / 'tmp'  
         for COLDTRAP in COLDTRAPS[2:]:
             agg_coldtrap(COLDTRAP, DATEDIR, TMPDIR)

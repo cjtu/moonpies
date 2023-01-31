@@ -36,8 +36,8 @@ axes.grid: False
 axes.facecolor: white
 axes.formatter.limits: -3, 3  # use scientific notation unless min < log10 < max
 axes.formatter.min_exponent: 3  # minimum exponent to use scientific notation
-axes.titlesize: 12
-axes.labelsize: 12
+axes.titlesize: 10
+axes.labelsize: 10
 axes.spines.top: True
 axes.spines.right: True
 #axes.prop_cycle: cycler(

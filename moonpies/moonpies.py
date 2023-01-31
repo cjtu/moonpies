@@ -1303,6 +1303,7 @@ def get_bsed_depth(time_arr, df, ej_dists, cfg=CFG):
     mixing_ratio_t = ages2time(time_arr, ages, mixing_ratio, np.nanmax, 0)
     bsed_depths_t = ej_thick_t * mixing_ratio_t  # Petro and Pieters (2004)
     melt_frac_t = ages2time(time_arr, ages, melt_frac, np.nanmax, 0)
+    melt_frac_t *= cfg.ballistic_sed_frac_lost  # Scale by fraction lost from column (default 100%)
     return bsed_depths_t, melt_frac_t
 
 
@@ -2458,10 +2459,11 @@ def get_grid_outputs(df, grdx, grdy, cfg=CFG):
     age_grid = get_age_grid(df, grdx, grdy, cfg)
 
     # Great circle distance from each crater to grid (3D array: NX, NY, NC)
-    dist_grid = get_gc_dist_grid(df, grdx, grdy, cfg.dtype)
+    dist_grid = get_gc_dist_grid(df, grdx, grdy, cfg)
 
     # Ejecta thickness produced by each crater on grid (3D array: NX, NY, NC)
-    ej_thick_grid = get_ejecta_thickness_matrix(df, dist_grid, cfg)
+    rad = df.rad.values[:, np.newaxis, np.newaxis]
+    ej_thick_grid = get_ejecta_thickness(dist_grid, rad, cfg)
     # TODO: ballistic sed depth, kinetic energy, etc
     return age_grid, ej_thick_grid
 
@@ -2490,11 +2492,18 @@ def get_gc_dist_grid(df, grdx, grdy, cfg=CFG):
     gc_dist
     """
     ny, nx = grdy.shape[0], grdx.shape[1]
-    lat, lon = xy2latlon(grdx, grdy, cfg.rad_moon)
-    grd_dist = np.zeros((nx, ny, len(df)), dtype=cfg.dtype)
-    for i in range(len(df)):
-        clon, clat = df.iloc[i][["lon", "lat"]]
-        grd_dist[:, :, i] = gc_dist(clon, clat, lon, lat)
+    grdlat, grdlon = xy2latlon(grdx, grdy, cfg.rad_moon)
+    grd_dist = np.zeros((len(df), nx, ny), dtype=cfg.dtype)
+    for i, row in df.iterrows():
+        clon, clat, crad = row[["lon", "lat", "rad"]]
+        grd_dist[i] = gc_dist(clon, clat, grdlon, grdlat)
+        
+        cmask = grd_dist[i] < crad  # Mask crater interior
+        thresh = cfg.basin_ej_threshold if row.isbasin else cfg.ej_threshold
+        ejmask = grd_dist[i] > thresh * crad  # Mask ejecta exterior
+        grd_dist[i] = np.where(cmask, np.nan, grd_dist[i])
+        grd_dist[i] = np.where(ejmask, np.nan, grd_dist[i])
+
     return grd_dist
 
 
@@ -2520,17 +2529,16 @@ def get_age_grid(df, grdx, grdy, cfg=CFG):
     age_grid : numpy.ndarray
         Gridded ages of last impact [yr] (Ny, Nx).
     """
-    def update_age(age_grid, crater, grdx, grdy, rp):
-        """Return new age grid, update points interior to crater with age."""
-        x, y = latlon2xy(crater.lat, crater.lon, rp)
-        rad = crater.rad
-        crater_mask = (np.abs(grdx - x) < rad) * (np.abs(grdy - y) < rad)
-        age_grid[crater_mask] = crater.age
-        return age_grid
+    df = df.sort_values("age", ascending=False)  # sort oldest to youngest
     ny, nx = grdy.shape[0], grdx.shape[1]
-    age_grid = cfg.timestart * np.ones((ny, nx), dtype=cfg.dtype)
-    for _, crater in df.iterrows():
-        age_grid = update_age(age_grid, crater, grdx, grdy, cfg.rad_moon)
+    grdlat, grdlon = xy2latlon(grdx, grdy, cfg.rad_moon)
+    age_grid = np.ones((nx, ny), dtype=cfg.dtype) * cfg.timestart
+    for i, row in df.iterrows():
+        lon, lat, rad, age, basin = row[["lon", "lat", "rad", "age", "isbasin"]]
+        grd_dist = gc_dist(lon, lat, grdlon, grdlat)
+        ej_thresh = cfg.basin_ej_threshold if basin else cfg.ej_threshold
+        ejmask = grd_dist < rad * ej_thresh  # Mask ejecta blanket
+        age_grid = np.where(ejmask, age, age_grid)  # Update age in ejecta
     return age_grid
 
 
@@ -2703,8 +2711,8 @@ def get_grid_arrays(cfg=CFG):
     ysize, ystep = cfg.grdysize, cfg.grdstep
     xsize, xstep = cfg.grdxsize, cfg.grdstep
     grdy, grdx = np.meshgrid(
-        np.arange(ysize, -ysize, -ystep, dtype=cfg.dtype),
-        np.arange(-xsize, xsize, xstep, dtype=cfg.dtype),
+        np.arange(ysize, -ysize-ystep, -ystep, dtype=cfg.dtype),
+        np.arange(-xsize, xsize+xstep, xstep, dtype=cfg.dtype),
         sparse=True,
         indexing="ij",
     )

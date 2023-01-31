@@ -177,6 +177,7 @@ class Cfg:
 
     # Ballistic sedimentation module
     ballistic_teq: bool = False  # Do ballistic sed only if teq > coldtrap_max_temp
+    ballistic_sed_frac_lost: float = 1  # Fraction of volatilized ice lost from column
     mixing_ratio_petro: bool = True  # Use Petro and Pieter (2006) adjustment to volume fraction
     mixing_ratio_a: float = 0.0183  # (Oberbeck et al. 1975 via Eq 4 Zhang et al. 2021)  #2.913  # Fit to Ries crater ballistic sed, a
     mixing_ratio_b: float = 0.87  # (Oberbeck et al. 1975 via Eq 4 Zhang et al. 2021)  #-3.978  # Fit to Ries crater ballistic sed, b
@@ -229,7 +230,7 @@ class Cfg:
     is_comet: bool = False  # Use comet properties for impacts
     comet_ast_frac: float = 0.05  # 5-17% (Joy et al 2012) 
     comet_density: float = 600  # [kg/m^3] Comet Shoemaker-Levy 9 (Asphaug and Benz, 1994)
-    comet_hydrated_wt_pct: float = 0.5  # 50% of comet mass is hydrated (Whipple, 1950; Ong et al., 2010)
+    comet_hydrated_wt_pct: float = 0.2  # 20% of comet material is hydrated (Fulle et al., 2017)
     comet_mass_retained: float = 0.065  # asteroid mass retained (Ong et al., 2010)
     comet_speed_min: float = 10.2e3  # [km/s] minimum lunar impact speed for comet (Ong et al., 2010)
     comet_speed_max: float = 72e3  # [km/s] maximum lunar impact speed for comet (Ong et al., 2010)
@@ -265,8 +266,8 @@ class Cfg:
     faint_young_sun: bool = True  # use faint young sun (Bahcall et al., 2001)
 
     # Impact gardening module Costello et al. (2020)
-    overturn_depth_present: float = 0.1  # [m] Present day overturn depth for 1 overturn by secondaries at 99%
-    overturn_ancient_slope: float = 1.6e-9  # [m/yr] Slope of overturn depth at higher early impact flux
+    overturn_depth_present: float = 0.09  # [m] Present day overturn depth for saturation (99% chance of 1 overturn by secondaries)
+    overturn_ancient_slope: float = 1e-9  # [yr^-1] Factor to increase overturn depth by due to early impact fluxe (1% per 10 Myr)
     overturn_ancient_t0: float = 3e9  # [yrs] Time to start applying higher impact flux
 
     # Private post_init methods

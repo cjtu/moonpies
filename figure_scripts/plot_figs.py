@@ -63,7 +63,7 @@ def _load_aggregated(cfg, datedir, flatten=True, nruns=True):
         else:
             raise FileNotFoundError('No datedir found. Please specify.')
     print(f'Loading aggregated data from {datedir}')
-    return agg.read_agg_dfs(datedir, flatten, nruns)
+    return agg.read_agg_dfs(Path(datedir), flatten, nruns)
 
 
 def ast_comet_vels(fsave='comet_vels.pdf', figdir=FIGDIR, cfg=CFG):
@@ -243,21 +243,23 @@ def basin_ice(fsave='basin_ice.pdf', figdir=FIGDIR, cfg=CFG, n=500):
     ax.set_ylim(0.1, None)
     ax.set_title(f'Ice Delivered to South Pole by Basins ({n} runs)')
     ax.set_xlabel('Time [Ga]')
-    ax.set_ylabel('Ice Thickness [m]')
+    ax.set_ylabel('Total ice thickness [m]')
     ax.legend(loc='upper right', ncol=2)
     version = mplt.plot_version(cfg, loc='ul', ax=ax)
     return _save_or_show(fig, ax, fsave, figdir, version)
 
 
-def bsed_violin(fsave='bsed_violin.pdf', figdir=FIGDIR, cfg=CFG, datedir='', corder=CORDER):
-    """Plot violin plot comparing 10k bsed and no bsed runs."""
+def compare_violin(fsave='bsed_violin.pdf', figdir=FIGDIR, cfg=CFG, datedir='', 
+                corder=CORDER, run_names=('moonpies', 'no_bsed'), rename=('Yes', 'No'), title='Ballistic\nSedimentation\n'):
+    """Plot paired violins comparing ice in two runs grouped by crater."""
     mplt.reset_plot_style()
     clist = mp.get_crater_basin_list(cfg).set_index('cname').loc[corder]
     labels = [c+f'\n{lat:.1f}°' for c, lat in zip(corder, clist.lat.values)]
     
     # Load and clean aggregated runs data
+    datedir = Path(datedir)
     _, runs, nruns = _load_aggregated(cfg, datedir, flatten=True, nruns=True)
-    runs = agg.binary_runs(runs, 'mpies', rename='bsed')
+    runs = agg.rename_runs(runs, run_names, rename)
     runs.loc[runs['total ice'] < 1, 'total ice'] = np.nan
     runs['log ice'] = np.log10(runs['total ice'])
 
@@ -266,8 +268,8 @@ def bsed_violin(fsave='bsed_violin.pdf', figdir=FIGDIR, cfg=CFG, datedir='', cor
 
     ax.fill_between([2.5, 7.5], [-1, -1], [4, 4], color='tab:gray', alpha=0.5)
     ax.fill_between([9.5, 12.5], [-1, -1], [4, 4], color='tab:gray', alpha=0.5)
-    ax = sns.violinplot(x='coldtrap', y='log ice', hue='bsed', 
-                        hue_order=['No', 'Yes'], data=runs, split=True, cut=0,
+    ax = sns.violinplot(x='coldtrap', y='log ice', hue='runs', 
+                        hue_order=rename[::-1], data=runs, split=True, cut=0,
                         inner='quartiles', palette='Set2', order=corder,
                         scale='count', scale_hue=False, ax=ax, width=0.95)
 
@@ -275,7 +277,7 @@ def bsed_violin(fsave='bsed_violin.pdf', figdir=FIGDIR, cfg=CFG, datedir='', cor
     # ax.plot(['Haworth'], [1.5], 'ro')
     ax.set_xticklabels(labels, rotation=30, fontsize=9)
     ax.tick_params('x', direction='out', top=False)
-    ax.set_ylabel('Ice thickness [m]', labelpad=-0.8)
+    ax.set_ylabel('Total ice thickness [m]', labelpad=-0.8)
     ax.set_yticks([0, 1, 2, 3])
     ax.set_yticklabels(10**ax.get_yticks())
     ax.set_xlabel('')
@@ -289,7 +291,7 @@ def bsed_violin(fsave='bsed_violin.pdf', figdir=FIGDIR, cfg=CFG, datedir='', cor
     ax.annotate('Eratosthenian', (9.6, ymin+0.1))
     
 
-    title = f'Ballistic\nSedimentation\n({nruns} runs)'
+    title = title + f'({nruns} runs)'
     leg = plt.legend(loc='upper right', borderaxespad=0.25, title_fontsize=9, fontsize=9, ncol=2, 
                      columnspacing=0.5, handletextpad=0.2, title=title)
     leg.get_title().set_multialignment('center')
@@ -311,10 +313,21 @@ def crater_basin_ages(fsave='crater_basin_ages.pdf', figdir=FIGDIR, cfg=CFG):
     # Plot params
     fs_large = 12
 
-    dc = mp.read_crater_list(CFG).set_index('cname')
-    db = mp.read_basin_list(CFG).set_index('cname')
+    # dc = mp.read_crater_list(cfg).set_index('cname')
+    # db = mp.read_basin_list(cfg).set_index('cname')
+    
+    df = mp.get_crater_basin_list(cfg)
+    ej_distances = mp.get_coldtrap_dists(df, cfg)
+    thick = mp.get_ejecta_thickness_matrix(df, ej_distances, cfg)
+    for i, row in df.iterrows():
+        if thick[i].max() > 0 and row.isbasin:
+            print(f'{row.cname} hits at {row.age}')
+            df.loc[i, 'cname'] = f'*{row.cname}'
 
-    nec_ga = db.loc["Nectaris", "age"] / 1e9  # Necarian
+    dc = df.loc[~df.isbasin].set_index('cname')
+    db = df.loc[df.isbasin].set_index('cname')
+
+    nec_ga = db.loc["*Nectaris", "age"] / 1e9  # Necarian
     imb_ga = db.loc["Imbrium", "age"] / 1e9 # Imbrian
     era_ga = 3.2  # Eratosthenian
     cop_ga = 1.1  # Copernican
@@ -545,46 +558,51 @@ def ejecta_bsed(fsave='ejecta_bsed.pdf', figdir=FIGDIR, cfg=CFG):
 
 def kde_layers(fsave='kde_layers.pdf', figdir=FIGDIR, cfg=CFG, datedir='', 
                coldtraps=("Faustini", "Haworth", "Amundsen", "Cabeus", 
-               "de Gerlache", "Slater")):
+               "de Gerlache", "Slater"), run_names=('moonpies', 'no_bsed'), 
+               rename=('Yes', 'No')):
     """
     Plot KDE of ejecta thickness and ballistic mixing depth.
     """
+    import patchworklib as pw
+    pw.overwrite_axisgrid()
+    pw.param['margin'] = 0.05
     mplt.reset_plot_style()
     custom_params = {"axes.spines.right": False, "axes.spines.top": False}
     sns.set_theme(style="ticks", rc=custom_params)
     pal = sns.color_palette()
     mypal = [pal[0], pal[1]]
     hues = ['No', 'Yes']
-    xlim = (0.05, 1000)
+    xlim = (0.05, 150)
     ylim = (1, 800)
-    skip = 100  # skip this many points for each coldtrap (for faster kde)
+    skip = 300  # skip this many points for each coldtrap (for faster kde)
 
     # Clean layer data
     layers, _, nruns = _load_aggregated(cfg, datedir)
-    layers = agg.binary_runs(layers, 'mpies', rename='bsed')
+    layers = agg.rename_runs(layers, run_names, rename)
+    layers = layers.round({'depth': 1, 'ice': 1})
     layers.loc[layers['ice'] < 0.1, 'ice'] = np.nan
     layers.loc[layers['depth'] < 0.1, 'depth'] = np.nan
     layers.dropna(inplace=True)
+    
     layers['depth_top'] = layers['depth'] - layers['ice']
     layers['depth_top'] = layers['depth_top'].clip(lower=0.1)
 
-    # Make plots. seaborn jointgrids then put together with SeabornFig2Grid
-    fig = plt.figure(figsize=(5, 7.75))
+    # Make seaborn jointgrids then put together with patchwork
     jgs = []
     for i, coldtrap in enumerate(coldtraps):
         df = layers[(layers.coldtrap==coldtrap)]
         if len(df) > 1000:
             df = df.iloc[::skip]
         # df = layers[(layers.coldtrap==coldtrap)].iloc[::skip]
-        jg = sns.JointGrid(space=0)
+        jg = sns.JointGrid(space=0, height=2.5)
         jg.ax_joint.annotate(f'{coldtrap}', xy=(0.5, 0.98), ha='center', va='top', xycoords='axes fraction')
-        g = sns.kdeplot(x='ice', y='depth_top', hue='bsed', hue_order=hues, data=df, log_scale=True, 
-                    palette=mypal, bw_adjust=1.5, thresh=0.3, levels=8, common_norm=False, ax=jg.ax_joint)
+        g = sns.kdeplot(x='ice', y='depth', hue='runs', hue_order=hues, data=df, log_scale=True, 
+                    palette=mypal, bw_adjust=1.5, thresh=0.2, levels=8, common_norm=False, ax=jg.ax_joint)
         # Hist: hue_order plots in reverse order, so flip hues and mypal
-        sns.histplot(x='ice', hue='bsed', bins='sturges', common_norm=True,
-                    hue_order=hues[::-1], palette=mypal[::-1], alpha=0.3,
+        sns.histplot(x='ice', hue='runs', bins='sturges', common_norm=True,
+                    hue_order=hues[::-1], palette=mypal[::-1], alpha=0.3, pthresh=0.2,
                     element='step', data=df, legend=False, ax=jg.ax_marg_x)
-        sns.histplot(y='depth', hue='bsed', bins='sturges', common_norm=True,
+        sns.histplot(y='depth_top', hue='runs', bins='sturges', common_norm=True, pthresh=0.2,
                     hue_order=hues[::-1], palette=mypal[::-1], alpha=0.3,
                     element='step', data=df, legend=False, ax=jg.ax_marg_y)
         
@@ -594,14 +612,15 @@ def kde_layers(fsave='kde_layers.pdf', figdir=FIGDIR, cfg=CFG, datedir='',
 
         # Gigaton zone
         if i < 2:
-            jg.ax_joint.fill_betweenx([40, 1e4], [10, 10], [1e4, 1e4], 
+            jg.ax_joint.fill_betweenx([10, 1e4], [10, 10], [1e4, 1e4], 
                                        color='tab:gray', alpha=0.5)
-        if i == 0:
-            # legend_labels = jg.ax_joint.legend_.get_texts()
-            title = 'Ballistic \n Sedimentation'
-            leg = jg.ax_joint.legend(handles, hues, ncol=2, loc="upper right", 
+            jg.ax_joint.text(40, 11, 'Gigaton\nZone', ha='center', va='top', 
+                             fontsize=9)
+            
+            title = 'Ballistic\nSedimentation'
+            leg = jg.ax_joint.legend(handles, hues, ncol=2, loc="upper left", 
                                     title=title, fontsize=8, title_fontsize=9, 
-                                    bbox_to_anchor=(1, 0.9))
+                                    bbox_to_anchor=(0, 0.9), frameon=False)
             leg.get_title().set_multialignment('center')
 
         # Cabeus LCROSS depths and legend
@@ -622,19 +641,18 @@ def kde_layers(fsave='kde_layers.pdf', figdir=FIGDIR, cfg=CFG, datedir='',
         jg.ax_joint.set_xlim(xlim)
         jg.ax_joint.set_ylim(ylim)
         jg.ax_joint.invert_yaxis()
+        jg.ax_joint.set_xticks([0.1, 1, 10, 100])
         jg.ax_marg_x.yaxis.get_major_formatter().set_scientific(False)
         jg.ax_marg_y.xaxis.get_major_formatter().set_scientific(False)
         jg.ax_marg_x.xaxis.set_visible(False)
         jg.ax_marg_y.yaxis.set_visible(False)
-
-    # Move all the jointgrids into a single gridspec figure
-    gs = mpl.gridspec.GridSpec(3, 2)
-    for jg, gs in zip(jgs, gs):
-        SeabornFig2Grid(jg, fig, gs)
+    
+    # Move all the jointgrids into a single figure using patchwork
+    jgs = [pw.load_seaborngrid(jg) for jg in jgs]
+    out = (jgs[0] + jgs[1])/(jgs[2] + jgs[3])/(jgs[4] + jgs[5])
 
     # version = mplt.plot_version(cfg, loc='lr', xyoff=(0.01, -0.15), ax=fig.gca())
-    return _save_or_show(fig, gs, fsave, figdir, '')#version)   
-
+    return _save_or_show(out, jgs[0], fsave, figdir, '')#version)   
 
 def ejecta_distance(fsave='ejecta_distance.pdf', figdir=FIGDIR, cfg=CFG):
     """
@@ -645,9 +663,11 @@ def ejecta_distance(fsave='ejecta_distance.pdf', figdir=FIGDIR, cfg=CFG):
     terrain. Show Ries basin and Meteor crater for comparison.
     """
     mplt.reset_plot_style()
-
     crater_diams = {
-        "Schrödinger": 326e3,  # [m]
+        # "Imbrium": 1.3e6,  # [m]
+        # "Crisium": 1.08e6,  # [m]
+        "Orientale": 0.94e6,  # [m]
+        # "Schrödinger": 326e3,  # [m]
         "Harpalus": 41.6e3,  # [m] Harpalus (Oberbeck d)
         "Ries Basin": 24e3,  # [m]
         "Shackleton": 20.9e3,  # [m] smallest polar
@@ -669,18 +689,20 @@ def ejecta_distance(fsave='ejecta_distance.pdf', figdir=FIGDIR, cfg=CFG):
     fig, axs = plt.subplots(2, 2, figsize=(7.2, 6.4), sharex=True, 
                             gridspec_kw={'wspace':0.35, 'hspace':0.02})
     ax1, ax2, ax3, ax4 = axs.flatten()
-    colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    colors = plt.rcParams['axes.prop_cycle'].by_key()['color'][:3]
+    colors.extend(colors)
 
-    d_crad = np.linspace(1, 6, 100)  # x-axis distance [crater radii]
+    d_crad = np.linspace(1, 5, 100)  # x-axis distance [crater radii]
     for i, (crater, diam) in enumerate(crater_diams.items()):
         ls = '-'
         ccfg = cfg
         plot_mixing_depth = True
+        if crater in ('Shackleton', 'Mosting C', 'Meteor Crater'):
+            ls = '--'
         if crater in ('Ries Basin', 'Meteor Crater'):  # Terrestrial craters
-            ls = '-.'
             ccfg = earth_cfg
             plot_mixing_depth = False
-
+        
         # Compute speed, ke, thickness, mixing depth
         rad = diam / 2  # radius [m]
         dist = rad * d_crad  # distance [m]
@@ -692,7 +714,7 @@ def ejecta_distance(fsave='ejecta_distance.pdf', figdir=FIGDIR, cfg=CFG):
         depth = thick * mr  # depth [m]
         
         # Plot
-        label = f'{crater} (D={diam/1e3:.3g} km)'
+        label = f'{crater} (D={diam/1e3:.4g} km)'
         ax1.semilogy(d_crad, vel, ls=ls, c=colors[i], label=label)
         ax2.semilogy(d_crad, thick, ls=ls, c=colors[i], label=label)
         ax3.semilogy(d_crad, ke, ls=ls, c=colors[i], label=label)
@@ -700,44 +722,70 @@ def ejecta_distance(fsave='ejecta_distance.pdf', figdir=FIGDIR, cfg=CFG):
             ax4.semilogy(d_crad, depth, ls=ls, c=colors[i], label=label)
         if crater == 'Ries Basin':
             ries = np.argmin(np.abs(dist - ries_max_d))  # Index of Ries max
-            rvel = vel[ries]
-            rthick = thick[ries]
-            rke = ke[ries]
-            ax1.axhline(rvel, ls='--', c='k')
-            ax1.annotate('Bunte Breccia $v_{max}=$'+f'{round(rvel,-1):.0f} m/s', (4, rvel), xytext=(3.82, 1300), ha='center', arrowprops=dict(arrowstyle="->"))
-            ax2.axhline(rthick, ls='--', c='k')
-            ax2.annotate('Bunte Breccia\n$\delta_{min}=$'+f'{rthick:.1f} m', (4, rthick), xytext=(5.8, 30), ha='right', arrowprops=dict(arrowstyle="->"))
-            ax3.axhline(rke, ls='--', c='k')
-            ax3.annotate('Bunte Breccia   \n$KE_{min}=$'+f'{round(rke,-2):.0f} MJ/m$^2$', (4, rke), xytext=(5.8, 4.5e4), ha='right', arrowprops=dict(arrowstyle="->"))
+            # rvel = vel[ries]
+            # ax1.axhline(rvel, ls='--', c='k')
+            # ax1.annotate('Bunte Breccia $v_{max}=$'+f'{round(rvel,-1):.0f} m/s', (4, rvel), xytext=(3.82, 2000), ha='center', arrowprops=dict(arrowstyle="->"))
+            # rthick = thick[ries]
+            # ax2.axhline(rthick, ls='--', c='k')
+            # ax2.annotate('Bunte Breccia\n$t_{min}=$'+f'{rthick:.1f} m', (4, rthick), xytext=(5.8, 40), ha='right', arrowprops=dict(arrowstyle="->"))
+            rke = round(ke[ries], -2)  # round to 2 sig figs
+            ax3.axhline(rke, ls='--', c='k', zorder=5)
+            ax3.annotate('Bunte Breccia   \n$KE_{min}=$'+
+                         f'{rke:.0f} MJ/m$^2$', (4, rke), ha='right', 
+                         xytext=(4.9, 2e5), arrowprops={'arrowstyle': "->"})
+        
+        if crater == 'Shackleton':
+            ax2.fill_between(d_crad, thick, thick_top, color=colors[0], alpha=0.2)
+            ax1.fill_between(d_crad, vel, vel_top, color=colors[0], alpha=0.2)
+            ax3.fill_between(d_crad, ke, ke_top, color=colors[0], alpha=0.2)
+            ax4.fill_between(d_crad, depth, depth_top, color=colors[0], alpha=0.2)
+        if crater == 'Orientale':
+            thick_top = thick
+            vel_top = vel
+            ke_top = ke
+            depth_top = depth
+    # Legend
+    h, l = ax1.get_legend_handles_labels()
+    newh = [ax1.plot([], marker="", ls="")[0]]*3
+    newl = ["This work:", "Oberbeck:", "Terrestrial:"]
+    handles = newh + h
+    labels = newl + l
+    leg = ax1.legend(handles, labels, bbox_to_anchor=(0., 1.02, 2.35, .102), 
+                     loc=3, ncol=3, mode="expand", borderaxespad=0.)
+    for vpack in leg._legend_handle_box.get_children()[:1]:
+        for hpack in vpack.get_children():
+            hpack.get_children()[0].set_width(0)
 
-    ax1.legend(bbox_to_anchor=(0., 1.02, 2.25, .102), loc=3,
-            ncol=2, mode="expand", borderaxespad=0.)
-    ax1.set_xlim(1, 6)
-    ax1.set_ylim(20, 2e3)
-    ax2.set_ylim(None, 2e3)
-    ax3.set_ylim(None, 7e5)
-    ax4.set_ylim(4e-3, 7e3)
+    ax1.set_xlim(1, 5)
+    ax1.set_ylim(50, 2e3)
+    ax2.set_ylim(None, 3e3)
+    ax3.set_ylim(None, 5e6)
+    ax4.set_ylim(3e-2, 5e4)
     for ax, letter in zip(axs.flatten(), ('A', 'B', 'C', 'D')):
         ax.annotate(letter, xy=(0.02, 0.98), va='top', fontweight='bold', 
-                    fontsize=16, xycoords='axes fraction')
+                    fontsize=14, xycoords='axes fraction')
 
-    ax1.set_ylabel('Ejecta velocity [$\\rm m/s$]')
-    ax2.set_ylabel('Ejecta thickness [$\\rm m$]')
-    ax3.set_ylabel('Ejecta kinetic energy [$\\rm MJ / m^2$]')
-    ax4.set_ylabel('Balistic mixing depth [$\\rm m$]')
+    ax1.set_ylabel('Ejecta velocity, $v$ [$\\rm m/s$]')
+    ax2.set_ylabel('Ejecta thickness, $t$ [$\\rm m$]')
+    ax3.set_ylabel('Ejecta kinetic energy, KE [$\\rm MJ / m^2$]')
+    ax4.set_ylabel('Balistic sedimentation depth, $\delta$ [$\\rm m$]')
     ax3.set_xlabel('Distance [crater radii]')
     ax4.set_xlabel('Distance [crater radii]')
-    version = mplt.plot_version(cfg, loc='lr', xyoff=(-0.02, 0), ax=ax4)
+    version = mplt.plot_version(cfg, loc='ur', xyoff=(-0.02, -0.02), ax=ax2)
     return _save_or_show(fig, axs, fsave, figdir, version)
 
 
-def melt_fraction_bsed(fsave='melt_fraction_bsed.pdf', figdir=FIGDIR, cfg=CFG, show_avgs=False):
+def volatilized_fraction_bsed(fsave='volatilized_fraction_bsed.pdf', figdir=FIGDIR, cfg=CFG, show_avgs=False):
     """
-    Plot melt fraction as a function of ejecta thickness and ballistic mixing depth.
+    Plot volatilized fraction as a function of ejecta thickness and ballistic 
+    mixing depth.
     """
     mplt.reset_plot_style()
     dm = mp.read_ballistic_melt_frac(True, cfg)  # mean
     ds = mp.read_ballistic_melt_frac(False, cfg)  # std
+    # Add 0% melt at T=100 K
+    dm.insert(0, 100, 0)  
+    ds.insert(0, 100, 0)
 
     # Get data and axes
     frac_mean = dm.to_numpy()
@@ -745,9 +793,9 @@ def melt_fraction_bsed(fsave='melt_fraction_bsed.pdf', figdir=FIGDIR, cfg=CFG, s
     temps = dm.columns.to_numpy()
     mrs = dm.index.to_numpy()
     ejecta_pct = 100*(1 / (1 + mrs))  # target mixing ratio -> ejecta fraction
-    extent = [temps.min(), temps.max(), ejecta_pct.min(), ejecta_pct.max()]
+    extent = [temps.min(), temps.max(), 0, ejecta_pct.max()]
 
-    # Get crater and basin melt fractions
+    # Get crater and basin volatilization fractions
     crater_t = cfg.polar_ejecta_temp_init
     basin_tc = cfg.basin_ejecta_temp_init_cold
     basin_tw = cfg.basin_ejecta_temp_init_warm
@@ -761,62 +809,43 @@ def melt_fraction_bsed(fsave='melt_fraction_bsed.pdf', figdir=FIGDIR, cfg=CFG, s
     crater = [[crater_t, crater_t], [crater_pct.min(), crater_pct.max()]]
     basin_c = [[basin_tc, basin_tc], [basin_pct.min(), basin_pct.max()]]
     basin_w = [[basin_tw, basin_tw], [basin_pct.min(), basin_pct.max()]]
+    
     # Plot
-    mosaic = "A\nB"
-    figsize = (3.75, 6.5)
-    v_xyoff = (0.5, -0.22)
-    sharex = True
-    hspace = 0.075
-    if show_avgs:
-        mosaic = "AB\nCC" 
-        figsize=(7.2, 7)
-        v_xyoff = (0.01, -0.21)
-        sharex = False
-        hspace = 0.5
-    fig = plt.figure(figsize=figsize)
-    ax_dict = fig.subplot_mosaic(mosaic, sharex=sharex)
-    fig.subplots_adjust(hspace=hspace, wspace=0.45)    
+    fig, axs = plt.subplots(1, 2, figsize=(7.2, 3), sharey=True)
+    fig.subplots_adjust(hspace=0.35)    
 
-    ax = ax_dict['A']
+    ax = axs[0]
     ax.tick_params('x', bottom=False, top=False)
     ax.tick_params('y', direction='out', right=False)
     p = ax.imshow(frac_mean, extent=extent, aspect='auto', interpolation='none', cmap='magma')
-    ax.plot(*crater, 'o--', ms=4, c='tab:blue', label='Crater')
-    ax.plot(*basin_c, 'o--', ms=4, c='tab:orange', label='Basin (cold)')
-    ax.plot(*basin_w, 'o--', ms=4, c='tab:red', label='Basin (warm)')
+    ax.plot(*crater, 'o--', ms=4, lw=2, c='tab:cyan', label='Crater')
+    ax.plot(*basin_c, 'o--', ms=4, lw=2, c='tab:orange', label='Basin (cold)')
+    ax.plot(*basin_w, 'o--', ms=4, lw=2, c='tab:red', label='Basin (warm)')
+    ax.set_yticks(range(0, 101, 20))
+    ax.set_xticks(range(100, 501, 100))
     ax.legend()
-    fig.colorbar(p, ax=ax, label='Mean Melt fraction')
-    ax.set_ylabel("Ejecta fraction [%]")
-    if show_avgs:
-        ax.tick_params('x', direction='out', bottom=True, top=False)
-        ax.set_xlabel("Ejecta Temperature [K]")
-
-    ax = ax_dict['B']
-    ax.tick_params('x', direction='out', top=False)
-    ax.tick_params('y', direction='out', right=False)
-    p = ax.imshow(frac_std, vmax=0.1, extent=extent, aspect='auto', interpolation='none', cmap='cividis')
-    ax.plot(*crater, 'o--', ms=4, c='tab:blue', label='Crater')
-    ax.plot(*basin_c, 'o--', ms=4, c='tab:orange', label='Basin (cold)')
-    ax.plot(*basin_w, 'o--', ms=4, c='tab:red', label='Basin (warm)')
-    fig.colorbar(p, ax=ax, label='Standard deviation')
+    cbar = fig.colorbar(p, ax=ax)
+    cbar.ax.get_yaxis().labelpad = 15
+    cbar.ax.set_ylabel("Mean volatilized fraction [%]", rotation=270)
     ax.set_ylabel("Ejecta fraction [%]")
     ax.set_xlabel("Ejecta Temperature [K]")
 
-    if show_avgs:
-        ax = ax_dict['C']
-        axb = ax.twiny()
-        ax.errorbar(temps, frac_mean.mean(axis=0), yerr=frac_std.mean(axis=0), 
-                    c='tab:blue', fmt='o', label='Melt frac vs. Temperature', capsize=4)
-        axb.errorbar(ejecta_pct, frac_mean.mean(axis=1), yerr=frac_std.mean(axis=1), 
-                    c='tab:orange', fmt='^', label='Melt frac vs. Ejecta %', capsize=4)
-        ax.set_ylim(0, 1)
-        ax.set_xlabel('Ejecta Temperature [K]')
-        axb.set_xlabel("Ejecta fraction [%]")
-        ax.set_ylabel("Mean fraction melted")
-        ax.legend(loc='lower right')
-        axb.legend(loc='upper left')
-    version = mplt.plot_version(cfg, loc='lr', xyoff=v_xyoff, ax=ax)
-    return _save_or_show(fig, ax_dict, fsave, figdir, version)
+    ax = axs[1]
+    ax.tick_params('x', direction='out', top=False)
+    ax.tick_params('y', direction='out', right=False)
+    p = ax.imshow(frac_std, vmax=0.1, extent=extent, aspect='auto', interpolation='none', cmap='cividis')
+    ax.plot(*crater, 'o--', ms=4, lw=2, c='tab:cyan', label='Crater')
+    ax.plot(*basin_c, 'o--', ms=4, lw=2, c='tab:orange', label='Basin (cold)')
+    ax.plot(*basin_w, 'o--', ms=4, lw=2, c='tab:red', label='Basin (warm)')
+    ax.set_yticks(range(0, 101, 20))
+    ax.set_xticks(range(100, 501, 100))
+    cbar = fig.colorbar(p, ax=ax)
+    cbar.ax.get_yaxis().labelpad = 15
+    cbar.ax.set_ylabel("Standard deviation [%]", rotation=270)
+    ax.set_xlabel("Ejecta Temperature [K]")
+
+    version = mplt.plot_version(cfg, loc='lr', xyoff=(0.45, -0.22), ax=ax, fontsize=8)
+    return _save_or_show(fig, axs, fsave, figdir, version)
 
 
 def random_crater_ages(fsave='random_crater_ages.pdf', figdir=FIGDIR, cfg=CFG):
@@ -887,7 +916,7 @@ def random_crater_ages(fsave='random_crater_ages.pdf', figdir=FIGDIR, cfg=CFG):
 
 
 def strat_cols_bsed(fsave='strat_cols_bsed.pdf', figdir=FIGDIR, cfg=CFG,
-                    datedir='', runs=('mpies', 'no_bsed'), seeds=(7,),
+                    datedir='', runs=('moonpies', 'no_bsed'), seeds=(7,),
                     min_thick=5, corder=CORDER):
     """
     Plot stratigraphy columns comparing bsed and no bsed.
@@ -912,7 +941,7 @@ def strat_cols_bsed(fsave='strat_cols_bsed.pdf', figdir=FIGDIR, cfg=CFG,
 
 
 def strat_cols_seeds(fsave='strat_cols_seeds.pdf', figdir=FIGDIR, cfg=CFG,
-                    datedir='', runs=('mpies',), seeds=(13, 8, 1),
+                    datedir='', runs=('moonpies',), seeds=(13, 8, 1),
                     min_thick=5, corder=('Faustini', 'Haworth', 'Cabeus')):
     """
     Plot stratigraphy columns comparing bsed and no bsed.
@@ -943,24 +972,26 @@ def surface_boxplot(fsave='surface_boxplot.pdf', figdir=FIGDIR, cfg=CFG,
     """
     mplt.reset_plot_style()
     _, runs, nruns = _load_aggregated(cfg, datedir, flatten=True, nruns=True)
-    # runs.loc[runs['total ice'] < 1, 'total ice'] = 0
-    runs = runs[runs.runs == 'mpies']
+    runs = runs[runs.runs == 'moonpies']
     key = f'total ice {sdepth}m'
     # runs['icepct'] = 100 * runs[key] / sdepth
 
     # Faustini, de Gerlache, Amundsen. % model runs > 0
-    thresh = 0.05 * 6  # [m] 5% of 6m (LCROSS threshold)
+    # thresh = 0.05 * 6  # [m] 5% of 6m (LCROSS threshold)
+    thresh = 0.1  # 1  cm
     for coldtrap in runs.coldtrap.unique():
         gt_thresh = runs[runs.coldtrap == coldtrap][key] > thresh
         gt_frac = gt_thresh.sum() / len(gt_thresh)
         print(f'{coldtrap} exceeds {thresh:.2f} m {gt_frac:.2%} of the time')
-    
-    # Mean +/- std of ice in each coldtrap
-    
-
+      
     fig, ax = plt.subplots(figsize=(7.2, 4))
     ax = sns.boxplot(x='coldtrap', y=key, data=runs, 
                      order=corder, fliersize=1, whis=(1, 99), ax=ax)
+    # Annotate
+    pct75 = runs[runs.coldtrap=='Faustini'][key].quantile(0.75)
+    pct99 = runs[runs.coldtrap=='Faustini'][key].quantile(0.99)
+    ax.annotate('pct$_{75}$', xy=(0, pct75), xytext=(1, pct75+sdepth/5), arrowprops=dict(facecolor='black', lw=1, shrink=0.2))
+    ax.annotate('pct$_{99}$', xy=(0, pct99), xytext=(1, pct99+sdepth/5), arrowprops=dict(facecolor='black', lw=1, shrink=0.2))
     ax.set_xlabel('')
     ax.set_ylabel(f'Total ice [m] in top {sdepth} m ({nruns/1e3:.3g}k runs)')
     ax.set_ylim(0, sdepth)
@@ -969,59 +1000,53 @@ def surface_boxplot(fsave='surface_boxplot.pdf', figdir=FIGDIR, cfg=CFG,
     return _save_or_show(fig, ax, fsave, figdir, version)
 
 
-# Class helpers
-class SeabornFig2Grid():
+def grid_plots(fsave='grid_plots.pdf', figdir=FIGDIR, cfg=CFG):
+    """
+    Plot gridded computations:
+    - most recent surface age (including ejecta)
+    - cumulative ejecta, no excavation no self-deposition.
+    
+    """
+    mplt.reset_plot_style()
+    
+    @mpl.ticker.FuncFormatter
+    def km_formatter(x, pos):
+        return f'{x/1000:.0f}'
 
-    def __init__(self, seaborngrid, fig, subplot_spec):
-        self.fig = fig
-        self.sg = seaborngrid
-        self.subplot = subplot_spec
-        if isinstance(self.sg, sns.axisgrid.FacetGrid) or \
-            isinstance(self.sg, sns.axisgrid.PairGrid):
-            self._movegrid()
-        elif isinstance(self.sg, sns.axisgrid.JointGrid):
-            self._movejointgrid()
-        self._finalize()
+    # Compute cumulative ejecta
+    df = mp.get_crater_basin_list(cfg)
+    grdy, grdx = mp.get_grid_arrays(cfg)
+    age, ejthick = mp.get_grid_outputs(df, grdx, grdy)
+    age = age / 1e9  # [yr] -> [Gyr]
+    cumu_ej = np.nansum(ejthick, axis=0)
+    
+    # Plot
+    fig, axs = plt.subplots(2, figsize=(6, 11))
+    # Age
+    ax = axs[0]
+    p = ax.pcolor(grdx, grdy, age, vmin=1, vmax=4.25, cmap='viridis', shading='auto')
+    cbar = fig.colorbar(p)
+    cbar.set_label('Age [Gyr]', rotation=270, labelpad=10)
 
-    def _movegrid(self):
-        """ Move PairGrid or Facetgrid """
-        self._resize()
-        n = self.sg.axes.shape[0]
-        m = self.sg.axes.shape[1]
-        self.subgrid = mpl.gridspec.GridSpecFromSubplotSpec(n,m, subplot_spec=self.subplot)
-        for i in range(n):
-            for j in range(m):
-                self._moveaxes(self.sg.axes[i,j], self.subgrid[i,j])
+    # Ejecta thickness
+    ax = axs[1]
+    p = ax.pcolor(grdx, grdy, cumu_ej, cmap='viridis', shading='auto',
+                  norm=mpl.colors.LogNorm(vmin=10, vmax=2000))
+    cbar = fig.colorbar(p)
+    cbar.set_label('Cumulative Ejecta Thickness [m]', rotation=270, labelpad=10)
+    
+    for ax in axs:
+        # South pole marker
+        ax.plot([0], [0], 'k*', ms=5, label='South pole')
+        ax.legend()
+        ax.xaxis.set_major_formatter(km_formatter)
+        ax.yaxis.set_major_formatter(km_formatter)
+        ax.set_xlabel('X [km]')
+        ax.set_ylabel('Y [km]')
 
-    def _movejointgrid(self):
-        """ Move Jointgrid """
-        h= self.sg.ax_joint.get_position().height
-        h2= self.sg.ax_marg_x.get_position().height
-        r = int(np.round(h/h2))
-        self._resize()
-        self.subgrid = mpl.gridspec.GridSpecFromSubplotSpec(r+1,r+1, subplot_spec=self.subplot)
+    version = mplt.plot_version(cfg, loc='ll', ax=ax)
+    return _save_or_show(fig, ax, fsave, figdir, version)
 
-        self._moveaxes(self.sg.ax_joint, self.subgrid[1:, :-1])
-        self._moveaxes(self.sg.ax_marg_x, self.subgrid[0, :-1])
-        self._moveaxes(self.sg.ax_marg_y, self.subgrid[1:, -1])
 
-    def _moveaxes(self, ax, gs):
-        # https://stackoverflow.com/a/46906599/4124317
-        ax.remove()
-        ax.figure=self.fig
-        self.fig.axes.append(ax)
-        self.fig.add_axes(ax)
-        ax._subplotspec = gs
-        ax.set_position(gs.get_position(self.fig))
-        ax.set_subplotspec(gs)
-
-    def _finalize(self):
-        plt.close(self.sg.fig)
-        self.fig.canvas.mpl_connect("resize_event", self._resize)
-        self.fig.canvas.draw()
-
-    def _resize(self, evt=None):
-        self.sg.fig.set_size_inches(self.fig.get_size_inches())
-        
 if __name__ == '__main__':
     _generate_all()

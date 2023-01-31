@@ -26,7 +26,7 @@ def reset_plot_style(mplstyle=True, cfg=CFG):
 def plot_version(
     cfg=CFG, loc="ll", xy=None, xyoff=None, ax=None, bbkw=None, **kwargs
 ):
-    """Add MoonPIES version label."""
+    """Add MoonPIES version label with ax.annotate()."""
     x, y = (0, 0) if xy is None else xy
     xoff, yoff = (0, 0) if xyoff is None else xyoff
     ax = mpl.pyplot.gca() if ax is None else ax
