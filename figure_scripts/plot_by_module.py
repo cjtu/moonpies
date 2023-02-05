@@ -12,6 +12,8 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt 
 from moonpies import moonpies as mp
 from moonpies import config
+from moonpies.plotting import plot_version
+from plot_figs import FIGDIR
 
 mpl.rcParams.update({
     'font.size': 12,
@@ -20,12 +22,6 @@ mpl.rcParams.update({
     'xtick.bottom': False,
     'axes.prop_cycle': mpl.cycler(color=("#0072B2", "#E69F00", "#009E73", "#D55E00", "#F0E442", "#CC79A7")) 
 })
-
-# Set Fig paths
-FIGDIR = ''  # Set or leave blank to use default (moonpies/figs)
-if not FIGDIR:
-    FIGDIR = config.Cfg().figs_path
-FIGDIR = str(Path(FIGDIR).resolve() / "_")[:-1]  # add trailing slash
 
 # Create configuration objects for each mode. 
 COI = 'Faustini'
@@ -69,7 +65,7 @@ def get_ice_by_module(coi, time_arr, df, cfg, rng):
     rng = mp.get_rng(cfg)
     large_complex_craters_ice = mp.get_complex_crater_ice(time_arr, cfg, rng)
     rng = mp.get_rng(cfg)
-    basin_ice = mp.get_basin_ice(time_arr, df,  cfg, rng)
+    basin_ice = mp.get_basin_ice(time_arr, df, cfg, rng)
     if cfg.mode == 'cannon':
         basin_ice = basin_ice*0
 
@@ -139,15 +135,9 @@ for mode in ('MoonPIES', 'Cannon'):
     f, ax =plt.subplots(figsize=(7.5, 4))
     ax.set_yscale('log')
 
-    # Bar charts of ice by era
-    for i, (label, col) in enumerate(df_mean.iteritems()):
-        if label == 'Gardening' or label == 'Ballistic Sed':
-            continue
-        x = np.arange(n) - width*(n-1)/2 + (i*width)
-        ax.bar(x, col, label=label, width=width, yerr=[col-df_min.iloc[:,i], df_max.iloc[:,i]-col], capsize=4)
-    
     # Shade impact gardening and ballistic sed
     x = np.arange(n+1) - 0.5
+    _ = [ax.axvline(era, color='k', lw=0.5) for era in x]
     x = np.repeat(x, 2)[1:-1]
     for label, c, a, h in zip(('Gardening', 'Ballistic Sed'), ('gray', 'red'), (0.3, 0.2), ('\\', '')):
         y = df_mean[label].values
@@ -157,15 +147,25 @@ for mode in ('MoonPIES', 'Cannon'):
     ax.set_xlim(-0.5, 4.5)
     ax.tick_params(axis='both')
     ax.set_xticklabels([0] + list(df_mean.index))
-    ax.set_ylabel('Ice deposited each timestep [m]')
+    ax.set_ylabel('Ice deposited per km$^{-1}$ per timestep [m]')
 
+    # Bar charts of ice by era
+    for i, (label, col) in enumerate(df_mean.items()):
+        if label == 'Gardening' or label == 'Ballistic Sed':
+            continue
+        x = np.arange(n) - width*(n-1)/2 + (i*width)
+        yerr = [col-df_min.iloc[:,i], df_max.iloc[:,i]-col]
+        ax.bar(x, col, label=label, width=width, yerr=yerr, capsize=4)
+    
     # Legend (customize order)
     handles, labels = plt.gca().get_legend_handles_labels()
     order = [2, 3, 4, 5, 6, 0, 1]
     ax.legend([handles[i] for i in order], [labels[i] for i in order], ncol=2, 
-              loc='upper right', prop={'size': 11})
+              loc='upper right', fontsize=8, framealpha=1)
     # ax.set_title(mode + ' Ice Thickness by Module')
     # ax.set_xlabel('Lunar Geologic Era')
-    # mp.plot_version(cfg_mp, loc='ul')
-    f.savefig(FIGDIR + f'plot_by_mod_{mode}.pdf')
+    plot_version(cfg_mp, loc='ul', fontsize=8)
+    fsave = FIGDIR / f'plot_by_mod_{mode}.pdf'
+    fsave.parent.mkdir(exist_ok=True, parents=True)
+    f.savefig(fsave, bbox_inches='tight')
 

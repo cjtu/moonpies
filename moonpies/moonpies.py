@@ -2622,7 +2622,7 @@ def format_csv_outputs(strat_cols, time_arr, df, cfg=CFG):
     strat_dfs = {}
     ej_source_all = []
     cdf = df.set_index('cname').loc[list(cfg.coldtrap_names), 'age']
-    for cname, age in cdf.iteritems():
+    for cname, age in cdf.items():
         ice_t, ej_t, ej_srcs = strat_cols[cname]
         ej_dict[cname] = ej_t
         ice_dict[cname] = ice_t

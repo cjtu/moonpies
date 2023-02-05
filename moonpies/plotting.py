@@ -55,15 +55,15 @@ def plot_version(
 
 def plot_stratigraphy(out_path, coldtraps=None, runs=None, seeds=None, 
                       min_thick=1, fsave='', cmap=None, version=True, 
-                      strat_kws={}, kwargs={}):
+                      fsave_icepct='', strat_kws={}, kwargs={}):
     """Plot stratigraphy."""
     reset_plot_style()
 
     # Get defaults
     try:
-        fcfg = next(Path(out_path).rglob('run_config*.py'))
+        fcfg = next(Path(out_path).rglob('config*.py'))
     except StopIteration as e:
-        raise FileNotFoundError(f"No run_config*.py in {out_path}") from e
+        raise FileNotFoundError(f"No config_<runname>.py in {out_path}") from e
     cfg = config.read_custom_cfg(fcfg)
     date_path = Path(cfg.out_path).parents[1]
     
@@ -93,6 +93,7 @@ def plot_stratigraphy(out_path, coldtraps=None, runs=None, seeds=None,
     cbar_ax = fig.add_subplot(gs[nruns, :])
     maxdepth = 0
     handles, labels = [], []
+    out_icepct = {}
     for r, run in enumerate(runs):
         rpath = date_path / run
         axs = [fig.add_subplot(gs[r, i]) for i in range(ncols)]
@@ -126,6 +127,7 @@ def plot_stratigraphy(out_path, coldtraps=None, runs=None, seeds=None,
                 ax = plot_strat(strat, title, ylabel_right=ylabel_right, 
                                 colorbar=False, cmap=cmap, legend=False,
                                 **strat_kws, ax=ax)
+                out_icepct[(run, seed, coi)] = pd.Series(sdf.sort_values('depth').icepct.values)
 
         for i, ax in enumerate(axs):
             ax.set_xlim(0, 1)
@@ -160,6 +162,9 @@ def plot_stratigraphy(out_path, coldtraps=None, runs=None, seeds=None,
     if fsave:
         fsave = Path(fsave)
         fig.savefig(fsave.with_name(f'{fsave.stem}_{version}{fsave.suffix}'))
+    if fsave_icepct:
+        df = pd.DataFrame(out_icepct)
+        df.to_csv(Path(fsave_icepct), index=None)
     return fig
 
 
@@ -289,7 +294,7 @@ def get_strat_col_ranges(strat_col, cdf=CDF, savefile=None):
     lith_key = get_lith_key(liths)
     strat['hatch'] = ''
     strat['hatchlabel'] = ''  # Actual label hatch is based on
-    for si, label in strat.label.iteritems():
+    for si, label in strat.label.items():
         # Split multiple sources into individual, but only need one hatch
         # Get lith from crater with largest diameter
         liths = label.split(',')

@@ -54,7 +54,7 @@ def _load_aggregated(cfg, datedir, flatten=True, nruns=True):
     """Load aggregated data."""
     # If no datedir, guess latest date folder in outdir that has layers.csv
     if not datedir:  
-        outdir = Path(cfg.data_path).parents[1] / 'data' / 'out'
+        outdir = Path(cfg.data_path).parents[1] / 'out'
         subdirs = [p for p in outdir.iterdir() if p.is_dir()]
         for subdir in subdirs[::-1]:
             if any(subdir.glob('layers.csv')):
@@ -570,14 +570,13 @@ def kde_layers(fsave='kde_layers.pdf', figdir=FIGDIR, cfg=CFG, datedir='',
     custom_params = {"axes.spines.right": False, "axes.spines.top": False}
     sns.set_theme(style="ticks", rc=custom_params)
     pal = sns.color_palette()
-    mypal = [pal[0], pal[1]]
-    hues = ['No', 'Yes']
+    mypal = [pal[1], pal[0]]
     xlim = (0.05, 150)
     ylim = (1, 800)
     skip = 300  # skip this many points for each coldtrap (for faster kde)
 
     # Clean layer data
-    layers, _, nruns = _load_aggregated(cfg, datedir)
+    layers, _, _ = _load_aggregated(cfg, datedir)
     layers = agg.rename_runs(layers, run_names, rename)
     layers = layers.round({'depth': 1, 'ice': 1})
     layers.loc[layers['ice'] < 0.1, 'ice'] = np.nan
@@ -596,14 +595,14 @@ def kde_layers(fsave='kde_layers.pdf', figdir=FIGDIR, cfg=CFG, datedir='',
         # df = layers[(layers.coldtrap==coldtrap)].iloc[::skip]
         jg = sns.JointGrid(space=0, height=2.5)
         jg.ax_joint.annotate(f'{coldtrap}', xy=(0.5, 0.98), ha='center', va='top', xycoords='axes fraction')
-        g = sns.kdeplot(x='ice', y='depth', hue='runs', hue_order=hues, data=df, log_scale=True, 
-                    palette=mypal, bw_adjust=1.5, thresh=0.2, levels=8, common_norm=False, ax=jg.ax_joint)
+        g = sns.kdeplot(x='ice', y='depth', hue='runs', hue_order=rename[::-1], data=df, log_scale=True, 
+                    palette=mypal[::-1], bw_adjust=1.5, thresh=0.2, levels=8, common_norm=False, ax=jg.ax_joint)
         # Hist: hue_order plots in reverse order, so flip hues and mypal
         sns.histplot(x='ice', hue='runs', bins='sturges', common_norm=True,
-                    hue_order=hues[::-1], palette=mypal[::-1], alpha=0.3, pthresh=0.2,
+                    hue_order=rename, palette=mypal, alpha=0.3, pthresh=0.2,
                     element='step', data=df, legend=False, ax=jg.ax_marg_x)
         sns.histplot(y='depth_top', hue='runs', bins='sturges', common_norm=True, pthresh=0.2,
-                    hue_order=hues[::-1], palette=mypal[::-1], alpha=0.3,
+                    hue_order=rename, palette=mypal, alpha=0.3,
                     element='step', data=df, legend=False, ax=jg.ax_marg_y)
         
         # Legend only in 1st subplot
@@ -618,9 +617,9 @@ def kde_layers(fsave='kde_layers.pdf', figdir=FIGDIR, cfg=CFG, datedir='',
                              fontsize=9)
             
             title = 'Ballistic\nSedimentation'
-            leg = jg.ax_joint.legend(handles, hues, ncol=2, loc="upper left", 
+            leg = jg.ax_joint.legend(handles[::-1], rename, ncol=2, loc="upper left", 
                                     title=title, fontsize=8, title_fontsize=9, 
-                                    bbox_to_anchor=(0, 0.9), frameon=False)
+                                    bbox_to_anchor=(0, 0.91), frameon=False)
             leg.get_title().set_multialignment('center')
 
         # Cabeus LCROSS depths and legend
@@ -916,16 +915,16 @@ def random_crater_ages(fsave='random_crater_ages.pdf', figdir=FIGDIR, cfg=CFG):
 
 
 def strat_cols_bsed(fsave='strat_cols_bsed.pdf', figdir=FIGDIR, cfg=CFG,
-                    datedir='', runs=('moonpies', 'no_bsed'), seeds=(7,),
-                    min_thick=5, corder=CORDER):
+                    datedir='', runs=('moonpies', 'no_bsed'), seed=7,
+                    min_thick=5, corder=CORDER, fsave_icepct=''):
     """
     Plot stratigraphy columns comparing bsed and no bsed.
     """
     mplt.reset_plot_style()
     if not datedir:
         datedir = Path(cfg.out_path).parents[1]
-    fig = mplt.plot_stratigraphy(datedir, corder, runs, seeds, min_thick, 
-                                 version=False)
+    fig = mplt.plot_stratigraphy(datedir, corder, runs, [seed], min_thick, 
+                                 version=False, fsave_icepct=fsave_icepct)
     ax = fig.axes[-1]
     version = mplt.plot_version(cfg, loc='lr', xyoff=(0.01, -0.2), ax=ax)
 
@@ -942,7 +941,8 @@ def strat_cols_bsed(fsave='strat_cols_bsed.pdf', figdir=FIGDIR, cfg=CFG,
 
 def strat_cols_seeds(fsave='strat_cols_seeds.pdf', figdir=FIGDIR, cfg=CFG,
                     datedir='', runs=('moonpies',), seeds=(13, 8, 1),
-                    min_thick=5, corder=('Faustini', 'Haworth', 'Cabeus')):
+                    min_thick=5, corder=('Faustini', 'Haworth', 'Cabeus'),
+                    fsave_icepct=''):
     """
     Plot stratigraphy columns comparing bsed and no bsed.
     """
@@ -950,7 +950,7 @@ def strat_cols_seeds(fsave='strat_cols_seeds.pdf', figdir=FIGDIR, cfg=CFG,
     if not datedir:
         datedir = Path(cfg.out_path).parents[1]
     fig = mplt.plot_stratigraphy(datedir, corder, runs, seeds, min_thick, 
-                                 version=False)
+                                 version=False, fsave_icepct=fsave_icepct)
     ax = fig.axes[-1]
     version = mplt.plot_version(cfg, loc='lr', xyoff=(0.01, -0.2), ax=ax)
 
@@ -966,37 +966,49 @@ def strat_cols_seeds(fsave='strat_cols_seeds.pdf', figdir=FIGDIR, cfg=CFG,
 
 
 def surface_boxplot(fsave='surface_boxplot.pdf', figdir=FIGDIR, cfg=CFG, 
-                    datedir='', corder=CORDER, sdepth=10):
+                    datedir='', corder=CORDER, sdepths=[6, 100]):
     """
     Plot surface boxplot.
     """
     mplt.reset_plot_style()
     _, runs, nruns = _load_aggregated(cfg, datedir, flatten=True, nruns=True)
     runs = runs[runs.runs == 'moonpies']
-    key = f'total ice {sdepth}m'
-    # runs['icepct'] = 100 * runs[key] / sdepth
-
-    # Faustini, de Gerlache, Amundsen. % model runs > 0
-    # thresh = 0.05 * 6  # [m] 5% of 6m (LCROSS threshold)
-    thresh = 0.1  # 1  cm
-    for coldtrap in runs.coldtrap.unique():
-        gt_thresh = runs[runs.coldtrap == coldtrap][key] > thresh
-        gt_frac = gt_thresh.sum() / len(gt_thresh)
-        print(f'{coldtrap} exceeds {thresh:.2f} m {gt_frac:.2%} of the time')
       
-    fig, ax = plt.subplots(figsize=(7.2, 4))
-    ax = sns.boxplot(x='coldtrap', y=key, data=runs, 
-                     order=corder, fliersize=1, whis=(1, 99), ax=ax)
-    # Annotate
-    pct75 = runs[runs.coldtrap=='Faustini'][key].quantile(0.75)
-    pct99 = runs[runs.coldtrap=='Faustini'][key].quantile(0.99)
-    ax.annotate('pct$_{75}$', xy=(0, pct75), xytext=(1, pct75+sdepth/5), arrowprops=dict(facecolor='black', lw=1, shrink=0.2))
-    ax.annotate('pct$_{99}$', xy=(0, pct99), xytext=(1, pct99+sdepth/5), arrowprops=dict(facecolor='black', lw=1, shrink=0.2))
-    ax.set_xlabel('')
-    ax.set_ylabel(f'Total ice [m] in top {sdepth} m ({nruns/1e3:.3g}k runs)')
-    ax.set_ylim(0, sdepth)
-    ax.set_xticklabels(ax.get_xticklabels(), rotation=30)
-    version = mplt.plot_version(cfg, loc='ur', ax=ax)
+    fig, axs = plt.subplots(len(sdepths), figsize=(7.2, 4.5*len(sdepths)))
+    axs = [axs] if len(sdepths) == 1 else axs
+    for i, sdepth in enumerate(sdepths):
+        key = f'total ice {sdepth}m'
+        ax = axs[i]
+        ax = sns.boxplot(x='coldtrap', y=key, data=runs, 
+                        order=corder, fliersize=1, whis=(1, 95), ax=ax)
+        ax.set_xlabel('')
+        ax.set_ylabel(f'Total ice thickness [m] (upper {sdepth} m, {nruns/1e3:.3g}k runs)')
+        ax.set_ylim(0, sdepth/3)
+        ax.set_xticklabels(ax.get_xticklabels(), rotation=30)
+
+        # 5% line
+        ax.axhline(sdepth*0.05, color='k', linestyle='--', linewidth=1)
+        ax.annotate('5%', xy=(len(corder)-1, sdepth*0.052))
+        # Annotate
+        if sdepth == 6:
+            ax.set_ylim(0, 1)
+            pct75 = runs[runs.coldtrap=='Faustini'][key].quantile(0.75)
+            pct99 = runs[runs.coldtrap=='Faustini'][key].quantile(0.95)
+            ax.annotate('p75', xy=(0.2, pct75), xytext=(0.3, pct75+0.1), 
+                        fontstyle='italic', arrowprops=dict(facecolor='black', 
+                        headlength=6, headwidth=6, width=1, shrink=0.02))
+            ax.annotate('p99', xy=(0.2, pct99), xytext=(0.3, pct99+0.1), 
+                        fontstyle='italic', arrowprops=dict(facecolor='black', 
+                        headlength=6, headwidth=6, width=1, shrink=0.02))
+
+        # Verbose
+        thresh = 0.3 if sdepth == 6 else 5 # m
+        print('Sdepth:', sdepth, 'm')
+        for coldtrap in runs.coldtrap.unique():
+            gt_thresh = runs[runs.coldtrap == coldtrap][key] > thresh
+            gt_frac = gt_thresh.sum() / len(gt_thresh)
+            print(f'{coldtrap} exceeds {thresh:.2g} m {gt_frac:.2%} of the time')
+    version = mplt.plot_version(cfg, loc='ur', ax=axs[0])
     return _save_or_show(fig, ax, fsave, figdir, version)
 
 
