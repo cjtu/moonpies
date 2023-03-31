@@ -19,7 +19,7 @@ Examples:
 """
 import argparse
 from pathlib import Path
-from moonpies import config
+from moonpies import __version__, config
 
 def run():
     """Command-line interface for running MoonPIES."""
@@ -30,6 +30,10 @@ def run():
         type=int,
         nargs="?",
         help="random seed for this run (overwrites seed in config file)",
+    )
+    parser.add_argument(
+        "--version", "-v", action='version',
+         version='%(prog)s {version}'.format(version=__version__)
     )
     parser.add_argument(
         "--cfg", "-c", nargs="?", type=str, help="path to custom config.py"

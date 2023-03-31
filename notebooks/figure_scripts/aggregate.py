@@ -133,17 +133,8 @@ def aggregate(coldtraps, tmpdir, datedir):
 if __name__ == '__main__':
     COLDTRAPS = config.Cfg().coldtrap_names
 
-    DEBUG = False
-    if DEBUG:
-        DATEDIR = Path('/home/ctaiudovicic/projects/moonpies/out/230122/')
-        TMPDIR = DATEDIR / 'tmp'  
-        for COLDTRAP in COLDTRAPS[2:]:
-            agg_coldtrap(COLDTRAP, DATEDIR, TMPDIR)
-            break
-        quit()
-    else:
-        # Read DATEDIR from command line
-        DATEDIR = Path(sys.argv[1])
-        TMPDIR = DATEDIR / 'tmp'
-        aggregate(COLDTRAPS, TMPDIR, DATEDIR)
+    # Read DATEDIR from command line
+    DATEDIR = Path(sys.argv[1])
+    TMPDIR = DATEDIR / 'tmp'
+    aggregate(COLDTRAPS, TMPDIR, DATEDIR)
     

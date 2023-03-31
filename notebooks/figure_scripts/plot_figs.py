@@ -17,6 +17,7 @@ import aggregate as agg
 CFG = config.Cfg(seed=1)
 DATE = datetime.now().strftime("%y%m%d")
 FIGDIR = Path(CFG.figs_path) / f'{DATE}_v{CFG.version}'
+DATEDIR = '../out/230202'
 CORDER = np.array(['Faustini', 'Haworth', 'Shoemaker', 'Cabeus B', 
                    "Idel'son L",'Amundsen','Cabeus','de Gerlache',
                    'Slater','Sverdrup','Wiechert J','Shackleton'])
@@ -32,8 +33,8 @@ def _save_or_show(fig, ax, fsave, figdir, version='', **kwargs):
             fsave = fsave.with_name(f'{fsave.stem}_{version}{fsave.suffix}')
         fsave.parent.mkdir(parents=True, exist_ok=True)  # Make dir if doesn't exist
         fig.savefig(fsave, bbox_inches='tight', **kwargs)
-    else:
-        plt.show()
+        print(f'Figure saved to {fsave}')
+    plt.show()
     return ax
 
 
@@ -50,206 +51,30 @@ def _generate_all():
     _ = [p.join() for p in procs]
     print(f'All plots written to {FIGDIR}')
 
+
+def _get_datedir(cfg):
+    """Get datedir from cfg."""
+    outdir = Path(cfg.data_path).parents[1] / 'out'
+    subdirs = [p for p in outdir.iterdir() if p.is_dir()]
+    for subdir in subdirs[::-1]:
+        if any(subdir.glob('layers.csv')):
+            datedir = subdir
+            break
+    else:
+        raise FileNotFoundError('No datedir found. Please specify.')
+    return datedir
+
+
 def _load_aggregated(cfg, datedir, flatten=True, nruns=True):
     """Load aggregated data."""
     # If no datedir, guess latest date folder in outdir that has layers.csv
     if not datedir:  
-        outdir = Path(cfg.data_path).parents[1] / 'out'
-        subdirs = [p for p in outdir.iterdir() if p.is_dir()]
-        for subdir in subdirs[::-1]:
-            if any(subdir.glob('layers.csv')):
-                datedir = subdir
-                break
-        else:
-            raise FileNotFoundError('No datedir found. Please specify.')
+        datedir = _get_datedir(cfg)
     print(f'Loading aggregated data from {datedir}')
     return agg.read_agg_dfs(Path(datedir), flatten, nruns)
 
 
-def ast_comet_vels(fsave='comet_vels.pdf', figdir=FIGDIR, cfg=CFG):
-    """
-    Plot comet velocities.
-
-    :Authors:
-        K. M. Luchsinger, C. J. Tai Udovicic
-    """
-    mplt.reset_plot_style()
-    rng = mp.get_rng(cfg)
-    cfg_comet = mp.get_comet_cfg(cfg)
-    n = int(1e5)
-    
-    # Get probability distributions and random samples
-    rv_ast = mp.asteroid_speed_rv(cfg)
-    rv_comet = mp.comet_speed_rv(cfg_comet)
-
-    x = np.linspace(0, cfg.comet_speed_max, int(1e4))
-    apdf = rv_ast.pdf(x)
-    cpdf = rv_comet.pdf(x)
-    aspeeds = mp.get_random_impactor_speeds(n, cfg, rng)
-    cspeeds = mp.get_random_impactor_speeds(n, cfg_comet, rng)
-
-    fig, axs = plt.subplots(2, sharex=True, figsize=(7.2, 9))
-    # Plot asteroid and comet distributions
-    ax = axs[0]
-    ax.plot(x, apdf, '-.', c='tab:blue', lw=2, label='Asteroid pdf')
-    ax.plot(x, cpdf, '-.', c='tab:orange', lw=2, label='Comet pdf')
-    bins = np.linspace(0, cfg.comet_speed_max, 40)
-    ax.hist(aspeeds, bins, histtype='stepfilled', density=True,
-            color='tab:blue', alpha=0.2, label='Asteroid Random sample')
-    ax.hist(cspeeds, bins, histtype='stepfilled', density=True,
-            color='tab:orange', alpha=0.2, label='Comet Random sample')
-    ax.set_xlim(0, 80000)
-    # ax.set_xticks(ax.get_xticks())
-    # ax.set_xticklabels(ax.get_xticks()/1e3)  # [m/s] -> [km/s]
-    # ax.set_xlabel('Comet speed [km/s]')
-    ax.set_ylabel('Density')
-    ax.legend(loc='center right')
-    
-
-    # Plot comet mixed probability distribution
-    ax = axs[1]
-    ax.set_ylabel('Probability')
-    ax.plot(x, rv_comet.sf(x), label='Survival function (SF)')
-    ax.plot(x, rv_comet.cdf(x), label='CDF')
-    ax.set_ylim(0, 1)
-
-    ax2 = ax.twinx()
-    ax2.set_ylabel('Density')
-    ax2.plot(x, rv_comet.pdf(x), '-.', c='tab:green', label='PDF')
-    ax2.hist(cspeeds, bins=40, density=True, color='tab:gray', alpha=0.5, 
-            zorder=0, label=f'Samples (n={n:.0e})')
-
-    lines, labels = ax.get_legend_handles_labels()
-    lines2, labels2 = ax2.get_legend_handles_labels()
-    ax.legend(lines + lines2, labels + labels2, title='Comet distribution', 
-              loc='center right')
-    ax.set_xticks(ax.get_xticks())  # Neeed for setting labels
-    ax.set_xticklabels(ax.get_xticks()/1e3)  # [m/s] -> [km/s]
-    ax.set_xlabel('Speed [km/s]')
-    ax.set_xlim(0, cfg.comet_speed_max)
-
-    version = mplt.plot_version(cfg, loc='ur', ax=axs[0])
-    return _save_or_show(fig, axs, fsave, figdir, version)
-
-def ballistic_hop(fsave='bhop_lat.pdf', figdir=FIGDIR, cfg=CFG):
-    """
-    Plot ballistic hop efficiency by latitude.
-
-    :Authors:
-        K. M. Luchsinger, C. J. Tai Udovicic
-    """
-    mplt.reset_plot_style()
-    coldtraps = ['Haworth', 'Shoemaker', 'Faustini', 'Amundsen', 'Cabeus',
-                 'Cabeus B', 'de Gerlache', "Idel'son L", 'Sverdrup', 
-                 'Shackleton', 'Wiechert J', "Slater"]
-    lats = np.array([87.5, 88., 87.1, 84.4, 85.3, 82.3, 88.3, 84., 88.3, 
-                     89.6, 85.2, 88.1])
-    label_offset = np.array([(-0.7, 0.1), (-0.9, -0.6), (-0.5, 0.2), (-0.3, -0.7), (-0.1, -0.7), (-0.2, -0.7), (0.1, 0.2), 
-                            (-0.5, 0.2), (-0.1, -0.8), (-0.95, -0.45), (-0.7, 0.2), (-0.45, 0.1)])
-    coldtraps_moores = ["Haworth", "Shoemaker", "Faustini", "de Gerlache", 
-                        "Sverdrup", "Shackleton", "Cabeus"]
-
-    fig, ax = plt.subplots(figsize=(8,4))
-    ax.grid(True)
-    # Plot cold trap bhop vs. lat
-    bhops = mp.read_ballistic_hop_csv(cfg.bhop_csv_in)
-    for i, (name, lat) in enumerate(zip(coldtraps, lats)):
-        bhop = 100*bhops.loc[name]
-        color = 'tab:orange'
-        marker = 's'
-        kw = dict(markerfacecolor='white', markeredgewidth=2, zorder=10)
-        label = None
-        if name in coldtraps_moores:
-            color = 'tab:blue'
-            marker = 'o'
-            kw = {}
-        if name == 'Haworth':
-            label = 'Moores et al. (2016)'
-        elif name == 'Cabeus B':
-            label = 'This work'
-            
-        ax.plot(lat, bhop, marker, c=color, label=label, **kw)
-        off_x, off_y = label_offset[i]
-        ax.annotate(name, (lat, bhop), xytext=(lat + off_x, bhop+off_y), ha='left', va='bottom')
-    
-    # Cannon et al. (2020) constant bhop
-    ax.axhline(5.4, c='tab:gray', ls='--')
-    ax.annotate('Cannon et al. (2020)', (90, 5.3), ha='right', va='top')
-
-
-    # Simple linear fit to moores data
-    bhop_moores = [100*bhops.loc[name] for name in coldtraps if name in coldtraps_moores]
-    lats_moores = [lat for name, lat in zip(coldtraps, lats) if name in coldtraps_moores]
-    fit = np.poly1d(np.squeeze(np.polyfit(lats_moores, bhop_moores, 1)))
-    lat = np.linspace(89.6, 85.6, 10)
-    ax.plot(lat, fit(lat), '--')
-    ax.annotate("Fit to Moores et al. (2016)", (86.6, fit(86.6)), va='top', ha='right')
-
-    # Line from Cabeus B to Faustini
-    bhop_cf = 100*bhops.loc[['Cabeus B', 'Faustini']].values
-    ax.plot([82.3, 87.1], bhop_cf, '--', c='tab:orange')
-
-    ax.set_xlim(82, 90)
-    ax.set_ylim(0, 7)
-    ax.set_xlabel("Latitude [Degrees]")
-    ax.set_ylabel("Ballistic Hop Efficiency [% per km$^{2}$]")
-    ax.set_title("Ballistic Hop Efficiency by Latitude")
-    ax.legend()
-    version = mplt.plot_version(cfg, loc='ll', ax=ax)
-    fig.tight_layout()
-    return _save_or_show(fig, ax, fsave, figdir, version)
-
-
-def basin_ice(fsave='basin_ice.pdf', figdir=FIGDIR, cfg=CFG, n=500):
-    """
-    Plot basin ice volume by latitude.
-
-    :Authors:
-        K. R. Frizzell, C. J. Tai Udovicic
-    """
-    def moving_avg(x, w):
-        """Return moving average of x with window size w."""
-        return np.convolve(x, np.ones(w), 'same') / w
-    mplt.reset_plot_style()
-    # Params
-    seed0 = 200  # Starting seed
-    window = 3  # Window size for moving average
-    color = {'Asteroid': 'tab:gray', 'Comet': 'tab:blue'}
-    marker = {'Asteroid': 'x', 'Comet': '+'}
-
-    time_arr = mp.get_time_array()
-    fig, ax = plt.subplots()
-    for btype in ('Asteroid', 'Comet'):
-        all_basin_ice = np.zeros([len(time_arr), n])
-        cdict = cfg.to_dict()
-        for i, seed in enumerate(range(seed0, seed0+n)):
-            mp.clear_cache()
-            cdict['seed'] = seed
-            cfg = config.Cfg(**cdict)
-            df = mp.get_crater_basin_list(cfg)
-            if btype == 'Comet':
-                cfg = mp.get_comet_cfg(cfg)
-            b_ice_t = mp.get_basin_ice(time_arr, df, cfg)
-            all_basin_ice[:, i] = b_ice_t
-        x = time_arr / 1e9
-        ax.semilogy(x, all_basin_ice, marker[btype], c=color[btype], alpha=0.5)
-        # median = moving_avg(np.median(all_basin_ice,axis=1), window)
-        mean = moving_avg(np.mean(all_basin_ice,axis=1), window)
-        pct99 = moving_avg(np.percentile(all_basin_ice, 99.7, axis=1), window)
-        ax.plot(x, mean, '-', c=color[btype], lw=2, label=btype+' mean')
-        ax.plot(x, pct99,'--', c=color[btype], alpha=0.5, lw=2, label='99.7 percentile')
-    ax.grid('on')
-    ax.set_xlim(4.25, 3.79)
-    ax.set_ylim(0.1, None)
-    ax.set_title(f'Ice Delivered to South Pole by Basins ({n} runs)')
-    ax.set_xlabel('Time [Ga]')
-    ax.set_ylabel('Total ice thickness [m]')
-    ax.legend(loc='upper right', ncol=2)
-    version = mplt.plot_version(cfg, loc='ul', ax=ax)
-    return _save_or_show(fig, ax, fsave, figdir, version)
-
-
-def compare_violin(fsave='bsed_violin.pdf', figdir=FIGDIR, cfg=CFG, datedir='', 
+def compare_violin(fsave='bsed_violin.pdf', figdir=FIGDIR, cfg=CFG, datedir=DATEDIR, 
                 corder=CORDER, run_names=('moonpies', 'no_bsed'), rename=('Yes', 'No'), title='Ballistic\nSedimentation\n'):
     """Plot paired violins comparing ice in two runs grouped by crater."""
     mplt.reset_plot_style()
@@ -312,16 +137,12 @@ def crater_basin_ages(fsave='crater_basin_ages.pdf', figdir=FIGDIR, cfg=CFG):
     
     # Plot params
     fs_large = 12
-
-    # dc = mp.read_crater_list(cfg).set_index('cname')
-    # db = mp.read_basin_list(cfg).set_index('cname')
-    
     df = mp.get_crater_basin_list(cfg)
     ej_distances = mp.get_coldtrap_dists(df, cfg)
     thick = mp.get_ejecta_thickness_matrix(df, ej_distances, cfg)
     for i, row in df.iterrows():
         if thick[i].max() > 0 and row.isbasin:
-            print(f'{row.cname} hits at {row.age}')
+            # print(f'{row.cname} hits at {row.age}')
             df.loc[i, 'cname'] = f'*{row.cname}'
 
     dc = df.loc[~df.isbasin].set_index('cname')
@@ -556,7 +377,7 @@ def ejecta_bsed(fsave='ejecta_bsed.pdf', figdir=FIGDIR, cfg=CFG):
     return _save_or_show(fig, ax, fsave, figdir, version)
 
 
-def kde_layers(fsave='kde_layers.pdf', figdir=FIGDIR, cfg=CFG, datedir='', 
+def kde_layers(fsave='kde_layers.pdf', figdir=FIGDIR, cfg=CFG, datedir=DATEDIR, 
                coldtraps=("Faustini", "Haworth", "Amundsen", "Cabeus", 
                "de Gerlache", "Slater"), run_names=('moonpies', 'no_bsed'), 
                rename=('Yes', 'No')):
@@ -780,8 +601,8 @@ def volatilized_fraction_bsed(fsave='volatilized_fraction_bsed.pdf', figdir=FIGD
     mixing depth.
     """
     mplt.reset_plot_style()
-    dm = mp.read_ballistic_melt_frac(True, cfg)  # mean
-    ds = mp.read_ballistic_melt_frac(False, cfg)  # std
+    dm = mp.read_ballistic_melt_frac(True, cfg).copy()  # mean
+    ds = mp.read_ballistic_melt_frac(False, cfg).copy()  # std
     # Add 0% melt at T=100 K
     dm.insert(0, 100, 0)  
     ds.insert(0, 100, 0)
@@ -816,7 +637,7 @@ def volatilized_fraction_bsed(fsave='volatilized_fraction_bsed.pdf', figdir=FIGD
     ax = axs[0]
     ax.tick_params('x', bottom=False, top=False)
     ax.tick_params('y', direction='out', right=False)
-    p = ax.imshow(frac_mean, extent=extent, aspect='auto', interpolation='none', cmap='magma')
+    p = ax.imshow(frac_mean*100, extent=extent, aspect='auto', interpolation='none', cmap='magma')
     ax.plot(*crater, 'o--', ms=4, lw=2, c='tab:cyan', label='Crater')
     ax.plot(*basin_c, 'o--', ms=4, lw=2, c='tab:orange', label='Basin (cold)')
     ax.plot(*basin_w, 'o--', ms=4, lw=2, c='tab:red', label='Basin (warm)')
@@ -824,7 +645,7 @@ def volatilized_fraction_bsed(fsave='volatilized_fraction_bsed.pdf', figdir=FIGD
     ax.set_xticks(range(100, 501, 100))
     ax.legend()
     cbar = fig.colorbar(p, ax=ax)
-    cbar.ax.get_yaxis().labelpad = 15
+    cbar.ax.get_yaxis().labelpad = 12
     cbar.ax.set_ylabel("Mean volatilized fraction [%]", rotation=270)
     ax.set_ylabel("Ejecta fraction [%]")
     ax.set_xlabel("Ejecta Temperature [K]")
@@ -832,7 +653,7 @@ def volatilized_fraction_bsed(fsave='volatilized_fraction_bsed.pdf', figdir=FIGD
     ax = axs[1]
     ax.tick_params('x', direction='out', top=False)
     ax.tick_params('y', direction='out', right=False)
-    p = ax.imshow(frac_std, vmax=0.1, extent=extent, aspect='auto', interpolation='none', cmap='cividis')
+    p = ax.imshow(frac_std*100, extent=extent, aspect='auto', interpolation='none', cmap='cividis')
     ax.plot(*crater, 'o--', ms=4, lw=2, c='tab:cyan', label='Crater')
     ax.plot(*basin_c, 'o--', ms=4, lw=2, c='tab:orange', label='Basin (cold)')
     ax.plot(*basin_w, 'o--', ms=4, lw=2, c='tab:red', label='Basin (warm)')
@@ -915,7 +736,7 @@ def random_crater_ages(fsave='random_crater_ages.pdf', figdir=FIGDIR, cfg=CFG):
 
 
 def strat_cols_bsed(fsave='strat_cols_bsed.pdf', figdir=FIGDIR, cfg=CFG,
-                    datedir='', runs=('moonpies', 'no_bsed'), seed=7,
+                    datedir=DATEDIR, runs=('moonpies', 'no_bsed'), seed=7,
                     min_thick=5, corder=CORDER, fsave_icepct=''):
     """
     Plot stratigraphy columns comparing bsed and no bsed.
@@ -940,9 +761,9 @@ def strat_cols_bsed(fsave='strat_cols_bsed.pdf', figdir=FIGDIR, cfg=CFG,
 
 
 def strat_cols_seeds(fsave='strat_cols_seeds.pdf', figdir=FIGDIR, cfg=CFG,
-                    datedir='', runs=('moonpies',), seeds=(13, 8, 1),
-                    min_thick=5, corder=('Faustini', 'Haworth', 'Cabeus'),
-                    fsave_icepct=''):
+                     datedir=DATEDIR, runs=('moonpies',), seeds=(13, 8, 1),
+                     min_thick=5, corder=('Faustini', 'Haworth', 'Cabeus'),
+                     fsave_icepct=''):
     """
     Plot stratigraphy columns comparing bsed and no bsed.
     """
@@ -966,7 +787,7 @@ def strat_cols_seeds(fsave='strat_cols_seeds.pdf', figdir=FIGDIR, cfg=CFG,
 
 
 def surface_boxplot(fsave='surface_boxplot.pdf', figdir=FIGDIR, cfg=CFG, 
-                    datedir='', corder=CORDER, sdepths=[6, 100]):
+                    datedir=DATEDIR, corder=CORDER, sdepths=[6, 100], verbose=False):
     """
     Plot surface boxplot.
     """
@@ -1003,16 +824,415 @@ def surface_boxplot(fsave='surface_boxplot.pdf', figdir=FIGDIR, cfg=CFG,
 
         # Verbose
         thresh = 0.3 if sdepth == 6 else 5 # m
-        print('Sdepth:', sdepth, 'm')
+        if verbose:
+            print('\nSdepth:', sdepth, 'm')
         for coldtrap in runs.coldtrap.unique():
             gt_thresh = runs[runs.coldtrap == coldtrap][key] > thresh
             gt_frac = gt_thresh.sum() / len(gt_thresh)
-            print(f'{coldtrap} exceeds {thresh:.2g} m {gt_frac:.2%} of the time')
+            if verbose:
+                print(f'{coldtrap} exceeds {thresh:.2g} m {gt_frac:.2%} of the time')
     version = mplt.plot_version(cfg, loc='ur', ax=axs[0])
     return _save_or_show(fig, ax, fsave, figdir, version)
 
 
-def grid_plots(fsave='grid_plots.pdf', figdir=FIGDIR, cfg=CFG):
+def plot_by_module(fsave='plot_by_module.pdf', figdir=FIGDIR, cfg=CFG, 
+                   seeds=range(10)):
+    """Plot ice delivery and loss by module."""
+    mplt.reset_plot_style()
+
+    era_labels = ['Pre-Nec.', 'Nec.', 'Imb.', 'Era.', 'Cop.']
+    era_ages = [4.26, 3.97, 3.83, 3.2, 1.1, 0]  # Age bins
+    colors = ("#0072B2", "#E69F00", "#009E73", "#D55E00", "#F0E442", "#CC79A7")
+    mpl.rcParams.update({
+        'font.size': 12,
+        'axes.grid': False,
+        'xtick.top': False,
+        'xtick.bottom': False,
+        'axes.prop_cycle': mpl.cycler(color=colors) 
+    })
+    order = ['Total ice', 'Impactor ice', 'Basin ice', 'Volcanic ice', 
+            'Solar wind ice', 'Gardening depth', 'Ballistic sed depth']
+    impactor_keys = ['Micrometeorite ice',
+        'Small impactor ice', 'Small simple crater ice',
+        'Large simple crater ice', 'Large complex crater ice']
+    other_ice_keys = ['Volcanic ice', 'Solar wind ice', 'Basin ice']
+    loss_keys = ['Gardening depth', 'Ballistic sed depth']
+
+    df = _get_ice_ast_comet_seeds(cfg, seeds, loss_keys).reset_index()
+
+    df['Impactor ice'] = np.sum(df[impactor_keys], axis=1)
+    df['Total ice'] = np.sum(df[impactor_keys + other_ice_keys], axis=1)
+    time = df['time']
+    tmp = df.drop(impactor_keys + ['time'], axis=1)
+    tmp = tmp[order]
+
+    # Groupby era. Need to flip to ascending time order then reindex after
+    bins = np.array(era_ages[::-1])*1e9
+    binlabels = era_labels[::-1]
+    icegb = tmp.groupby(pd.cut(time, bins=bins, labels=binlabels))
+    df_mean = icegb.agg('mean').reindex(era_labels)
+    df_min = icegb.agg('min').reindex(era_labels)
+    df_max = icegb.agg('max').reindex(era_labels)
+
+    # Init plot
+    n = len(df_mean)
+    fig, ax = plt.subplots(figsize=(7.5, 4))
+    ax.set_yscale('log')
+    ax.set_ylim(1e-4, 1e2)
+    ax.set_xlim(-0.5, 4.5)
+    ax.tick_params(axis='both')
+    ax.set_xticks(np.arange(n))
+    ax.set_xticklabels(list(df_mean.index))
+    ax.set_ylabel('Ice deposited per km$^2$ per timestep [m]')
+
+    
+    width = 1/n
+    x = np.arange(n+1) - 0.5
+    _ = [ax.axvline(era, color='k', lw=1) for era in x]  # Diviners
+    x = np.repeat(x, 2)[1:-1]
+
+    # Shade loss processes
+    for label, c, a, h in zip((loss_keys), ('gray', 'red'), (0.3, 0.2), ('\\', '')):
+        y = df_mean[label].values
+        y = np.repeat(y, 2)
+        ax.fill_between(x, [0]*len(y), y, color=c, alpha=a, label='Max ' + label, hatch=h)
+
+    # Bar charts of ice by era
+    for i, (label, col) in enumerate(df_mean.items()):
+        if label in loss_keys:
+            continue
+        x = np.arange(n) - width*(n-1)/2 + (i*width)
+        yerr = [col-df_min.iloc[:,i], df_max.iloc[:,i]-col]
+        yerr[0] = yerr[0].clip(lower=1e-9)  # Prevent negative error bars
+        ax.bar(x, col, label=label, width=width, yerr=yerr, capsize=4)
+
+    # Legend (customize order)
+    handles, labels = plt.gca().get_legend_handles_labels()
+    order = [2, 3, 4, 5, 6, 1, 0]
+    ax.legend([handles[i] for i in order], [labels[i] for i in order], ncol=2, 
+                loc='upper right', fontsize=8, framealpha=1)
+    
+    version = mplt.plot_version(cfg, loc='ul', fontsize=8)
+    return _save_or_show(fig, ax, fsave, figdir, version)
+
+
+# Plot by module helpers
+def _get_ice_ast_comet_seeds(cfg, seeds, loss_keys):
+    """Return DataFrame of ice by module at each time step avg over seeds."""
+    # Get ice by module
+    cdict = cfg.to_dict()
+    time_arr = mp.get_time_array(cfg)
+    df = mp.get_crater_basin_list(cfg)
+    adf = _get_ice_by_module(df, time_arr, cfg, 0) * 0
+    cdf = adf.copy()
+
+    # Avg across seeds
+    for i, seed in enumerate(seeds):
+        cdict['seed'] = seed
+        cfg = config.Cfg(**cdict)
+
+        mp.clear_cache()
+        rng = mp.get_rng(cfg)
+        df = mp.get_crater_basin_list(cfg, rng)
+        adf += _get_ice_by_module(df, time_arr, cfg, rng)
+
+        mp.clear_cache()
+        comet_cfg = mp.get_comet_cfg(cfg)
+        rng = mp.get_rng(comet_cfg)
+        df = mp.get_crater_basin_list(comet_cfg, rng)
+        cdf += _get_ice_by_module(df, time_arr, comet_cfg, rng)
+
+    adf /= len(seeds)
+    cdf /= len(seeds)
+    # Total ast and comet ice (frac already accounted for in cfg)
+    df = adf.set_index('time') + cdf.set_index('time')
+    df = df.drop(loss_keys, axis=1)
+    for k in loss_keys:
+        # Should be same for ast and comet but avg just in case
+        df[k] = (adf[k] + cdf[k]).values / 2
+    return df
+
+def _get_ice_by_module(df, time_arr, cfg, rng):
+    """Return DataFrame with ice by module at each time step."""
+    out = pd.DataFrame(time_arr, columns=['time'])
+    out['Volcanic ice'] = mp.get_volcanic_ice(time_arr, cfg)
+    out['Solar wind ice'] = mp.get_solar_wind_ice(time_arr, cfg)
+    out['Micrometeorite ice'] = mp.get_micrometeorite_ice(time_arr, cfg)
+    out['Small impactor ice'] = mp.get_small_impactor_ice(time_arr, cfg)
+    out['Small simple crater ice'] = mp.get_small_simple_crater_ice(time_arr, cfg)
+    out['Large simple crater ice'] = mp.get_large_simple_crater_ice(time_arr, cfg, rng)
+    out['Large complex crater ice'] = mp.get_complex_crater_ice(time_arr, cfg, rng)
+    out['Basin ice'] = mp.get_basin_ice(time_arr, df, cfg, rng)
+    out['Gardening depth'] = mp.overturn_depth_time(time_arr, cfg)
+    out['Ballistic sed depth'] = _get_agg_bsed_depth(df, time_arr, cfg, rng)
+    return out
+
+
+def _get_agg_bsed_depth(df, time_arr, cfg, rng, agg=np.mean):
+    """Return average ballistic sedimentation depth at each time step."""
+    ej_dists = mp.get_coldtrap_dists(df, cfg)
+    bsed_d, bsed_frac = mp.get_bsed_depth(time_arr, df, ej_dists, cfg)
+    bsed_all = bsed_d * bsed_frac
+    return np.apply_along_axis(agg, 1, bsed_all)
+
+
+# Supplementary Information Figures
+def ballistic_hop(fsave='bhop_lat.png', figdir=FIGDIR, cfg=CFG):
+    """
+    Plot ballistic hop efficiency by latitude.
+
+    :Authors:
+        K. M. Luchsinger, C. J. Tai Udovicic
+    """
+    mplt.reset_plot_style()
+    coldtraps = ['Haworth', 'Shoemaker', 'Faustini', 'Amundsen', 'Cabeus',
+                 'Cabeus B', 'de Gerlache', "Idel'son L", 'Sverdrup', 
+                 'Shackleton', 'Wiechert J', "Slater"]
+    lats = np.array([87.5, 88., 87.1, 84.4, 85.3, 82.3, 88.3, 84., 88.3, 
+                     89.6, 85.2, 88.1])
+    label_offset = np.array([(-0.7, 0.1), (-0.9, -0.6), (-0.5, 0.2), (-0.3, -0.7), (-0.1, -0.7), (-0.2, -0.7), (0.1, 0.2), 
+                            (-0.5, 0.2), (-0.1, -0.8), (-0.95, -0.45), (-0.7, 0.2), (-0.45, 0.1)])
+    coldtraps_moores = ["Haworth", "Shoemaker", "Faustini", "de Gerlache", 
+                        "Sverdrup", "Shackleton", "Cabeus"]
+
+    fig, ax = plt.subplots(figsize=(8,4))
+    ax.grid(True)
+    # Plot cold trap bhop vs. lat
+    bhops = mp.read_ballistic_hop_csv(cfg.bhop_csv_in)
+    for i, (name, lat) in enumerate(zip(coldtraps, lats)):
+        bhop = 100*bhops.loc[name]
+        color = 'tab:orange'
+        marker = 's'
+        kw = dict(markerfacecolor='white', markeredgewidth=2, zorder=10)
+        label = None
+        if name in coldtraps_moores:
+            color = 'tab:blue'
+            marker = 'o'
+            kw = {}
+        if name == 'Haworth':
+            label = 'Moores et al. (2016)'
+        elif name == 'Cabeus B':
+            label = 'This work'
+            
+        ax.plot(lat, bhop, marker, c=color, label=label, **kw)
+        off_x, off_y = label_offset[i]
+        ax.annotate(name, (lat, bhop), xytext=(lat + off_x, bhop+off_y), ha='left', va='bottom')
+    
+    # Cannon et al. (2020) constant bhop
+    ax.axhline(5.4, c='tab:gray', ls='--')
+    ax.annotate('Cannon et al. (2020)', (90, 5.3), ha='right', va='top')
+
+
+    # Simple linear fit to moores data
+    bhop_moores = [100*bhops.loc[name] for name in coldtraps if name in coldtraps_moores]
+    lats_moores = [lat for name, lat in zip(coldtraps, lats) if name in coldtraps_moores]
+    fit = np.poly1d(np.squeeze(np.polyfit(lats_moores, bhop_moores, 1)))
+    lat = np.linspace(89.6, 85.6, 10)
+    ax.plot(lat, fit(lat), '--')
+    ax.annotate("Fit to Moores et al. (2016)", (86.6, fit(86.6)), va='top', ha='right')
+
+    # Line from Cabeus B to Faustini
+    bhop_cf = 100*bhops.loc[['Cabeus B', 'Faustini']].values
+    ax.plot([82.3, 87.1], bhop_cf, '--', c='tab:orange')
+
+    ax.set_xlim(82, 90)
+    ax.set_ylim(0, 7)
+    ax.set_xlabel("Latitude [Degrees]")
+    ax.set_ylabel("Ballistic Hop Efficiency [% per km$^{2}$]")
+    # ax.set_title("Ballistic Hop Efficiency by Latitude")
+    ax.legend()
+    version = mplt.plot_version(cfg, loc='ll', ax=ax)
+    fig.tight_layout()
+    return _save_or_show(fig, ax, fsave, figdir, version)
+
+
+def ast_comet_vels(fsave='comet_vels.png', figdir=FIGDIR, cfg=CFG):
+    """
+    Plot comet velocity distributions.
+
+    :Authors:
+        K. M. Luchsinger, C. J. Tai Udovicic
+    """
+    mplt.reset_plot_style()
+    rng = mp.get_rng(cfg)
+    cfg_comet = mp.get_comet_cfg(cfg)
+    n = int(1e5)
+    
+    # Get probability distributions and random samples
+    rv_ast = mp.asteroid_speed_rv(cfg)
+    rv_comet = mp.comet_speed_rv(cfg_comet)
+
+    x = np.linspace(0, cfg.comet_speed_max, int(1e4))
+    apdf = rv_ast.pdf(x)
+    cpdf = rv_comet.pdf(x)
+    aspeeds = mp.get_random_impactor_speeds(n, cfg, rng)
+    cspeeds = mp.get_random_impactor_speeds(n, cfg_comet, rng)
+
+    fig, axs = plt.subplots(2, sharex=True, figsize=(7, 5))
+    # Plot asteroid and comet distributions
+    ax = axs[0]
+    ax.plot(x, apdf, '-.', c='tab:blue', lw=2, label='Asteroid pdf')
+    ax.plot(x, cpdf, '-.', c='tab:orange', lw=2, label='Comet pdf')
+    bins = np.linspace(0, cfg.comet_speed_max, 40)
+    ax.hist(aspeeds, bins, histtype='stepfilled', density=True,
+            color='tab:blue', alpha=0.2, label='Asteroid Random sample')
+    ax.hist(cspeeds, bins, histtype='stepfilled', density=True,
+            color='tab:orange', alpha=0.2, label='Comet Random sample')
+    ax.set_xlim(0, 80000)
+    ax.set_ylabel('Density')
+    ax.legend(loc='center right')
+
+    # Plot comet mixed probability distribution
+    ax = axs[1]
+    ax.set_ylabel('Probability')
+    ax.plot(x, rv_comet.sf(x), label='Survival function (SF)')
+    ax.plot(x, rv_comet.cdf(x), label='CDF')
+    ax.set_ylim(0, 1)
+
+    ax2 = ax.twinx()
+    ax2.set_ylabel('Density')
+    ax2.plot(x, rv_comet.pdf(x), '-.', c='tab:green', label='PDF')
+    ax2.hist(cspeeds, bins=40, density=True, color='tab:gray', alpha=0.5, 
+            zorder=0, label=f'Samples (n={n:.0e})')
+
+    lines, labels = ax.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax.legend(lines + lines2, labels + labels2, title='Comet distribution', 
+              loc='center right')
+    ax.set_xticks(ax.get_xticks())  # Neeed for setting labels
+    ax.set_xticklabels(ax.get_xticks()/1e3)  # [m/s] -> [km/s]
+    ax.set_xlabel('Speed [km/s]')
+    ax.set_xlim(0, cfg.comet_speed_max)
+
+    version = mplt.plot_version(cfg, loc='ur', ax=axs[0])
+    return _save_or_show(fig, axs, fsave, figdir, version)
+
+
+def ice_retention(fsave='ice_retention.png', figdir=FIGDIR):
+    """Plot ice retention as a function of impactor speed."""
+    mplt.reset_plot_style()
+
+    # Set config
+    cfg_c = config.Cfg(mode='cannon')
+    cfg_m_asteroid = config.Cfg(mode='moonpies')
+    cfg_m_comet = config.Cfg(mode='moonpies', is_comet=True)
+
+    # Data from Ong et al. (2010)
+    ong_x = [10, 15, 30, 45, 60]
+    ong_y = [1, 1.97E-01, 1.47E-02, 1.93E-03, 6.60E-06]
+
+    # Generate moonpies data
+    v = np.linspace(0, 70, 7000)  # speed [km/s]
+    retention_c = mp.ice_retention_factor(v*1e3, cfg_c)
+    retention_ma = mp.ice_retention_factor(v*1e3, cfg_m_asteroid)
+    retention_mc = mp.ice_retention_factor(v*1e3, cfg_m_comet)
+
+    # Make plot
+    fig, ax = plt.subplots(figsize=(7, 3.5))
+    ax.semilogy(v, retention_c, c='tab:gray', lw=3, label='Cannon et al. (2020)')
+    ax.semilogy(v, retention_ma, ':', c='k', lw=2, label='This work, asteroid')
+    ax.semilogy(v, retention_mc, '--', c='tab:blue', lw=2, label='This work, comet')
+    ax.plot(ong_x, ong_y, 'o', ms=8, c='k', label='Ong et al. (2010)')
+    ax.set_title('Ice Retention vs Impact Speed')
+    ax.set_ylabel('Ice Retention Fraction [0-1]')
+    ax.set_xlabel('Impact Speed [km/s]')
+    ax.set_ylim(1E-6, 1.5)
+    ax.set_xlim(0, 65)
+    ax.legend()
+    ax.grid(True, which='major', alpha=0.5)
+
+    # Add version and save figure
+    mplt.plot_version(cfg_c, loc='ll')
+    return _save_or_show(fig, ax, fsave, figdir)
+
+
+def basin_ice(fsave='basin_ice.png', figdir=FIGDIR, cfg=CFG, n=500):
+    """
+    Plot basin ice volume by latitude.
+
+    :Authors:
+        K. R. Frizzell, C. J. Tai Udovicic
+    """
+    def moving_avg(x, w):
+        """Return moving average of x with window size w."""
+        return np.convolve(x, np.ones(w), 'same') / w
+    mplt.reset_plot_style()
+    # Params
+    seed0 = 200  # Starting seed
+    window = 3  # Window size for moving average
+    color = {'Asteroid': 'tab:gray', 'Comet': 'tab:blue'}
+    marker = {'Asteroid': 'x', 'Comet': '+'}
+
+    time_arr = mp.get_time_array()
+    fig, ax = plt.subplots()
+    for btype in ('Asteroid', 'Comet'):
+        all_basin_ice = np.zeros([len(time_arr), n])
+        cdict = cfg.to_dict()
+        for i, seed in enumerate(range(seed0, seed0+n)):
+            mp.clear_cache()
+            cdict['seed'] = seed
+            cfg = config.Cfg(**cdict)
+            df = mp.get_crater_basin_list(cfg)
+            if btype == 'Comet':
+                cfg = mp.get_comet_cfg(cfg)
+            b_ice_t = mp.get_basin_ice(time_arr, df, cfg)
+            all_basin_ice[:, i] = b_ice_t
+        x = time_arr / 1e9
+        ax.semilogy(x, all_basin_ice, marker[btype], c=color[btype], alpha=0.5)
+        # median = moving_avg(np.median(all_basin_ice,axis=1), window)
+        mean = moving_avg(np.mean(all_basin_ice,axis=1), window)
+        pct99 = moving_avg(np.percentile(all_basin_ice, 99.7, axis=1), window)
+        ax.plot(x, mean, '-', c=color[btype], lw=2, label=btype+' mean')
+        ax.plot(x, pct99,'--', c=color[btype], alpha=0.5, lw=2, label='99.7 percentile')
+    ax.grid('on')
+    ax.set_xlim(4.25, 3.79)
+    ax.set_ylim(0.1, None)
+    ax.set_title(f'Ice Delivered to South Pole by Basins ({n} runs)')
+    ax.set_xlabel('Time [Ga]')
+    ax.set_ylabel('Total ice thickness [m]')
+    ax.legend(loc='upper right', ncol=2)
+    version = mplt.plot_version(cfg, loc='ul', ax=ax)
+    return _save_or_show(fig, ax, fsave, figdir, version)
+
+
+def bsed_sensitivity_violin(datedir=DATEDIR):
+    """Plot ballistic sedimentation sensitivity violin plots."""
+    return compare_violin('bsed50_violin.png', datedir=datedir,
+                          run_names=('bsed_50pct','no_bsed'), 
+                          rename=('50% lost', '0% lost'), 
+                          title='Ballistic Sedimentation\nLoss Fraction ')
+
+
+def comet_sensitivity_violin(datedir=DATEDIR):
+    """Plot comet sensitivity violin plots."""
+    return compare_violin('comet_violin.png', datedir=datedir,
+                          run_names=('moonpies', 'comet_100pct'), 
+                          rename=('20%', '100%'), 
+                          title='Comet Hydration [wt%]\n')
+
+def ice_pct_fig7(datedir=DATEDIR):
+    """Plot ice percentage of each layer in figure 7."""
+    _ = strat_cols_seeds(False, datedir=datedir, fsave_icepct='./strat_cols_f7.csv')
+    df = pd.read_csv('./strat_cols_f7.csv', header=[0, 1, 2])
+    return (df.round(2).style
+            .format('{:.3g}%', na_rep='')
+            .background_gradient(cmap='Blues', vmin=0, vmax=10, axis=None)
+    )
+ 
+def ice_pct_fig8(datedir=DATEDIR):
+    """Plot ice percentage of each layer in figure 8."""
+    _ = strat_cols_bsed(False, datedir=datedir, fsave_icepct='./strat_cols_f8.csv')
+    df = pd.read_csv('./strat_cols_f8.csv', header=[0, 1, 2])
+    top = (df['moonpies']['7'].round(2).style
+           .format('{:.3g}%', na_rep='')
+           .background_gradient(cmap='Blues', vmin=0, vmax=10, axis=None))
+    bot = (df['no_bsed']['7'].round(2).style
+           .format('{:.3g}%', na_rep='')
+           .background_gradient(cmap='Blues', vmin=0, vmax=10, axis=None))
+    return top, bot
+
+
+def grid_plots(fsave='grid_plots.png', figdir=FIGDIR, cfg=CFG):
     """
     Plot gridded computations:
     - most recent surface age (including ejecta)
@@ -1057,6 +1277,47 @@ def grid_plots(fsave='grid_plots.pdf', figdir=FIGDIR, cfg=CFG):
         ax.set_ylabel('Y [km]')
 
     version = mplt.plot_version(cfg, loc='ll', ax=ax)
+    return _save_or_show(fig, ax, fsave, figdir, version)
+
+
+def plot_by_module_time(fsave='plot_by_module_time.png', figdir=FIGDIR, 
+                        cfg=CFG, seeds=range(10), bins=85):
+    """Plot ice delivery and loss by module."""
+    mplt.reset_plot_style()
+    loss_keys = ['Gardening depth', 'Ballistic sed depth']
+
+    df = _get_ice_ast_comet_seeds(cfg, seeds, loss_keys).reset_index()
+    grp = df.groupby(pd.cut(df['time'], bins=85)).agg('mean').set_index('time')
+    cumu = df.set_index('time').cumsum()
+
+    fig, axs = plt.subplots(1, 2, figsize=(8.5, 3.5))
+    fig.subplots_adjust(wspace=0.35)
+
+    # Shade loss processes
+    for ax, data in zip(axs, (grp, cumu)):
+        x = np.repeat(data.index.values, 2)
+        for label, c, a, h in zip((loss_keys), ('gray', 'red'), (0.2, 0.1), ('\\', '')):
+            y = np.repeat(data[label].values, 2)
+            ax.fill_between(x, [1e-9]*len(y), y, color=c, alpha=a, label='Max ' + label, hatch=h)
+        data = data.drop(loss_keys, axis=1)
+        legend = ax == axs[0]
+        data.plot(logy=True, ax=ax, legend=legend)
+
+    axs[0].set_ylabel('Ice deposited per km$^2$ per timestep [m]')
+    axs[1].set_ylabel('Cumulative ice deposited per km$^2$ [m]')
+    for ax in axs:
+        ax.set_xlabel('Time [yr]')
+        ax.set_xlim(4.25e9, 0)
+    axs[0].set_ylim(1e-7, 3e2)
+    axs[1].set_ylim(1e-3, 1e3)
+
+    # Legend
+    handles, labels = plt.gca().get_legend_handles_labels()
+    order = list(range(2, len(handles))) + [1, 0]
+    axs[0].legend([handles[i] for i in order], [labels[i] for i in order], 
+                  bbox_to_anchor=(0., 1.02, 2.35, .102), 
+                  loc=3, ncol=3, mode="expand", borderaxespad=0)
+    version = mplt.plot_version(cfg, loc='ur', fontsize=8, ax=axs[0])
     return _save_or_show(fig, ax, fsave, figdir, version)
 
 
