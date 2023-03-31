@@ -14,12 +14,13 @@ This project is maintained by Christian J. Tai Udovicic. Feel free to get in tou
 .. toctree::
    :maxdepth: 2
 
+   quickstart.rst
    readme.md
-   plotting.rst
-   overview.rst
+   model_overview.md
+   api.rst
 
 
-Indices and tables
-==================
+Index of all functions and methods
+==================================
 
 * :ref:`genindex`

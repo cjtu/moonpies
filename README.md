@@ -155,9 +155,9 @@ This model was produced by C. J. Tai Udovicic, K. Frizzell, K. Luchsinger, A. Ma
 
 This code is made available under the [MIT license](https://choosealicense.com/licenses/mit/) which allows warranty-free use with proper citation. The model can be cited as:
 
-> Tai Udovicic et al. (2022). Moonpies. 10.5281/zenodo.7055800
+> Tai Udovicic et al. (2022). Moonpies (vX.Y.Z). Zenodo. doi: 10.5281/zenodo.7055800
 
-See (CITATION.cff)[https://github.com/cjtu/moonpies/blob/main/CITATION.cff] or (MoonPIES on zenodo)[https://doi.org/10.5281/zenodo.7055799] for easy import to any reference manager.
+See [CITATION.cff](https://github.com/cjtu/moonpies/blob/main/CITATION.cff) or [MoonPIES on zenodo](https://doi.org/10.5281/zenodo.7055799) for easy import to any reference manager.
 
 ## Acknowledgements
 
